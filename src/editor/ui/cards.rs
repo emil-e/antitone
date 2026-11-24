@@ -1,6 +1,41 @@
 use egui::{Color32, Id, Rect, Response, Ui, Vec2};
 use std::sync::Arc;
 
+/// Reveal the active item on a change, without fighting manual scrolling.
+#[derive(Default)]
+pub struct Reveal {
+    target: Option<(crate::project::SourceId, f32, f32)>,
+    offset: f32,
+    extent: f32,
+}
+
+impl Reveal {
+    pub fn offset(
+        &mut self,
+        target: Option<(crate::project::SourceId, f32, f32)>,
+        force: bool,
+    ) -> Option<f32> {
+        let changed = self.target != target;
+        self.target = target;
+        let (_, start, end) = target?;
+        if !changed && !force {
+            return None;
+        }
+        if start < self.offset || self.extent < end - start {
+            Some(start)
+        } else if end > self.offset + self.extent {
+            Some(end - self.extent)
+        } else {
+            None
+        }
+    }
+
+    pub fn observe(&mut self, offset: f32, extent: f32) {
+        self.offset = offset;
+        self.extent = extent;
+    }
+}
+
 /// Accepted contact-sheet geometry; callers retain the tray, scrolling and virtualization.
 #[derive(Clone, Copy)]
 pub struct ContactSheetLayout {
@@ -31,12 +66,26 @@ impl ContactSheetLayout {
         }
     }
 
+    pub const GUTTER: f32 = 12.;
+
+    pub fn grid(width: f32) -> Self {
+        let padding = (width * 0.1).min(3.);
+        let image_height = (width - 2. * padding) / 1.5;
+        Self {
+            size: egui::vec2(width, image_height + 2. * padding),
+            image_height,
+            padding,
+            caption_height: 0.,
+            caption_gap: 0.,
+        }
+    }
+
     pub fn size(self) -> Vec2 {
         self.size
     }
 
     pub fn pitch(self) -> f32 {
-        self.size.x + 12.
+        self.size.x + Self::GUTTER
     }
 
     /// Paint the frame/well without allocating layout or introducing an ID scope.
@@ -53,6 +102,7 @@ impl ContactSheetLayout {
         let response = ui.add_enabled(sense.is_some(), |ui: &mut Ui| {
             ui.interact(cell, id, sense.unwrap_or_else(egui::Sense::click))
         });
+        let show_caption = self.caption_height > 0.;
         let hovered = response.hovered();
         let fill = Color32::from_gray(if active {
             48
@@ -75,13 +125,20 @@ impl ContactSheetLayout {
         } else {
             165
         });
-        ui.painter()
-            .rect(cell, 4., fill, stroke, egui::StrokeKind::Inside);
+        if show_caption {
+            ui.painter()
+                .rect(cell, 4., fill, stroke, egui::StrokeKind::Inside);
+        } else if selected || response.has_focus() || hovered {
+            ui.painter()
+                .rect_stroke(cell, 2., stroke, egui::StrokeKind::Inside);
+        }
         let image_rect = Rect::from_min_size(
             cell.min + Vec2::splat(self.padding),
             egui::vec2(self.size.x - 2. * self.padding, self.image_height),
         );
-        ui.painter().rect_filled(image_rect, 0., fill);
+        if show_caption {
+            ui.painter().rect_filled(image_rect, 0., fill);
+        }
         let caption_rect = Rect::from_min_size(
             egui::pos2(image_rect.left(), image_rect.bottom() + self.caption_gap),
             egui::vec2(image_rect.width(), self.caption_height),
@@ -195,6 +252,9 @@ impl ContactSheetCard {
             ui.ctx().accesskit_node_builder(self.response.id, |node| {
                 node.set_description("Active photo")
             });
+        }
+        if self.caption_rect.height() <= 0. {
+            return;
         }
         let galley = caption_name(ui, name, self.caption_rect.width(), self.text_color);
         ui.painter()

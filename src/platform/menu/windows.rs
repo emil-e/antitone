@@ -112,7 +112,10 @@ impl NativeMenu {
 /// Windows accelerators are Control-based where macOS uses Command.
 fn accelerator(action: Action) -> Option<Accelerator> {
     let shortcut = action.shortcut()?;
-    let mut modifiers = Modifiers::CONTROL;
+    let mut modifiers = Modifiers::empty();
+    if shortcut.modifiers.command {
+        modifiers |= Modifiers::CONTROL;
+    }
     if shortcut.modifiers.shift {
         modifiers |= Modifiers::SHIFT;
     }
@@ -120,6 +123,8 @@ fn accelerator(action: Action) -> Option<Accelerator> {
         modifiers |= Modifiers::ALT;
     }
     let code = match shortcut.logical_key {
+        egui::Key::E => Code::KeyE,
+        egui::Key::G => Code::KeyG,
         egui::Key::Q => Code::KeyQ,
         egui::Key::N => Code::KeyN,
         egui::Key::O => Code::KeyO,

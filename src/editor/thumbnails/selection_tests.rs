@@ -32,12 +32,7 @@ fn frame_with_modifiers(
         |ui| {
             ui.scope(|ui| {
                 editor.disable_blocked_workspace(ui);
-                if editor
-                    .with_current_tool(|tool, editor| tool.filmstrip(ui, editor, cx))
-                    .is_none()
-                {
-                    editor.filmstrip(ui, cx);
-                }
+                editor.filmstrip(ui, cx);
             });
             let _ = ui.button("Following");
         },

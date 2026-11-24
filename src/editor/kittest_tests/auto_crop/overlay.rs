@@ -76,14 +76,9 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             workflow::wait_settled(&mut h);
             let ids = h.read(|editor| editor.document.state.project.order.clone());
             let before = h.read(|editor| editor.document.state.project.clone());
-            h.get_by_label("crop-2.dng")
-                .click_modifiers(egui::Modifiers::COMMAND);
-            h.step();
-            h.get_by_label("crop-2.dng").click_secondary();
-            h.step();
-            h.step();
-            h.get_by_label("Auto-crop selected photos").click();
-            h.step();
+            h.enter(|editor, cx| {
+                crate::editor::auto_crop::start_review(editor, vec![ids[0], ids[2]], "Subset", cx);
+            });
             h.step();
             h.read(|editor| {
                 assert_eq!(

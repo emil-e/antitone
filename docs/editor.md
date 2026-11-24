@@ -46,7 +46,7 @@ Manual gamma controls display their proposal while the shared GPU response runs 
 
 ### Auto-crop is an explicit accepted edit
 
-Photo's **Auto-crop** button requests a crop and straightening suggestion for the current photo. The [manual Crop tool](../src/editor/crop_editor.rs) owns the request and uses the result to seed its draft for refinement. Ending Crop retires the request; only Apply accepts the crop. Roll's **Auto-crop roll** and the filmstrip context menu propose crops for a whole set, independently of browsing or selection.
+Photo's **Auto-crop** button requests a crop and straightening suggestion for the current photo. The [manual Crop tool](../src/editor/crop_editor.rs) owns the request and uses the result to seed its draft for refinement. Ending Crop retires the request; only Apply accepts the crop. Roll's **Auto-crop roll** proposes crops for the whole roll, independently of browsing or selection.
 
 [Shared preparation](spatial-metadata.md) can infer nominal picture bounds from credible edges and common dimensions. Missing film alone does not veto that frame; unresolved geometry or conflicting picture evidence abstains and keeps previous crops. Photos that merely fall outside the captured selection are not failures; abstentions carry a warning cue with their specific reason. [Geometry](geometry.md#automatic-framing-consumes-measurements-not-sampling-support) explains the evidence boundary and inward margin.
 
@@ -159,6 +159,12 @@ Tools compose the [canvas surface](../src/editor/canvas.rs) with the photograph 
 
 Analyze's support review and independent reference views present original-sample source images through the shared renderer. Their owners follow captured source, composition, raster and target; leaving that demand or replacing its input scope rejects stale results. Measurement pickers retain ordinary physical-view rendering.
 
+## Lightbox and single-photo views
+
+Use the viewer bar or View → **Lightbox** (G) and **Single Photo** (E) to switch the canvas. Lightbox fills the available canvas width and shares the filmstrip's order, selection and preview types, including source previews before calibration. The viewer bar changes tile size without changing preview resolution. Filenames are available on hover.
+
+Double-click a photo in either surface to open Single Photo. When a Lightbox tile has focus, arrows move by row and column; the filmstrip uses left and right arrows. Both surfaces scroll to reveal the active photo when it changes. Starting a canvas tool switches to Single Photo and stays there when the tool closes. Scopes measure the painted single-photo image.
+
 ## Fullscreen viewer
 
 F or the fullscreen action enlarges the same feature-owned image, composition, viewport and interaction. The host makes the existing window borderless without entering a native fullscreen Space. The same viewer bar, including tool identity and Apply/Cancel/Done actions, floats and fades after inactivity; moving near the bottom or pressing Tab reveals it. A hidden bar leaves no invisible canvas hitbox. Crop handles, picking, reference/Analyze areas, Auto-crop margins, Dust and gradients remain interactive.
@@ -208,7 +214,7 @@ Optional reuse of immutable full-resolution developments, uncorrected proxies an
 
 Two [native owners](../src/source/loader.rs) at most serve selected/reference/Analyze and thumbnail development: each keeps worker-local mutable RAW handles and runs one synchronous unpack/development call at a time. Foreground work precedes visible misses, then eager work for unvisited sources; a pending foreground demand can start on a free owner, while background work starts only while no foreground demand exists. [Native scheduling](native-development.md#editor-scheduling) explains the thread policy and its latency tradeoff.
 
-[Processed thumbnails](../src/thumbnails.rs) own the worker and processed image cache. The [editor thumbnail coordinator](../src/editor/thumbnails.rs) authors requests from the live document and shares its retention budget with camera previews. A `ThumbnailProvider` supplies images to a roll view and reports its visible lookups in priority order to the document's scheduler. The filmstrip uses shared image fitting and clipping and owns its captions and tool annotations.
+[Processed thumbnails](../src/thumbnails.rs) own the worker and processed image cache. The [editor thumbnail coordinator](../src/editor/thumbnails.rs) authors requests from the live document and shares its retention budget with camera previews. A `ThumbnailProvider` supplies images to roll views and reports their visible lookups to the document's scheduler. Each frame combines Lightbox and filmstrip demand once: the active visible Lightbox tile comes first, then other Lightbox tiles, then filmstrip-only requests. A photo visible in both shares its image and work.
 
 Thumbnail and camera-preview work follows all document photos, including those never painted. An empty visible pass releases protection without suspending background preparation. Offscreen rendering uses available optional retention; CPU/disk work can finish without room. Camera-preview entries retain completion and measured image size after pixel eviction, avoiding extraction loops and permitting rewarming when room returns. Retiring a thumbnail GPU ticket preserves useful document-owned CPU/disk completion. [Architecture](architecture.md#source-acquisition-and-retention) describes their asynchronous acquisition and scoped publication.
 

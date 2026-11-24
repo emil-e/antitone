@@ -144,6 +144,11 @@ impl Default for Thumbnails {
 
 impl Thumbnails {
     #[cfg(all(test, feature = "ui-tests"))]
+    pub(super) fn visible_order(&self) -> &[SourceId] {
+        &self.visible
+    }
+
+    #[cfg(all(test, feature = "ui-tests"))]
     pub(super) fn preview(&self) -> &Preview {
         &self.preview
     }
@@ -600,6 +605,8 @@ impl Editor {
     }
 }
 
+pub(super) mod card;
+
 /// Supplies thumbnails to roll views and reports their ordered visible demand
 /// to the document's single preview scheduler.
 #[derive(Default)]
@@ -726,12 +733,11 @@ impl ThumbnailProvider {
         let thumbnails = &editor.document.thumbnails;
         let camera = thumbnails.embedded.get(&key.source);
         let thumbnail = thumbnails.processed.image(&key);
-        let updating = camera.is_none()
-            && match &thumbnail {
-                Some(Ok(thumbnail)) => !thumbnail.current,
-                Some(Err(_)) => false,
-                None => true,
-            };
+        let updating = match &thumbnail {
+            Some(Ok(thumbnail)) => !thumbnail.current,
+            Some(Err(_)) => false,
+            None => camera.is_none(),
+        };
         if thumbnail.is_none() {
             self.camera_wanted
                 .push((self.wanted.len(), key.clone(), path.to_owned()));
@@ -761,6 +767,32 @@ impl ThumbnailProvider {
             camera,
             updating,
         }
+    }
+
+    pub(super) fn prioritize(&mut self, photo: SourceId) {
+        if let Some(index) = self.wanted.iter().position(|key| key.source.id == photo) {
+            self.wanted[..=index].rotate_right(1);
+        }
+    }
+
+    pub(super) fn append(&mut self, lower_priority: Self) {
+        if self.wanted.is_empty() {
+            self.wanted = lower_priority.wanted;
+        } else if !lower_priority.wanted.is_empty() {
+            let mut seen: std::collections::HashSet<_> =
+                self.wanted.iter().map(|key| key.source.id).collect();
+            self.wanted.extend(
+                lower_priority
+                    .wanted
+                    .into_iter()
+                    .filter(|key| seen.insert(key.source.id)),
+            );
+        }
+        self.camera_wanted.extend(lower_priority.camera_wanted);
+        let mut seen_cameras = std::collections::HashSet::new();
+        self.camera_wanted
+            .retain(|(_, key, _)| seen_cameras.insert(key.source.id));
+        self.awaiting_correction |= lower_priority.awaiting_correction;
     }
 
     pub(super) fn publish_demand(

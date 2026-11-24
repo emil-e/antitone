@@ -1,62 +1,58 @@
-mod image;
-
 use super::{
-    Editor, SourceId, UiContext, auto_crop,
+    Editor, SourceId, UiContext,
     roll_order::{Drag, View},
     roll_selection::take_navigation_step,
     thumbnails,
-    ui::{ContactSheetLayout, focused_delete},
+    tool::RollPreview,
+    ui::{ContactSheetLayout, Reveal, focused_delete},
+    viewer_ui::Mode,
 };
 use std::ops::Range;
 
 #[derive(Default)]
-pub(super) struct Preview {
-    pub images: thumbnails::Preview,
-    pub warnings: Vec<(SourceId, String)>,
-    pub outlines: Vec<(SourceId, [[f64; 2]; 4])>,
+pub(super) struct State {
+    reveal: Reveal,
+    focus_photo: Option<SourceId>,
 }
 
 impl Editor {
-    pub(super) fn show_filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+    pub(super) fn show_filmstrip(
+        &mut self,
+        ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
+    ) -> thumbnails::ThumbnailProvider {
         if self.fullscreen.is_some() {
-            self.hidden_filmstrip(ui, cx);
-        } else if self.has_hosted_tool() {
-            self.with_current_tool(|tool, editor| tool.filmstrip(ui, editor, cx));
-        } else {
-            self.filmstrip(ui, cx);
+            self.document.roll_order.cancel_drag(ui.ctx());
+            return thumbnails::ThumbnailProvider::begin(self, Default::default(), ui.ctx());
         }
+        let preview = self
+            .with_current_tool(|tool, editor| tool.roll_preview(editor))
+            .unwrap_or_default();
+        show_preview(self, ui, preview, cx)
     }
 
+    #[cfg(test)]
     pub(super) fn hidden_filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         self.document.roll_order.cancel_drag(ui.ctx());
         thumbnails::ThumbnailProvider::default().publish_demand(self, ui.ctx(), cx);
     }
 
+    #[cfg(test)]
     pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        show_preview(self, ui, Preview::default(), cx);
+        self.show_filmstrip(ui, cx)
+            .publish_demand(self, ui.ctx(), cx);
     }
 }
 
-pub(super) fn show_preview(
+fn show_preview(
     editor: &mut Editor,
     ui: &mut egui::Ui,
-    mut preview: Preview,
+    mut preview: RollPreview,
     cx: &UiContext<'_, Editor>,
-) {
+) -> thumbnails::ThumbnailProvider {
     let mut thumbnails =
         thumbnails::ThumbnailProvider::begin(editor, std::mem::take(&mut preview.images), ui.ctx());
     let actions = show_cards(editor, ui, &mut thumbnails, &preview);
-    if actions.auto_crop {
-        let photos = editor
-            .document
-            .project
-            .order
-            .iter()
-            .copied()
-            .filter(|id| editor.document.roll_selection.contains(*id))
-            .collect();
-        auto_crop::start_review(editor, photos, "Entry selection", cx);
-    }
     if actions.remove {
         editor.request_removal(cx);
     }
@@ -65,20 +61,25 @@ pub(super) fn show_preview(
         ui.ctx().request_repaint();
     }
 
-    thumbnails.publish_demand(editor, ui.ctx(), cx);
-    if let Some((index, modifiers)) = actions.select {
+    if let Some((index, modifiers, open_photo)) = actions.select {
         editor.select_roll_photo(index, modifiers, cx);
-    } else if let Some(step) = actions.step {
-        editor.browse_adjacent_roll_photo(step, cx);
+        if open_photo {
+            editor.set_view_mode(Mode::Photo);
+        }
+        ui.ctx().request_repaint();
+    } else if let Some((index, target)) = actions.navigate {
+        editor.select_roll_photo(index, egui::Modifiers::NONE, cx);
+        editor.document.filmstrip.focus_photo = Some(target);
+        ui.ctx().request_repaint();
     }
+    thumbnails
 }
 
 #[derive(Default)]
 struct Actions {
-    select: Option<(usize, egui::Modifiers)>,
-    step: Option<isize>,
+    select: Option<(usize, egui::Modifiers, bool)>,
+    navigate: Option<(usize, SourceId)>,
     remove: bool,
-    auto_crop: bool,
     drop_slot: Option<usize>,
 }
 
@@ -86,7 +87,7 @@ fn show_cards(
     editor: &mut Editor,
     ui: &mut egui::Ui,
     thumbnails: &mut thumbnails::ThumbnailProvider,
-    preview: &Preview,
+    preview: &RollPreview,
 ) -> Actions {
     let mut actions = Actions::default();
     let resized_height = panel(ui, editor.preferences.filmstrip_height, |ui, layout| {
@@ -107,103 +108,127 @@ fn show_cards(
             view.cancel_drag(ui.ctx());
         }
 
-        visible_cards(ui, layout, order.len(), |ui, content, indices| {
-            let pitch = layout.pitch();
-            for index in indices {
-                let id = order[index];
-                let active = editor.document.visit.current_source == Some(id);
-                let selected = active || editor.document.roll_selection.contains(id);
-                let card = layout.begin(
-                    ui,
-                    content.min + egui::vec2(index as f32 * pitch, 0.),
-                    ui.id().with(id.0),
-                    selected,
-                    active,
-                    ui.is_enabled().then(|| {
-                        if can_drag {
-                            egui::Sense::click_and_drag()
-                        } else {
-                            egui::Sense::click()
-                        }
-                    }),
-                );
-
-                let starts_drag =
-                    can_drag && card.response.drag_started_by(egui::PointerButton::Primary);
-                let source = project.source(id).expect("filmstrip source");
-                let path = editor.document.source_path(id).expect("filmstrip locator");
-                let contents = image::Card {
-                    image: thumbnails.lookup(editor, source, &path),
-                    warning: preview
-                        .warnings
-                        .iter()
-                        .find(|(source, _)| *source == id)
-                        .map(|(_, reason)| reason.clone())
-                        .or_else(|| editor.source_tool_warning(id)),
-                    outline: preview
-                        .outlines
-                        .iter()
-                        .find(|(source, _)| *source == id)
-                        .map(|(_, points)| (points, source.development.active_area)),
-                };
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                let drag_preview = starts_drag
-                    .then(|| contents.image.camera.cloned())
-                    .flatten();
-                let error = contents.show(ui, &card, &name);
-
-                let response = card.response;
-                let drag = &mut editor.document.roll_order.drag;
-                if starts_drag {
-                    *drag = Some(Drag::new(
-                        order.to_vec(),
-                        id,
-                        &editor.document.roll_selection,
-                        name.into_owned(),
-                        drag_preview,
-                    ));
-                } else if drag.is_none() {
-                    if response.clicked() {
-                        response.request_focus();
-                        actions.select = Some((index, ui.input(|input| input.modifiers)));
-                    }
-                    if response.secondary_clicked() && !selected {
-                        actions.select = Some((index, egui::Modifiers::NONE));
-                    }
-                }
-                if drag.as_ref().is_some_and(|drag| drag.contains(id)) {
-                    ui.painter().rect_filled(
-                        response.rect,
-                        4.,
-                        egui::Color32::from_black_alpha(100),
+        let active = editor.document.visit.current_source;
+        let target = active
+            .filter(|_| editor.document.roll_order.drag.is_none())
+            .and_then(|id| {
+                let index = order.iter().position(|source| *source == id)?;
+                let start = index as f32 * layout.pitch();
+                Some((id, start, start + layout.size().x))
+            });
+        let focus_photo = editor.document.filmstrip.focus_photo.take();
+        let mut reveal = std::mem::take(&mut editor.document.filmstrip.reveal);
+        visible_cards(
+            ui,
+            layout,
+            order.len(),
+            &mut reveal,
+            target,
+            |ui, content, indices| {
+                let pitch = layout.pitch();
+                for index in indices {
+                    let id = order[index];
+                    let active = editor.document.visit.current_source == Some(id);
+                    let selected = active || editor.document.roll_selection.contains(id);
+                    let card = layout.begin(
+                        ui,
+                        content.min + egui::vec2(index as f32 * pitch, 0.),
+                        ui.id().with(id.0),
+                        selected,
+                        active,
+                        ui.is_enabled().then(|| {
+                            if can_drag {
+                                egui::Sense::click_and_drag()
+                            } else {
+                                egui::Sense::click()
+                            }
+                        }),
                     );
-                }
 
-                let dragging = drag.is_some();
-                if !dragging
-                    && response.enabled()
-                    && response.has_focus()
-                    && !egui::Popup::is_any_open(ui.ctx())
-                {
-                    editor.select_active_shortcut(ui.ctx());
-                    if !editor.editing() && focused_delete(&response) {
-                        actions.remove = true;
-                    } else if actions.select.is_none() {
-                        actions.step = take_navigation_step(ui.ctx());
+                    let starts_drag =
+                        can_drag && card.response.drag_started_by(egui::PointerButton::Primary);
+                    let source = project.source(id).expect("filmstrip source");
+                    let path = editor.document.source_path(id).expect("filmstrip locator");
+                    let contents = thumbnails::card::Card {
+                        image: thumbnails.lookup(editor, source, &path),
+                        warning: preview
+                            .warnings
+                            .iter()
+                            .find(|(source, _)| *source == id)
+                            .map(|(_, reason)| reason.clone())
+                            .or_else(|| editor.source_tool_warning(id)),
+                        outline: preview
+                            .outlines
+                            .iter()
+                            .find(|(source, _)| *source == id)
+                            .map(|(_, points)| (points, source.development.active_area)),
+                    };
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    let drag_preview = starts_drag
+                        .then(|| contents.image.camera.cloned())
+                        .flatten();
+                    let error = contents.show(ui, &card, &name);
+
+                    let response = card.response;
+                    if focus_photo == Some(id) && response.enabled() {
+                        response.request_focus();
+                    }
+                    let drag = &mut editor.document.roll_order.drag;
+                    if starts_drag {
+                        *drag = Some(Drag::new(
+                            order.to_vec(),
+                            id,
+                            &editor.document.roll_selection,
+                            name.into_owned(),
+                            drag_preview,
+                        ));
+                    } else if drag.is_none() {
+                        if response.clicked() {
+                            response.request_focus();
+                            let modifiers = ui.input(|input| input.modifiers);
+                            let open_photo = modifiers.is_none() && response.double_clicked();
+                            actions.select = Some((index, modifiers, open_photo));
+                        }
+                        if response.secondary_clicked() && !selected {
+                            actions.select = Some((index, egui::Modifiers::NONE, false));
+                        }
+                    }
+                    if drag.as_ref().is_some_and(|drag| drag.contains(id)) {
+                        ui.painter().rect_filled(
+                            response.rect,
+                            4.,
+                            egui::Color32::from_black_alpha(100),
+                        );
+                    }
+
+                    let dragging = drag.is_some();
+                    if !dragging
+                        && response.enabled()
+                        && response.has_focus()
+                        && !egui::Popup::is_any_open(ui.ctx())
+                    {
+                        editor.select_active_shortcut(ui.ctx());
+                        if !editor.editing() && focused_delete(&response) {
+                            actions.remove = true;
+                        } else if actions.select.is_none()
+                            && let Some(step) = take_navigation_step(ui.ctx())
+                            && let Some(index) = index.checked_add_signed(step)
+                            && let Some(&target) = order.get(index)
+                        {
+                            actions.navigate = Some((index, target));
+                        }
+                    }
+                    actions.remove |= card_menu(&response, dragging, selected && !editor.editing());
+                    if !dragging {
+                        let help = error.unwrap_or_else(|| path.display().to_string());
+                        response.on_hover_text(&help).on_disabled_hover_text(help);
                     }
                 }
-                let menu = card_menu(&response, dragging, selected, || {
-                    (auto_crop::review_available(editor), !editor.editing())
-                });
-                actions.auto_crop |= menu == Some(MenuAction::AutoCrop);
-                actions.remove |= menu == Some(MenuAction::Remove);
-                if !dragging {
-                    let help = error.unwrap_or_else(|| path.display().to_string());
-                    response.on_hover_text(&help).on_disabled_hover_text(help);
-                }
-            }
-            actions.drop_slot = drag_feedback(&mut editor.document.roll_order, ui, content, pitch);
-        });
+                actions.drop_slot =
+                    drag_feedback(&mut editor.document.roll_order, ui, content, pitch);
+            },
+        );
+        editor.document.filmstrip.reveal = reveal;
     });
     if let Some(height) = resized_height {
         editor.preferences.filmstrip_height = height;
@@ -250,19 +275,24 @@ fn visible_cards(
     ui: &mut egui::Ui,
     layout: ContactSheetLayout,
     count: usize,
+    reveal: &mut Reveal,
+    target: Option<(SourceId, f32, f32)>,
     body: impl FnOnce(&mut egui::Ui, egui::Rect, Range<usize>),
 ) {
-    egui::ScrollArea::horizontal()
-        .animated(false)
-        .show_viewport(ui, |ui, viewport| {
-            let pitch = layout.pitch();
-            let width = (count as f32 * pitch).max(ui.available_width());
-            let (content, _) =
-                ui.allocate_exact_size(egui::vec2(width, layout.size().y), egui::Sense::hover());
-            let first = (viewport.min.x / pitch).floor().max(0.) as usize;
-            let last = (viewport.max.x / pitch).ceil().max(0.) as usize;
-            body(ui, content, first..last.min(count));
-        });
+    let mut scroll = egui::ScrollArea::horizontal().animated(false);
+    if let Some(offset) = reveal.offset(target, false) {
+        scroll = scroll.horizontal_scroll_offset(offset);
+    }
+    let output = scroll.show_viewport(ui, |ui, viewport| {
+        let pitch = layout.pitch();
+        let width = (count as f32 * pitch).max(ui.available_width());
+        let (content, _) =
+            ui.allocate_exact_size(egui::vec2(width, layout.size().y), egui::Sense::hover());
+        let first = (viewport.min.x / pitch).floor().max(0.) as usize;
+        let last = (viewport.max.x / pitch).ceil().max(0.) as usize;
+        body(ui, content, first..last.min(count));
+    });
+    reveal.observe(output.state.offset.x, output.inner_rect.width());
 }
 
 fn drag_feedback(view: &mut View, ui: &egui::Ui, content: egui::Rect, pitch: f32) -> Option<usize> {
@@ -290,45 +320,20 @@ fn drag_feedback(view: &mut View, ui: &egui::Ui, content: egui::Rect, pitch: f32
     None
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum MenuAction {
-    AutoCrop,
-    Remove,
-}
-
-fn card_menu(
-    response: &egui::Response,
-    dragging: bool,
-    selected: bool,
-    availability: impl FnOnce() -> (bool, bool),
-) -> Option<MenuAction> {
-    let mut action = None;
+fn card_menu(response: &egui::Response, dragging: bool, can_remove: bool) -> bool {
+    let mut remove = false;
     response.context_menu(|ui| {
         // Popup UIs do not inherit the card's disabled parent.
         if !response.enabled() || dragging {
             ui.disable();
         }
-        let (can_auto_crop, can_remove) = availability();
         if ui
-            .add_enabled(
-                can_auto_crop && selected,
-                egui::Button::new("Auto-crop selected photos"),
-            )
+            .add_enabled(can_remove, egui::Button::new("Remove selected photos…"))
             .clicked()
         {
-            action = Some(MenuAction::AutoCrop);
-            ui.close();
-        }
-        if ui
-            .add_enabled(
-                can_remove && selected,
-                egui::Button::new("Remove selected photos…"),
-            )
-            .clicked()
-        {
-            action = Some(MenuAction::Remove);
+            remove = true;
             ui.close();
         }
     });
-    action
+    remove
 }

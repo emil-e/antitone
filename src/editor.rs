@@ -105,6 +105,7 @@ mod filmstrip;
 mod gamma_pivot;
 #[cfg(all(test, feature = "ui-tests"))]
 mod kittest_tests;
+mod lightbox;
 mod mask_editor;
 mod measurement;
 mod memory;
@@ -1031,8 +1032,13 @@ impl Editor {
         let inspector_width = ui.available_width();
         ui.set_width(inspector_width);
         ui::restore_expansion(ui.ctx(), self.preferences.sections.clone());
-        let scope_slot = self.scope_panel(ui);
-        ui.add_space(8.);
+        let scope_slot = if self.showing_lightbox() {
+            None
+        } else {
+            let slot = self.scope_panel(ui);
+            ui.add_space(8.);
+            slot
+        };
 
         let mut next_tab = self.tab;
         ui::stage_tabs(ui, &mut next_tab);
@@ -1620,13 +1626,15 @@ impl Editor {
         }
 
         self.workspace_status(ui);
-        self.show_filmstrip(ui, cx);
+        let strip_demand = self.show_filmstrip(ui, cx);
         if self.dialogs.is_open() {
             ui.disable();
         }
         let scope_slot = self.show_inspector(ui, cx);
         let menu_zoom = command.and_then(|command| viewer_ui::menu_zoom(command.action));
-        self.show_viewer(ui, menu_zoom, cx);
+        let mut demand = self.show_viewer(ui, menu_zoom, cx);
+        demand.append(strip_demand);
+        demand.publish_demand(self, &context, cx);
         let text_focused = context.text_edit_focused();
         context.data_mut(|data| data.insert_temp(text_focus_id, text_focused));
         self.paint_scope(scope_slot);
@@ -1686,7 +1694,9 @@ impl Editor {
         }) {
             self.select_active_shortcut(ui.ctx());
             self.tool_shortcuts(ui, cx);
-            self.roll_navigation_shortcut(ui.ctx(), cx);
+            if !self.showing_lightbox() {
+                self.roll_navigation_shortcut(ui.ctx(), cx);
+            }
         }
     }
 

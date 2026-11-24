@@ -35,6 +35,13 @@ impl SourcePreviews {
     }
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum Mode {
+    #[default]
+    Photo,
+    Lightbox,
+}
+
 pub(super) struct BarResponse {
     pub zoom: Option<f32>,
     pub fit: bool,
@@ -54,10 +61,35 @@ pub(super) fn menu_zoom(action: crate::platform::menu::Action) -> Option<f32> {
 
 impl Editor {
     pub(super) fn fit_view_shortcut(&mut self, context: &egui::Context) {
-        if !context.text_edit_focused()
+        if !self.showing_lightbox()
+            && !context.text_edit_focused()
             && context.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
         {
             self.with_tool_viewport(Viewport::fit);
+        }
+    }
+
+    pub(super) fn showing_lightbox(&self) -> bool {
+        self.document.viewer_mode == Mode::Lightbox
+    }
+
+    pub(super) fn view_mode_available(&self) -> bool {
+        !self.has_hosted_tool()
+            && !self.picking()
+            && !self.interaction_blocked()
+            && !self.document.state.project.order.is_empty()
+    }
+
+    pub(super) fn set_view_mode(&mut self, mode: Mode) {
+        if self.document.viewer_mode == mode {
+            return;
+        }
+        self.document.viewer_mode = mode;
+        self.canvas_frame = Default::default();
+        if mode == Mode::Lightbox {
+            self.document.lightbox.enter();
+            self.document.visit.working_view.clear();
+            self.observe_original(None);
         }
     }
 
@@ -133,7 +165,11 @@ impl Editor {
         let mut fit = false;
         let mut toggle_fullscreen = false;
         let fullscreen = self.fullscreen.is_some();
+        let mut mode = self.document.viewer_mode;
+        let lightbox = self.showing_lightbox();
         let hosted = self.current_tool().map(|tool| tool.presentation());
+        let show_view_selector = hosted.is_none() && !self.picking();
+        let can_switch_view = self.view_mode_available();
         let fit_label = hosted.as_ref().map_or("Fit", |tool| tool.fit_label);
         let tool = hosted
             .as_ref()
@@ -190,6 +226,30 @@ impl Editor {
                 } else {
                     "sRGB"
                 };
+                if show_view_selector {
+                    ui.add_enabled_ui(can_switch_view, |ui| {
+                        ui::Segments {
+                            choices: &[
+                                (Mode::Photo, Icon::FilmFrame, "Single photo"),
+                                (Mode::Lightbox, Icon::Lightbox, "Lightbox"),
+                            ],
+                            height: ui::CONTROL_HEIGHT,
+                            layout: ui::SegmentLayout::Compact,
+                        }
+                        .show(ui, &mut mode);
+                    });
+                }
+                if lightbox {
+                    let enabled = !self.interaction_blocked();
+                    self.document.lightbox.size_controls(ui, enabled);
+                    toggle_fullscreen = self.fullscreen_button(ui, fullscreen);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(target).small().weak()).truncate(),
+                        );
+                    });
+                    return;
+                }
                 let quality = if self.document.visit.working_view.error.is_some() {
                     ""
                 } else if self.document.visit.working_view.updating
@@ -273,7 +333,7 @@ impl Editor {
                     });
                 let navigation_width = 6. * icon_slot + readout_slot + divider_slot;
                 let show_zoom_steps = !compact
-                    && (tool.is_none()
+                    && ((!show_view_selector && tool.is_none())
                         || ui.available_width() >= trailing_width + navigation_width);
                 if compact {
                     // Reclaim the gaps, not the padding or hit targets, in the tight layout.
@@ -303,26 +363,7 @@ impl Editor {
                         }
                     }
                 }
-                let (icon, name) = if fullscreen {
-                    (Icon::ExitFullscreen, "Exit fullscreen")
-                } else {
-                    (Icon::Fullscreen, "Fullscreen viewing")
-                };
-                if ui::icons::button(
-                    ui,
-                    icon,
-                    self.fullscreen_available(),
-                    name,
-                    if fullscreen {
-                        "Exit fullscreen (F or Escape)."
-                    } else {
-                        "Enlarge the current viewer (F)."
-                    },
-                )
-                .clicked()
-                {
-                    toggle_fullscreen = true;
-                }
+                toggle_fullscreen = self.fullscreen_button(ui, fullscreen);
                 if !compact {
                     ui.add(egui::Separator::default().spacing(divider));
                 }
@@ -412,6 +453,7 @@ impl Editor {
             });
         });
 
+        self.set_view_mode(mode);
         let action = if cancel {
             Some(tool::Action::Dismiss)
         } else if apply {
@@ -425,6 +467,24 @@ impl Editor {
             fullscreen: toggle_fullscreen,
             action,
         }
+    }
+
+    fn fullscreen_button(&self, ui: &mut egui::Ui, fullscreen: bool) -> bool {
+        use ui::icons::Icon;
+        let (icon, name, help) = if fullscreen {
+            (
+                Icon::ExitFullscreen,
+                "Exit fullscreen",
+                "Exit fullscreen (F or Escape).",
+            )
+        } else {
+            (
+                Icon::Fullscreen,
+                "Fullscreen viewing",
+                "Enlarge the current viewer (F).",
+            )
+        };
+        ui::icons::button(ui, icon, self.fullscreen_available(), name, help).clicked()
     }
 
     pub(super) fn photograph_controls(&mut self, ui: &mut egui::Ui, navigating: bool) {

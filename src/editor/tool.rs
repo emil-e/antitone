@@ -42,6 +42,13 @@ pub(super) struct Presentation {
     pub fit_label: &'static str,
 }
 
+#[derive(Default)]
+pub(super) struct RollPreview {
+    pub images: thumbnails::Preview,
+    pub warnings: Vec<(SourceId, String)>,
+    pub outlines: Vec<(SourceId, [[f64; 2]; 4])>,
+}
+
 pub(super) trait Tool: Any {
     fn presentation(&self, editor: &Editor) -> Presentation;
     fn composition(&self, normal: Composition) -> Composition {
@@ -51,8 +58,8 @@ pub(super) trait Tool: Any {
         &mut editor.active_canvas_mut().viewport
     }
     fn drawer(&mut self, _ui: &mut egui::Ui, _editor: &mut Editor, _cx: &UiContext<'_, Editor>) {}
-    fn filmstrip(&mut self, ui: &mut egui::Ui, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
-        editor.filmstrip(ui, cx);
+    fn roll_preview(&self, _editor: &Editor) -> RollPreview {
+        RollPreview::default()
     }
     fn canvas(
         &mut self,
@@ -180,6 +187,7 @@ impl Editor {
             return false;
         }
         self.document.visit.interaction_action = None;
+        self.set_view_mode(viewer_ui::Mode::Photo);
         self.cancel_active_tool();
         self.canvas_frame = Default::default();
         true
