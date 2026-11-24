@@ -11,10 +11,10 @@ pub(super) struct CacheBudgets {
 impl CacheBudgets {
     pub fn new(limits: CacheLimits, pressure: Pressure) -> Self {
         assert!(limits.valid());
-        // Emergency backoff drops optional ownership, without rewriting chosen preferences.
         let (sources, images) = match pressure {
             Pressure::Normal => (limits.cpu_bytes as usize, limits.gpu_bytes as usize),
-            Pressure::Warning | Pressure::Critical => (0, 0),
+            Pressure::Warning => (limits.cpu_bytes as usize / 2, limits.gpu_bytes as usize / 2),
+            Pressure::Critical => (0, 0),
         };
         Self {
             sources,

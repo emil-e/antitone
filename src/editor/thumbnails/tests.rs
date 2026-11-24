@@ -1400,7 +1400,15 @@ fn memory_pressure_suspends_eager_prefetch_without_blocking_visible_work() {
         memory::Pressure::Warning,
         memory::Pressure::Critical,
     ] {
-        let (editor, requests) = eager_prefetch_fixture();
+        let (mut editor, requests) = eager_prefetch_fixture();
+        if pressure != memory::Pressure::Normal {
+            let first = editor.document.project.order[0];
+            editor
+                .document
+                .thumbnails
+                .cache
+                .retain(|key, _| key.source.id != first);
+        }
         let context = egui::Context::default();
         let budgets = memory::CacheBudgets::for_memory(48 << 30, pressure);
         crate::application::test_support::with_application(editor, |app| {

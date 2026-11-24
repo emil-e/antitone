@@ -6,18 +6,19 @@ use crate::{
 use std::{sync::Arc, time::Duration};
 
 #[test]
-fn pressure_stops_optional_retention_without_changing_or_increasing_limits() {
+fn pressure_scales_both_optional_retention_budgets() {
     let limits = CacheLimits {
-        cpu_bytes: 1024 << 20,
-        gpu_bytes: 256 << 20,
+        cpu_bytes: 37 << 20,
+        gpu_bytes: 1 << 20,
     };
-    let normal = CacheBudgets::new(limits, Pressure::Normal);
-    for pressure in [Pressure::Warning, Pressure::Critical] {
-        let backoff = CacheBudgets::new(limits, pressure);
-        assert_eq!((backoff.sources, backoff.images), (0, 0));
+    for (pressure, expected) in [
+        (Pressure::Normal, (37 << 20, 1 << 20)),
+        (Pressure::Warning, (37 << 19, 1 << 19)),
+        (Pressure::Critical, (0, 0)),
+    ] {
+        let budgets = CacheBudgets::new(limits, pressure);
+        assert_eq!((budgets.sources, budgets.images), expected);
     }
-    assert_eq!(CacheBudgets::new(limits, Pressure::Normal), normal);
-    assert_eq!(limits.cpu_bytes, 1024 << 20);
 }
 
 #[test]
@@ -39,8 +40,7 @@ fn pressure_delivery_survives_fullscreen_document_replacement_without_a_paint() 
     let device = services.device.clone();
     let store = renderer.evaluation().materializations();
     store.set_test_pressure(Pressure::Normal);
-    let buffer_bytes = 64;
-    let produce = |id| {
+    let produce = |id, buffer_bytes| {
         let device = device.clone();
         pollster::block_on(store.obtain(
             RetainedKey::new(("pressure fixture", id)),
@@ -59,8 +59,13 @@ fn pressure_delivery_survives_fullscreen_document_replacement_without_a_paint() 
         ))
         .unwrap()
     };
-    let live = produce(0);
-    let optional = produce(1);
+    let oversized = produce(0, 768 << 10);
+    let oversized_weak = Arc::downgrade(&oversized.image);
+    drop(oversized);
+    assert!(oversized_weak.upgrade().is_some());
+
+    let live = produce(1, 64);
+    let optional = produce(2, 64);
     let optional_weak = Arc::downgrade(&optional.image);
     drop(optional);
     assert!(optional_weak.upgrade().is_some());
@@ -97,8 +102,11 @@ fn pressure_delivery_survives_fullscreen_document_replacement_without_a_paint() 
             editor.memory_pressure == Pressure::Warning
         });
         app.read(|editor| {
-            assert_eq!(editor.document.cache.charges().retained, 0);
-            assert!(!editor.document.cache.can_retain(1));
+            let retained = editor.document.cache.charges().retained;
+            assert!(retained > 0);
+            let remaining = limits.cpu_bytes / 2 - retained;
+            assert!(editor.document.cache.can_retain(remaining));
+            assert!(!editor.document.cache.can_retain(remaining + 1));
             assert_eq!(editor.cache_limits(), limits);
             assert_eq!(editor.document.project, project);
             assert!(editor.fullscreen_requested());
@@ -107,17 +115,12 @@ fn pressure_delivery_survives_fullscreen_document_replacement_without_a_paint() 
                 "the replacement was never painted"
             );
         });
-        assert_eq!(renderer.evaluation().cache_policy().generated_bytes, 0);
-        assert!(optional_weak.upgrade().is_none());
-        assert!(
-            live_weak.upgrade().is_some(),
-            "pressure cannot revoke an active image"
+        assert_eq!(
+            renderer.evaluation().cache_policy().generated_bytes,
+            limits.gpu_bytes / 2
         );
-        assert_eq!(live.as_buffer().unwrap().size(), buffer_bytes);
-        assert!(
-            app.read(|editor| editor.document.cache.get(&key).is_some()),
-            "active source inputs remain available at zero retention"
-        );
+        assert!(oversized_weak.upgrade().is_none());
+        assert!(optional_weak.upgrade().is_some());
 
         send.unbounded_send(Pressure::Normal).unwrap();
         app.run_until(Duration::from_secs(2), |editor| {
@@ -132,10 +135,10 @@ fn pressure_delivery_survives_fullscreen_document_replacement_without_a_paint() 
             renderer.evaluation().cache_policy().generated_bytes,
             limits.gpu_bytes
         );
-        drop(produce(1));
+        drop(produce(0, 768 << 10));
         assert!(
             store
-                .find_ready::<u64>(&RetainedKey::new(("pressure fixture", 1)), |_| true)
+                .find_ready::<u64>(&RetainedKey::new(("pressure fixture", 0)), |_| true)
                 .is_some()
         );
 
@@ -145,11 +148,19 @@ fn pressure_delivery_survives_fullscreen_document_replacement_without_a_paint() 
         });
         app.read(|editor| {
             assert_eq!(editor.document.cache.charges().retained, 0);
+            assert!(!editor.document.cache.can_retain(1));
+            assert!(
+                editor.document.cache.get(&key).is_some(),
+                "active source inputs remain available at zero retention"
+            );
             assert_eq!(editor.cache_limits(), limits);
             assert_eq!(editor.document.project, project);
             assert!(editor.fullscreen_requested());
         });
+        assert_eq!(renderer.evaluation().cache_policy().generated_bytes, 0);
         assert_eq!(renderer.evaluation().retained_bytes(), 0);
+        assert!(optional_weak.upgrade().is_none());
+        assert_eq!(live.as_buffer().unwrap().size(), 64);
         assert!(live_weak.upgrade().is_some());
         app.close_execution();
         assert!(
