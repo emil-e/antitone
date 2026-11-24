@@ -3,6 +3,8 @@
 #[cfg(any(feature = "render", feature = "project"))]
 pub(crate) mod aces;
 pub(crate) mod allocation;
+#[cfg(feature = "editor")]
+pub(crate) mod display;
 #[cfg(feature = "render")]
 pub mod drt;
 pub mod evaluation;

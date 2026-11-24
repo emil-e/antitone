@@ -377,8 +377,8 @@ fn workload(
         app.update(|editor| {
             editor.document.visit.working_view.clear();
             editor.document = super::document::Document::default().into();
-            editor.document.thumbnails.cancel();
-            editor.document.thumbnails.services.take();
+            editor.document.thumbnails.processed.cancel();
+            editor.document.thumbnails.processed.services.take();
         });
         scheduler.close();
         app.close_execution();

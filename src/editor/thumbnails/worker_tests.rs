@@ -27,7 +27,7 @@ fn cold_positive_captures_resolved_starting_exposure_before_authoring_its_graph(
         None,
         loader.clone(),
     );
-    let Services::Production(worker) = thumbnails.services.as_ref().unwrap() else {
+    let Services::Production(worker) = thumbnails.processed.services.as_ref().unwrap() else {
         unreachable!()
     };
     for ev in [0., -1.] {
@@ -123,7 +123,7 @@ fn retiring_the_document_releases_retention_while_its_physical_thumbnail_job_fin
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
     let (done, finishes) = mpsc::channel();
-    let Services::Production(worker) = thumbnails.services.as_mut().unwrap() else {
+    let Services::Production(worker) = thumbnails.processed.services.as_mut().unwrap() else {
         unreachable!()
     };
     Arc::get_mut(worker).unwrap().observe = Some(Arc::new(move |_, beginning| {
@@ -177,7 +177,13 @@ fn retiring_the_document_releases_retention_while_its_physical_thumbnail_job_fin
         app.read(|editor| {
             assert!(
                 editor.document.state.project.order.is_empty()
-                    && editor.document.thumbnails.cache.entries.is_empty()
+                    && editor
+                        .document
+                        .thumbnails
+                        .processed
+                        .cache
+                        .entries
+                        .is_empty()
             )
         });
     });
@@ -233,7 +239,7 @@ fn ready_thumbnail_processing_is_serial_and_visible_work_precedes_queued_eager_w
     let resume = Mutex::new(resume);
     let active = Arc::new(AtomicUsize::new(0));
     let observed = active.clone();
-    let worker = match thumbnails.services.as_mut().unwrap() {
+    let worker = match thumbnails.processed.services.as_mut().unwrap() {
         Services::Production(worker) => worker,
         _ => unreachable!(),
     };
@@ -294,7 +300,7 @@ fn ready_thumbnail_processing_is_serial_and_visible_work_precedes_queued_eager_w
             &app.access(),
         );
         let deadline = Instant::now() + Duration::from_secs(5);
-        while worker.ready.lock().unwrap().pending.len() != 1 {
+        while worker.queued() != 1 {
             app.pump();
             assert!(
                 Instant::now() < deadline,
@@ -308,7 +314,7 @@ fn ready_thumbnail_processing_is_serial_and_visible_work_precedes_queued_eager_w
             &app.access(),
         );
         let deadline = Instant::now() + Duration::from_secs(5);
-        while worker.ready.lock().unwrap().pending.len() != 2 {
+        while worker.queued() != 2 {
             app.pump();
             assert!(
                 Instant::now() < deadline,

@@ -6,13 +6,9 @@ mod correction;
 
 fn controlled() -> (Thumbnails, mpsc::Receiver<Submission>) {
     let (commands, requests) = mpsc::channel();
-    (
-        Thumbnails {
-            services: Some(Services::Controlled(commands)),
-            ..Default::default()
-        },
-        requests,
-    )
+    let mut thumbnails = Thumbnails::default();
+    thumbnails.processed.services = Some(Services::Controlled(commands));
+    (thumbnails, requests)
 }
 
 pub(super) type ServiceResults = Vec<Result<Outcome, Stopped>>;
@@ -29,6 +25,7 @@ pub(super) fn service_job(
     let previous = render
         .then(|| {
             thumbnails
+                .processed
                 .source_product(&key)
                 .map(|(_, product)| product.clone())
         })
@@ -59,10 +56,11 @@ pub(super) fn service_job(
     );
     Job {
         physical,
-        generation: thumbnails.generation.clone(),
+        generation: thumbnails.processed.generation.clone(),
         cancelled: crate::cancellation::Cancellation::default(),
         reference,
         ticket: thumbnails
+            .processed
             .generation
             .load(std::sync::atomic::Ordering::Relaxed),
         key,
@@ -82,7 +80,11 @@ pub(super) fn start_service_request<'a>(
     job: Job,
     cx: &UiContext<'a, ServiceResults>,
 ) -> async_executor::Task<()> {
-    let services = thumbnails.services.clone().expect("thumbnail service");
+    let services = thumbnails
+        .processed
+        .services
+        .clone()
+        .expect("thumbnail service");
     let cache = thumbnails.sources.clone();
     let sources = thumbnails.acquisition();
     cx.spawn(move |cx| async move {
@@ -110,22 +112,23 @@ pub(super) fn run_service_request(thumbnails: &Thumbnails, job: Job) -> Result<O
 pub(super) fn complete_service_request(thumbnails: &mut Thumbnails, document: &Document, job: Job) {
     let ticket = job.ticket;
     let key = job.key.clone();
-    thumbnails.pending = Some((ticket, key.clone()));
+    thumbnails.processed.pending = Some((ticket, key.clone()));
     match run_service_request(thumbnails, job) {
         Ok(outcome) => {
             thumbnails.complete(outcome, document);
         }
-        Err(_) => thumbnails.stopped(ticket, key),
+        Err(_) => thumbnails.processed.stopped(ticket, key),
     }
 }
 
 // Controller-only authority fixture. No producer is scheduled by this transition.
 fn typed_ticket(thumbnails: &mut Thumbnails, key: ImageKey) -> (u64, ImageKey) {
     let ticket = thumbnails
+        .processed
         .generation
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         + 1;
-    thumbnails.pending = Some((ticket, key.clone()));
+    thumbnails.processed.pending = Some((ticket, key.clone()));
     (ticket, key)
 }
 
@@ -280,8 +283,8 @@ fn queued_thumbnail_results_do_not_install_after_source_development_changes() {
         },
         &document,
     );
-    assert!(thumbnails.cache.entries.is_empty());
-    assert!(thumbnails.attempted_sources.is_empty());
+    assert!(thumbnails.processed.cache.entries.is_empty());
+    assert!(thumbnails.processed.attempted_sources.is_empty());
 }
 
 #[test]
@@ -353,13 +356,13 @@ fn source_cache_key_excludes_grading_but_includes_locator_revision_matrix_wb_and
 fn failed_thumbnail_entries_charge_owned_diagnostics_to_the_optional_cache() {
     let document = fixture();
     let mut thumbnails = Thumbnails::default();
-    thumbnails.cache.set_budget(8192);
-    thumbnails.cache.insert(
+    thumbnails.processed.cache.set_budget(8192);
+    thumbnails.processed.cache.insert(
         key(&document, document.project.order[0]),
         Err("failure ".repeat(2048)),
     );
     assert!(
-        thumbnails.cache.entries.is_empty(),
+        thumbnails.processed.cache.entries.is_empty(),
         "failure payload must be included in retention"
     );
 }
@@ -397,8 +400,8 @@ fn cancelled_gpu_ticket_retires_logical_authority_and_stale_results_do_not_insta
     let (mut thumbnails, _requests) = controlled();
     let image_key = key(&document, id);
     let (old, old_key) = typed_ticket(&mut thumbnails, image_key.clone());
-    thumbnails.cancel();
-    assert!(thumbnails.pending.is_none());
+    thumbnails.processed.cancel();
+    assert!(thumbnails.processed.pending.is_none());
     let (replacement, replacement_key) = typed_ticket(&mut thumbnails, image_key);
     thumbnails.complete(
         Outcome {
@@ -410,8 +413,11 @@ fn cancelled_gpu_ticket_retires_logical_authority_and_stale_results_do_not_insta
         },
         &document,
     );
-    assert_eq!(thumbnails.pending.as_ref().map(|p| p.0), Some(replacement));
-    assert!(thumbnails.cache.entries.is_empty());
+    assert_eq!(
+        thumbnails.processed.pending.as_ref().map(|p| p.0),
+        Some(replacement)
+    );
+    assert!(thumbnails.processed.cache.entries.is_empty());
     thumbnails.complete(
         Outcome {
             proxy: None,
@@ -422,7 +428,7 @@ fn cancelled_gpu_ticket_retires_logical_authority_and_stale_results_do_not_insta
         },
         &document,
     );
-    assert!(thumbnails.pending.is_none());
+    assert!(thumbnails.processed.pending.is_none());
 }
 
 #[test]
@@ -442,12 +448,19 @@ fn changed_document_identity_rejects_result_and_typed_worker_stop_clears_pending
         },
         &document,
     );
-    assert!(thumbnails.cache.entries.is_empty());
+    assert!(thumbnails.processed.cache.entries.is_empty());
     let (ticket, current) = typed_ticket(&mut thumbnails, key(&document, id));
-    thumbnails.stopped(ticket, current);
-    assert!(thumbnails.pending.is_none());
-    assert!(thumbnails.services.is_none());
-    assert!(thumbnails.cache.get(&key(&document, id)).unwrap().is_err());
+    thumbnails.processed.stopped(ticket, current);
+    assert!(thumbnails.processed.pending.is_none());
+    assert!(thumbnails.processed.services.is_none());
+    assert!(
+        thumbnails
+            .processed
+            .cache
+            .get(&key(&document, id))
+            .unwrap()
+            .is_err()
+    );
 }
 
 #[test]
@@ -479,6 +492,15 @@ fn filmstrip_resize_and_selection_preserve_project_state_and_loading_placeholder
                         source_positions.push(text.pos);
                     }
                 }
+                let demanded = &editor.document.thumbnails.visible;
+                assert_eq!(demanded.len(), source_positions.len());
+                assert_eq!(
+                    demanded
+                        .iter()
+                        .collect::<std::collections::HashSet<_>>()
+                        .len(),
+                    demanded.len()
+                );
                 source_positions
             };
             let positions = run(vec![]);
@@ -923,17 +945,20 @@ fn critical_pressure_retires_gpu_ticket_once_and_drops_optional_images() {
         memory::Pressure::Normal,
     ));
     thumbnails
+        .processed
         .cache
         .insert(key(&document, id), Err("cached error".into()));
     typed_ticket(&mut thumbnails, key(&document, document.project.order[1]));
     let generation = thumbnails
+        .processed
         .generation
         .load(std::sync::atomic::Ordering::Relaxed);
     let critical = memory::CacheBudgets::for_memory(48 << 30, memory::Pressure::Critical);
     thumbnails.apply_test_budgets(critical);
-    assert!(thumbnails.cache.entries.is_empty());
+    assert!(thumbnails.processed.cache.entries.is_empty());
     assert_eq!(
         thumbnails
+            .processed
             .generation
             .load(std::sync::atomic::Ordering::Relaxed),
         generation + 1
@@ -941,6 +966,7 @@ fn critical_pressure_retires_gpu_ticket_once_and_drops_optional_images() {
     thumbnails.apply_test_budgets(critical);
     assert_eq!(
         thumbnails
+            .processed
             .generation
             .load(std::sync::atomic::Ordering::Relaxed),
         generation + 1
@@ -966,11 +992,12 @@ fn visible_then_eager_rendering_does_not_wait_for_refinement_or_grading_idle() {
         editor
             .document
             .thumbnails
+            .processed
             .cache
             .insert(key(&editor.document, id), Err("already visited".into()));
     }
     let (commands, requests) = mpsc::channel();
-    editor.document.thumbnails.services = Some(Services::Controlled(commands));
+    editor.document.thumbnails.processed.services = Some(Services::Controlled(commands));
     // Only original-policy state is involved here, not an original producer.
     editor
         .document
@@ -1018,7 +1045,7 @@ fn eager_zero_budget_pass_completes_unvisited_work_without_idle_or_eviction_loop
     });
     let count = editor.document.state.project.order.len();
     let (commands, requests) = mpsc::channel();
-    editor.document.thumbnails.services = Some(Services::Controlled(commands));
+    editor.document.thumbnails.processed.services = Some(Services::Controlled(commands));
     let context = egui::Context::default();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
@@ -1050,7 +1077,8 @@ fn eager_zero_budget_pass_completes_unvisited_work_without_idle_or_eviction_loop
         app.read(|e| {
             assert_eq!(e.document.thumbnails.sources.charges().retained, 0);
             assert!(
-                e.document.thumbnails.pending.is_none() && !e.document.thumbnail_work.pending()
+                e.document.thumbnails.processed.pending.is_none()
+                    && !e.document.thumbnails.processed.work.pending()
             );
         });
         for _ in 0..4 {
@@ -1079,7 +1107,7 @@ fn visible_work_advances_while_modal_input_remains_reserved() {
     editor.apply_cache_budgets();
     let ids = editor.document.state.project.order[..2].to_vec();
     let (commands, requests) = mpsc::channel();
-    editor.document.thumbnails.services = Some(Services::Controlled(commands));
+    editor.document.thumbnails.processed.services = Some(Services::Controlled(commands));
     let modal = editor
         .activities
         .start(crate::editor::ActivityOptions::new("Independent foreground operation").modal());
@@ -1098,12 +1126,18 @@ fn visible_work_advances_while_modal_input_remains_reserved() {
             finish_submission(submitted, Err("controlled card completed".into()), true);
         }
         app.run_until(Duration::from_secs(5), |e| {
-            !e.document.thumbnail_work.pending()
+            !e.document.thumbnails.processed.work.pending()
         });
         app.read(|e| {
-            assert!(e.document.thumbnails.pending.is_none());
+            assert!(e.document.thumbnails.processed.pending.is_none());
             for id in &ids {
-                assert!(e.document.thumbnails.cache.contains(&key(&e.document, *id)));
+                assert!(
+                    e.document
+                        .thumbnails
+                        .processed
+                        .cache
+                        .contains(&key(&e.document, *id))
+                );
             }
             assert!(e.workspace_input.is_blocked());
         });
@@ -1133,9 +1167,9 @@ fn worker_completion_wakes_an_awaiting_service_consumer_without_frame_polling() 
             true,
         );
         complete_service_request(&mut thumbnails, &document, job);
-        assert!(thumbnails.pending.is_none());
+        assert!(thumbnails.processed.pending.is_none());
         assert!(matches!(
-            thumbnails.cache.get(&key(&document, id)),
+            thumbnails.processed.cache.get(&key(&document, id)),
             Some(Err(_))
         ));
     });
@@ -1156,11 +1190,12 @@ fn eager_prefetch_fixture() -> (Editor, mpsc::Receiver<Submission>) {
         editor
             .document
             .thumbnails
+            .processed
             .cache
             .insert(key(&editor.document, id), Err("already visited".into()));
     }
     let (commands, requests) = mpsc::channel();
-    editor.document.thumbnails.services = Some(Services::Controlled(commands));
+    editor.document.thumbnails.processed.services = Some(Services::Controlled(commands));
     (editor, requests)
 }
 
@@ -1215,13 +1250,14 @@ fn take_submission(
             (
                 e.document
                     .thumbnails
+                    .processed
                     .pending
                     .as_ref()
                     .map(|(ticket, key)| (*ticket, key.source.id)),
-                e.document.thumbnails.services.is_some(),
+                e.document.thumbnails.processed.services.is_some(),
                 e.document.thumbnails.budgets,
-                e.document.thumbnails.attempted_sources.len(),
-                e.document.thumbnail_work.pending(),
+                e.document.thumbnails.processed.attempted_sources.len(),
+                e.document.thumbnails.processed.work.pending(),
                 e.document.thumbnails.visible.is_empty(),
             )
         });
@@ -1253,13 +1289,19 @@ fn offscreen_positive_demand_stays_cpu_only_without_space_for_its_complete_produ
     let (mut editor, requests) = eager_prefetch_fixture();
     editor.document.state.project.set_dmin(Some([0.8; 3]));
     editor.document.state.project.set_dmax(Some([0.02; 3]));
-    editor.document.thumbnails.cache.retain(|_, _| false);
+    editor
+        .document
+        .thumbnails
+        .processed
+        .cache
+        .retain(|_, _| false);
     let last = *editor.document.state.project.order.last().unwrap();
     for &id in &editor.document.state.project.order {
         if id != last {
             editor
                 .document
                 .thumbnails
+                .processed
                 .cache
                 .insert(key(&editor.document, id), Err("already visited".into()));
         }
@@ -1288,13 +1330,19 @@ fn offscreen_card_renders_after_its_cpu_pass_when_retention_space_returns() {
     let (mut editor, requests) = eager_prefetch_fixture();
     editor.document.state.project.set_dmin(Some([0.8; 3]));
     editor.document.state.project.set_dmax(Some([0.02; 3]));
-    editor.document.thumbnails.cache.retain(|_, _| false);
+    editor
+        .document
+        .thumbnails
+        .processed
+        .cache
+        .retain(|_, _| false);
     let last = *editor.document.state.project.order.last().unwrap();
     for &id in &editor.document.state.project.order {
         if id != last {
             editor
                 .document
                 .thumbnails
+                .processed
                 .cache
                 .insert(key(&editor.document, id), Err("already visited".into()));
         }
@@ -1311,7 +1359,7 @@ fn offscreen_card_renders_after_its_cpu_pass_when_retention_space_returns() {
         assert!(!cpu.job.render);
         finish_submission(cpu, Ok(None), true);
         app.run_until(Duration::from_secs(5), |e| {
-            !e.document.thumbnail_work.pending()
+            !e.document.thumbnails.processed.work.pending()
         });
         app.enter(|e, cx| {
             e.document.visit.canvas.original.last_edit = std::time::Instant::now();
@@ -1353,7 +1401,12 @@ fn view_activity_preserves_offscreen_work_but_a_visible_miss_takes_priority() {
         ));
         app.read(|e| {
             assert_eq!(
-                e.document.thumbnails.pending.as_ref().map(|p| p.0),
+                e.document
+                    .thumbnails
+                    .processed
+                    .pending
+                    .as_ref()
+                    .map(|p| p.0),
                 Some(ticket),
                 "view activity does not retire unrelated thumbnail demand",
             )
@@ -1362,6 +1415,7 @@ fn view_activity_preserves_offscreen_work_but_a_visible_miss_takes_priority() {
         app.enter(|e, cx| {
             e.document
                 .thumbnails
+                .processed
                 .cache
                 .retain(|key, _| key.source.id != first);
             filmstrip_frame(e, &context, budgets, cx);
@@ -1376,7 +1430,12 @@ fn view_activity_preserves_offscreen_work_but_a_visible_miss_takes_priority() {
         app.pump();
         app.read(|e| {
             assert_eq!(
-                e.document.thumbnails.pending.as_ref().map(|p| p.0),
+                e.document
+                    .thumbnails
+                    .processed
+                    .pending
+                    .as_ref()
+                    .map(|p| p.0),
                 Some(current),
                 "retired GPU work cannot replace the current visible ticket",
             )
@@ -1417,8 +1476,8 @@ fn memory_pressure_suspends_eager_prefetch_without_blocking_visible_work() {
                 ));
                 app.read(|e| {
                     assert!(
-                        e.document.thumbnails.pending.is_none()
-                            && !e.document.thumbnail_work.pending()
+                        e.document.thumbnails.processed.pending.is_none()
+                            && !e.document.thumbnails.processed.work.pending()
                     )
                 });
                 return;
@@ -1453,7 +1512,12 @@ fn memory_pressure_suspends_eager_prefetch_without_blocking_visible_work() {
 #[test]
 fn hidden_filmstrip_requests_rendered_thumbnails_and_keeps_resource_backoff() {
     let (mut editor, requests) = eager_prefetch_fixture();
-    editor.document.thumbnails.cache.retain(|_, _| false);
+    editor
+        .document
+        .thumbnails
+        .processed
+        .cache
+        .retain(|_, _| false);
     let ids = editor.document.state.project.order.clone();
     let context = egui::Context::default();
     crate::application::test_support::with_application(editor, |app| {
@@ -1474,8 +1538,8 @@ fn hidden_filmstrip_requests_rendered_thumbnails_and_keeps_resource_backoff() {
             Err(mpsc::TryRecvError::Empty)
         ));
         app.update(|e| {
-            e.document.thumbnails.cache.retain(|_, _| false);
-            e.document.thumbnails.attempted_sources.clear();
+            e.document.thumbnails.processed.cache.retain(|_, _| false);
+            e.document.thumbnails.processed.attempted_sources.clear();
         });
         for pressure in [memory::Pressure::Warning, memory::Pressure::Critical] {
             app.enter(|e, cx| {
@@ -1499,12 +1563,18 @@ fn fullscreen_and_photo_switches_keep_document_owned_thumbnail_work() {
     let (mut editor, requests) = eager_prefetch_fixture();
     let target = *editor.document.state.project.order.last().unwrap();
     super::super::tests::add_ready_fixture(&mut editor);
-    editor.document.thumbnails.cache.retain(|_, _| false);
+    editor
+        .document
+        .thumbnails
+        .processed
+        .cache
+        .retain(|_, _| false);
     for id in editor.document.state.project.order.clone() {
         if id != target {
             editor
                 .document
                 .thumbnails
+                .processed
                 .cache
                 .insert(key(&editor.document, id), Err("already prepared".into()));
         }
@@ -1523,7 +1593,14 @@ fn fullscreen_and_photo_switches_keep_document_owned_thumbnail_work() {
                 "real fullscreen entry was admitted"
             );
             assert_eq!(
-                editor.document.thumbnails.pending.as_ref().unwrap().0,
+                editor
+                    .document
+                    .thumbnails
+                    .processed
+                    .pending
+                    .as_ref()
+                    .unwrap()
+                    .0,
                 ticket
             );
         });
@@ -1532,7 +1609,14 @@ fn fullscreen_and_photo_switches_keep_document_owned_thumbnail_work() {
                 context.run_ui(Default::default(), |ui| editor.hidden_filmstrip(ui, cx));
             output.textures_delta.clear();
             assert_eq!(
-                editor.document.thumbnails.pending.as_ref().unwrap().0,
+                editor
+                    .document
+                    .thumbnails
+                    .processed
+                    .pending
+                    .as_ref()
+                    .unwrap()
+                    .0,
                 ticket
             );
             let visit = editor.visit_lifetime();
@@ -1542,19 +1626,27 @@ fn fullscreen_and_photo_switches_keep_document_owned_thumbnail_work() {
                 "fixture must replace the active photo visit"
             );
             assert_eq!(
-                editor.document.thumbnails.pending.as_ref().unwrap().0,
+                editor
+                    .document
+                    .thumbnails
+                    .processed
+                    .pending
+                    .as_ref()
+                    .unwrap()
+                    .0,
                 ticket
             );
         });
         finish_submission(submitted, Err("prepared across departure".into()), true);
         app.run_until(Duration::from_secs(5), |editor| {
-            !editor.document.thumbnail_work.pending()
+            !editor.document.thumbnails.processed.work.pending()
         });
         app.read(|editor| {
             assert!(
                 editor
                     .document
                     .thumbnails
+                    .processed
                     .cache
                     .contains(&key(&editor.document, target))
             );
@@ -1592,7 +1684,12 @@ fn modal_input_preserves_the_existing_current_visible_ticket() {
         ));
         app.read(|e| {
             assert_eq!(
-                e.document.thumbnails.pending.as_ref().map(|p| p.0),
+                e.document
+                    .thumbnails
+                    .processed
+                    .pending
+                    .as_ref()
+                    .map(|p| p.0),
                 Some(submitted.job.ticket)
             )
         });
@@ -1612,6 +1709,7 @@ fn crop_draft_preserves_offscreen_rendering_and_its_completion() {
             editor
                 .document
                 .thumbnails
+                .processed
                 .cache
                 .insert(key(&editor.document, id), Err("already visited".into()));
         }
@@ -1629,7 +1727,12 @@ fn crop_draft_preserves_offscreen_rendering_and_its_completion() {
             e.document.visit.canvas.original.last_edit = std::time::Instant::now();
             filmstrip_frame(e, &context, e.document.thumbnails.budgets, cx);
             assert_eq!(
-                e.document.thumbnails.pending.as_ref().map(|p| p.0),
+                e.document
+                    .thumbnails
+                    .processed
+                    .pending
+                    .as_ref()
+                    .map(|p| p.0),
                 Some(ticket)
             );
         });
@@ -1640,12 +1743,12 @@ fn crop_draft_preserves_offscreen_rendering_and_its_completion() {
         ));
         finish_submission(pending, Err("controlled card completed".into()), true);
         app.run_until(Duration::from_secs(5), |e| {
-            !e.document.thumbnail_work.pending()
+            !e.document.thumbnails.processed.work.pending()
         });
         app.read(|e| {
             assert!(e.cropping());
-            assert!(e.document.thumbnails.cache.contains(&image_key));
-            assert!(e.document.thumbnails.pending.is_none());
+            assert!(e.document.thumbnails.processed.cache.contains(&image_key));
+            assert!(e.document.thumbnails.processed.pending.is_none());
         });
     });
 }
@@ -1696,7 +1799,7 @@ fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
         let mut editor = Editor::state();
         editor.presentation = Ok(Presentation::new(&device).await.unwrap());
         *editor.document = fixture();
-        editor.document.thumbnails.gpu = Some(ThumbnailGpu::fixture(
+        editor.document.thumbnails.processed.gpu = Some(ThumbnailGpu::fixture(
             &device,
             &queue,
             &crate::editor::display::DisplayFixture::for_device(&device),
@@ -1723,6 +1826,7 @@ fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
             editor
                 .document
                 .thumbnails
+                .processed
                 .cache
                 .insert(key(&editor.document, id), Ok(Product::camera(image)));
         }
@@ -1774,7 +1878,7 @@ fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
             }
         }
         assert!(names.contains("photo-0.ARW") && names.contains("photo-35.ARW"));
-        assert_eq!(editor.document.thumbnails.cache.entries.len(), 36);
+        assert_eq!(editor.document.thumbnails.processed.cache.entries.len(), 36);
     });
 }
 
@@ -1842,7 +1946,12 @@ fn obsolete_scroll_work_is_replaced_once_without_dropping_valid_source_seeds() {
         ));
         app.read(|e| {
             assert_eq!(
-                e.document.thumbnails.pending.as_ref().map(|p| p.0),
+                e.document
+                    .thumbnails
+                    .processed
+                    .pending
+                    .as_ref()
+                    .map(|p| p.0),
                 Some(replacement.job.ticket)
             );
             assert_eq!(e.document.thumbnails.sources.proxy_count(), 1);
@@ -1925,6 +2034,7 @@ fn disk_worker_reuses_camera_pixels_and_reopening_uses_a_new_identity() {
         complete_service_request(&mut positive, &document, job);
         assert!(
             positive
+                .processed
                 .cache
                 .get(&key(&document, id))
                 .unwrap()
@@ -1945,7 +2055,7 @@ fn disk_worker_reuses_camera_pixels_and_reopening_uses_a_new_identity() {
         let job = service_job(&restarted, key(&document, id), path, source, None, true);
         complete_service_request(&mut restarted, &document, job);
         assert!(
-            matches!(restarted.cache.get(&key(&document, id)).unwrap(), Err(error) if !error.contains("content changed"))
+            matches!(restarted.processed.cache.get(&key(&document, id)).unwrap(), Err(error) if !error.contains("content changed"))
         );
         assert!(
             disk::DiskCache::at(directory.path().join("cache"))
@@ -1977,6 +2087,7 @@ fn replacing_a_document_releases_thumbnail_images_even_for_identical_project_dat
         editor
             .document
             .thumbnails
+            .processed
             .cache
             .insert(key(&editor.document, id), Ok(product));
         assert!(
@@ -2001,7 +2112,15 @@ fn replacing_a_document_releases_thumbnail_images_even_for_identical_project_dat
             cache.upgrade().is_none(),
             "shared infrastructure must not retain document caches"
         );
-        assert!(editor.document.thumbnails.cache.entries.is_empty());
+        assert!(
+            editor
+                .document
+                .thumbnails
+                .processed
+                .cache
+                .entries
+                .is_empty()
+        );
         assert!(Arc::ptr_eq(
             &kernels,
             &editor.document.visit.working_view.kernels

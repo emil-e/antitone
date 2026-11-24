@@ -394,7 +394,7 @@ fn disabled_cards_keep_actionable_error_tooltips() {
     editor.document.visit.current_source = Some(editor.document.state.project.order[0]);
     editor.set_test_busy(true);
     let image_key = super::tests::key(&editor.document, editor.document.visit.current_source.unwrap());
-    editor.document.thumbnails.cache.insert(
+    editor.document.thumbnails.processed.cache.insert(
         image_key,
         Err("Source unavailable: actionable detail".into()),
     );

@@ -157,6 +157,7 @@ fn camera_thumbnail_paint_requests_its_map_without_waiting_or_using_an_absent_co
         editor
             .document
             .thumbnails
+            .processed
             .cache
             .get(&key)
             .unwrap()
@@ -231,7 +232,7 @@ fn positive_thumbnail_waits_for_the_captured_map_and_cancellation_keeps_another_
     let key = editor.thumbnail_key(&source, &path).unwrap();
     assert_eq!(key.field.as_ref().map(|field| &field.0), Some(&map));
     assert!(key.recipe.as_ref().unwrap().is_some());
-    let worker = thumbnails.services.clone().unwrap();
+    let worker = thumbnails.processed.services.clone().unwrap();
     let sources = thumbnails.acquisition();
     let cancelled = crate::cancellation::Cancellation::default();
     with_application(Vec::<Result<Outcome, Stopped>>::new(), |app| {

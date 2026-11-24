@@ -168,7 +168,7 @@ impl tool::Tool for AutoCropTool {
     }
 
     fn filmstrip(&mut self, ui: &mut egui::Ui, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
-        let mut preview = thumbnails::Preview::default();
+        let mut preview = filmstrip::Preview::default();
         if let Some(draft) = self.review.borrow().as_ref() {
             let inputs = review_inputs(editor);
             let project = &inputs.document.project;
@@ -181,7 +181,10 @@ impl tool::Tool for AutoCropTool {
                             .source_composition(source)
                             .cropped(entry.crop())
                             .expect("validated proposal");
-                        preview.compositions.push((entry.source, composition));
+                        preview
+                            .images
+                            .compositions
+                            .push((entry.source, composition));
                     }
                 }
             }
@@ -192,7 +195,7 @@ impl tool::Tool for AutoCropTool {
                 }
             }
         }
-        editor.filmstrip_preview(ui, preview, cx);
+        crate::editor::filmstrip::show_preview(editor, ui, preview, cx);
     }
 
     fn drawer(&mut self, ui: &mut egui::Ui, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {

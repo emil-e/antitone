@@ -1,36 +1,80 @@
 mod image;
 
-use super::*;
-use crate::editor::roll_order::{Drag, View};
-use crate::editor::ui::ContactSheetLayout;
-use image::{CardImage, Photograph};
+use super::{
+    Editor, SourceId, UiContext, auto_crop,
+    roll_order::{Drag, View},
+    thumbnails,
+    ui::ContactSheetLayout,
+};
 use std::ops::Range;
 
 #[derive(Default)]
-pub(super) struct Actions {
-    pub select: Option<(usize, egui::Modifiers)>,
-    pub remove: bool,
-    pub auto_crop: bool,
-    pub drop_slot: Option<usize>,
+pub(super) struct Preview {
+    pub images: thumbnails::Preview,
+    pub warnings: Vec<(SourceId, String)>,
+    pub outlines: Vec<(SourceId, [[f64; 2]; 4])>,
+}
+
+impl Editor {
+    pub(super) fn hidden_filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+        thumbnails::clear_visible_photos(self, ui.ctx(), cx);
+    }
+
+    pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+        show_preview(self, ui, Preview::default(), cx);
+    }
+}
+
+pub(super) fn show_preview(
+    editor: &mut Editor,
+    ui: &mut egui::Ui,
+    mut preview: Preview,
+    cx: &UiContext<'_, Editor>,
+) {
+    thumbnails::prepare_filmstrip_images(editor, std::mem::take(&mut preview.images), ui.ctx());
+
+    let mut thumbnails = thumbnails::ThumbnailProvider::default();
+    let actions = show_cards(editor, ui, &mut thumbnails, &preview);
+    if actions.auto_crop {
+        let photos = editor
+            .document
+            .project
+            .order
+            .iter()
+            .copied()
+            .filter(|id| editor.document.roll_selection.contains(*id))
+            .collect();
+        auto_crop::start_review(editor, photos, "Entry selection", cx);
+    }
+    if actions.remove {
+        editor.request_removal(cx);
+    }
+    if let Some(slot) = actions.drop_slot {
+        editor.drop_photo_order(slot);
+        ui.ctx().request_repaint();
+    }
+
+    thumbnails.publish_demand(editor, ui.ctx(), cx);
+    if let Some((index, modifiers)) = actions.select {
+        editor.select_roll_photo(index, modifiers, cx);
+    }
 }
 
 #[derive(Default)]
-pub(super) struct Demand {
-    pub visible: Vec<SourceId>,
-    pub protected: Vec<ImageKey>,
-    pub camera_wanted: Vec<(usize, ImageKey, PathBuf)>,
-    pub awaiting_correction: bool,
+struct Actions {
+    select: Option<(usize, egui::Modifiers)>,
+    remove: bool,
+    auto_crop: bool,
+    drop_slot: Option<usize>,
 }
 
-#[derive(Default)]
-pub(super) struct Pass {
-    pub actions: Actions,
-    pub demand: Demand,
-    pub resized_height: Option<f32>,
-}
-
-pub(super) fn show(editor: &mut Editor, ui: &mut egui::Ui) -> Pass {
-    let mut pass = Pass::default();
+fn show_cards(
+    editor: &mut Editor,
+    ui: &mut egui::Ui,
+    thumbnails: &mut thumbnails::ThumbnailProvider,
+    preview: &Preview,
+) -> Actions {
+    let mut actions = Actions::default();
     let resized_height = panel(ui, editor.preferences.filmstrip_height, |ui, layout| {
         let has_capture_time = editor
             .document
@@ -53,8 +97,6 @@ pub(super) fn show(editor: &mut Editor, ui: &mut egui::Ui) -> Pass {
             let pitch = layout.pitch();
             for index in indices {
                 let id = order[index];
-                let source = project.source(id).expect("filmstrip source");
-                let path = editor.document.source_path(id).expect("filmstrip locator");
                 let active = editor.document.visit.current_source == Some(id);
                 let selected = active || editor.document.roll_selection.contains(id);
                 let card = layout.begin(
@@ -72,42 +114,31 @@ pub(super) fn show(editor: &mut Editor, ui: &mut egui::Ui) -> Pass {
                     }),
                 );
 
+                let starts_drag =
+                    can_drag && card.response.drag_started_by(egui::PointerButton::Primary);
+                let source = project.source(id).expect("filmstrip source");
+                let path = editor.document.source_path(id).expect("filmstrip locator");
+                let contents = image::Card {
+                    image: thumbnails.lookup(editor, source, &path),
+                    warning: preview
+                        .warnings
+                        .iter()
+                        .find(|(source, _)| *source == id)
+                        .map(|(_, reason)| reason.clone())
+                        .or_else(|| editor.source_tool_warning(id)),
+                    outline: preview
+                        .outlines
+                        .iter()
+                        .find(|(source, _)| *source == id)
+                        .map(|(_, points)| (points, source.development.active_area)),
+                };
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                let key = editor.thumbnail_key(source, &path);
-                let warning = editor
-                    .document
-                    .thumbnails
-                    .preview
-                    .warnings
-                    .iter()
-                    .find(|(source, _)| *source == id)
-                    .map(|(_, reason)| reason.clone())
-                    .or_else(|| editor.source_tool_warning(id));
-                let image = card_image(editor, source, key.as_ref());
-                pass.demand.awaiting_correction |= image.awaits_correction();
-                let wants_camera = image.wants_camera();
-                let error = image.show(ui, &card, &name, warning);
+                let drag_preview = starts_drag
+                    .then(|| contents.image.camera.cloned())
+                    .flatten();
+                let error = contents.show(ui, &card, &name);
 
                 let response = card.response;
-                let starts_drag =
-                    can_drag && response.drag_started_by(egui::PointerButton::Primary);
-                let drag_preview = starts_drag
-                    .then(|| {
-                        key.as_ref()
-                            .and_then(|key| editor.document.thumbnails.embedded.get(&key.source))
-                            .cloned()
-                    })
-                    .flatten();
-                pass.demand.visible.push(id);
-                if let Some(key) = key {
-                    if wants_camera {
-                        pass.demand
-                            .camera_wanted
-                            .push((index, key.clone(), path.clone()));
-                    }
-                    pass.demand.protected.push(key);
-                }
-
                 let drag = &mut editor.document.roll_order.drag;
                 if starts_drag {
                     *drag = Some(Drag::new(
@@ -119,10 +150,10 @@ pub(super) fn show(editor: &mut Editor, ui: &mut egui::Ui) -> Pass {
                     ));
                 } else if drag.is_none() {
                     if response.clicked() {
-                        pass.actions.select = Some((index, ui.input(|input| input.modifiers)));
+                        actions.select = Some((index, ui.input(|input| input.modifiers)));
                     }
                     if response.secondary_clicked() && !selected {
-                        pass.actions.select = Some((index, egui::Modifiers::NONE));
+                        actions.select = Some((index, egui::Modifiers::NONE));
                     }
                 }
                 if drag.as_ref().is_some_and(|drag| drag.contains(id)) {
@@ -141,87 +172,26 @@ pub(super) fn show(editor: &mut Editor, ui: &mut egui::Ui) -> Pass {
                 {
                     editor.select_active_shortcut(ui.ctx());
                     if !editor.editing() && removal_shortcut(ui) {
-                        pass.actions.remove = true;
+                        actions.remove = true;
                     }
                 }
                 let menu = card_menu(&response, dragging, selected, || {
                     (auto_crop::review_available(editor), !editor.editing())
                 });
-                pass.actions.auto_crop |= menu == Some(MenuAction::AutoCrop);
-                pass.actions.remove |= menu == Some(MenuAction::Remove);
+                actions.auto_crop |= menu == Some(MenuAction::AutoCrop);
+                actions.remove |= menu == Some(MenuAction::Remove);
                 if !dragging {
                     let help = error.unwrap_or_else(|| path.display().to_string());
                     response.on_hover_text(&help).on_disabled_hover_text(help);
                 }
             }
-            pass.actions.drop_slot =
-                drag_feedback(&mut editor.document.roll_order, ui, content, pitch);
+            actions.drop_slot = drag_feedback(&mut editor.document.roll_order, ui, content, pitch);
         });
     });
-    Pass {
-        resized_height,
-        ..pass
+    if let Some(height) = resized_height {
+        editor.preferences.filmstrip_height = height;
     }
-}
-
-fn card_image<'a>(
-    editor: &'a mut Editor,
-    source: &Source,
-    key: Option<&ImageKey>,
-) -> CardImage<'a> {
-    let Some(key) = key else {
-        return CardImage::Empty;
-    };
-    let current = editor.document.thumbnails.cache.get(key).cloned();
-    let thumbnails = &editor.document.thumbnails;
-    let camera = thumbnails.embedded.get(&key.source);
-    let updating = current.is_none() && camera.is_none();
-    // Keep the previous accepted grade visible until its replacement is ready.
-    // Exact-key failures still take precedence over navigation feedback.
-    let entry = current.or_else(|| {
-        thumbnails
-            .previous_product(key)
-            .map(|(_, product)| Ok(product.clone()))
-            .or_else(|| {
-                thumbnails
-                    .cache
-                    .entries
-                    .iter()
-                    .rev()
-                    .find_map(|(old, value)| {
-                        (key.same_presentation(old) && value.is_err()).then(|| value.clone())
-                    })
-            })
-    });
-
-    match entry {
-        Some(Ok(product)) => {
-            let parameters = if product.positive.is_none() {
-                match editor.thumbnail_request(source) {
-                    Ok(request) => Some(request),
-                    Err(error) => return CardImage::Error(error),
-                }
-            } else {
-                None
-            };
-            CardImage::Photo(Photograph {
-                image: product.image.clone(),
-                parameters,
-                composition: editor.thumbnail_composition(source),
-                correction: editor.correction(),
-                presentation: &editor.presentation,
-                outline: thumbnails
-                    .preview
-                    .outlines
-                    .iter()
-                    .find(|(id, _)| *id == source.id)
-                    .map(|(_, points)| (points, source.development.active_area)),
-                updating,
-            })
-        }
-        Some(Err(error)) => CardImage::Error(error),
-        None => camera.map_or(CardImage::Loading, CardImage::Camera),
-    }
+    actions
 }
 
 fn panel(

@@ -194,7 +194,7 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                     let mut editor = crate::editor::tests::fixture();
                     editor.initialize_viewer(&device, &queue);
                     *editor.document = super::tests::fixture();
-                    editor.document.thumbnails.gpu = Some(ThumbnailGpu::fixture(
+                    editor.document.thumbnails.processed.gpu = Some(ThumbnailGpu::fixture(
                         &device,
                         &queue,
                         &crate::editor::display::DisplayFixture::for_device(&device),
@@ -219,7 +219,7 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                     editor.preferences.filmstrip_height = height;
                     let before = editor.document.state.project.clone();
                     for id in editor.document.state.project.order.clone() {
-                        editor.document.thumbnails.cache.insert(
+                        editor.document.thumbnails.processed.cache.insert(
                             super::tests::key(&editor.document, id),
                             Ok(Product::camera(image.clone())),
                         );

@@ -99,8 +99,9 @@ mod calibration;
 mod canvas;
 mod canvas_view;
 mod crop_editor;
-pub(crate) mod display;
+pub(crate) use crate::gpu::display;
 mod export;
+mod filmstrip;
 mod frame;
 mod gamma_pivot;
 #[cfg(all(test, feature = "ui-tests"))]

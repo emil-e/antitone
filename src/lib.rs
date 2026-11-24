@@ -94,6 +94,8 @@ pub mod spatial_metadata;
 ))]
 pub(crate) mod sys;
 #[cfg(feature = "editor")]
+mod thumbnails;
+#[cfg(feature = "editor")]
 pub mod viewport;
 #[cfg(all(test, feature = "gpu", feature = "raw", feature = "render"))]
 #[path = "../tests/support/working_precision.rs"]
