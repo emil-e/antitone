@@ -67,6 +67,7 @@ impl Value {
             }),
             demand: None,
             access,
+            reuse: false,
         }
     }
 

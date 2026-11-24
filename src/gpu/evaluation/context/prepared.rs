@@ -19,7 +19,6 @@ pub(crate) struct Preparation {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DependencyKind {
     Shared,
-    SourceProjection,
     // Acquisition storage belongs to execution, not to the independently completed output.
     SourceSlice,
 }

@@ -36,20 +36,20 @@ fn image_matches(demand: &Demand, source: &ViewImage, frame: &Frame) -> bool {
         .is_ok_and(|image| source.definition.same_definition(&image))
 }
 
-fn shares_inputs(before: &ViewImage, after: &ViewImage) -> bool {
-    let (
-        crate::gpu::evaluation::BufferImage::Produced(before),
-        crate::gpu::evaluation::BufferImage::Produced(after),
-    ) = (&before.pixels, &after.pixels)
-    else {
-        return false;
-    };
-    let after = after.image.used_inputs();
-    before
-        .image
-        .used_inputs()
-        .iter()
-        .any(|input| input.strong_count() != 0 && after.iter().any(|other| input.ptr_eq(other)))
+fn cached_inputs(view: &ViewImage) -> Vec<std::sync::Weak<crate::gpu::evaluation::ImageValue>> {
+    use crate::gpu::evaluation::ImageLayout;
+
+    let scope = view.context.materializations();
+    let root = &view.definition;
+    root.ancestors()
+        .skip(1)
+        .filter_map(|input| {
+            let region = root.region_for(input, view.region).unwrap()?;
+            input.output(region).unwrap().identity().cloned()
+        })
+        .flat_map(|key| scope.ready::<ImageLayout>(&key))
+        .map(|image| Arc::downgrade(&image.image))
+        .collect()
 }
 
 fn request_working(
@@ -818,6 +818,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
                 .unwrap()
                 .clone()
         });
+        let before_inputs = cached_inputs(&before.source);
         let processing = AuthoredPhotograph::from(
             crate::gpu::parameters::ProcessingParameters::source_inspection(1.2).unwrap(),
         );
@@ -847,7 +848,16 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
             let (device, queue) = (services.device.clone(), services.queue.clone());
             let working = &mut e.document.visit.working_view;
             let frame = working.frame.as_ref().unwrap();
-            assert!(shares_inputs(&before.source, &frame.source));
+            let crate::gpu::evaluation::BufferImage::Produced(output) = &frame.source.pixels else {
+                panic!("expected a new calculated image");
+            };
+            assert!(
+                output.image.used_inputs().iter().any(|bound| {
+                    bound.strong_count() != 0
+                        && before_inputs.iter().any(|prior| prior.ptr_eq(bound))
+                }),
+                "the edited recording binds a cached input from the preceding calculation"
+            );
             assert!(frame.request.same_calculation(&edited));
             assert_eq!(before.images().count(), frame.images().count());
             for (old, new) in before.images().zip(frame.images()) {

@@ -1,4 +1,4 @@
-//! Explicit source projections and shared rectangular demands use ordinary image preparation.
+//! Shared rectangular demands and source acquisition slices use ordinary image preparation.
 use super::*;
 use std::collections::{HashMap, HashSet};
 
@@ -11,8 +11,6 @@ struct Node {
     source_slices: Vec<CellRegion>,
     parents: HashSet<(usize, usize)>,
     children: HashSet<usize>,
-    source_work: bool,
-    missing: bool,
 }
 
 struct DependencyDemand {
@@ -83,8 +81,6 @@ fn discover(
                     source_slices: Vec::new(),
                     parents: HashSet::new(),
                     children: HashSet::new(),
-                    source_work: false,
-                    missing: false,
                 });
                 index
             });
@@ -108,7 +104,6 @@ fn discover(
             nodes[index].source_slices.push(region);
         }
         if let Some(stored) = Stored::find(Some(scope), supplied, &value, region).ok()? {
-            nodes[index].source_work = true;
             for image in stored.images() {
                 if !held.iter().any(|prior| Arc::ptr_eq(prior, image)) {
                     held.push(image.clone());
@@ -116,8 +111,6 @@ fn discover(
             }
             continue;
         }
-        nodes[index].missing = true;
-        nodes[index].source_work |= value.operation().source().is_some();
         for read in value.operation().reads(region).ok()? {
             let input = value.inputs().get(read.input)?;
             if !input.domain().contains_region(read.region) {
@@ -145,11 +138,6 @@ fn discover(
     let mut common = Vec::new();
     while let Some(index) = ready.pop() {
         let node = &nodes[index];
-        // Stream a missing projection before its consumers; completed projections stay inputs.
-        let spatial = node.missing
-            && node.source_work
-            && !node.parents.is_empty()
-            && super::super::super::reconstruction::is_projection(&node.value);
         let source = !node.source_slices.is_empty()
             && !node.parents.is_empty()
             && node.value.operation().source().is_some()
@@ -169,7 +157,7 @@ fn discover(
                     });
                 }
             }
-        } else if node.parents.len() > 1 || spatial {
+        } else if node.parents.len() > 1 {
             let region = node
                 .regions
                 .first()
@@ -179,11 +167,7 @@ fn discover(
                 common.push(DependencyDemand {
                     value: node.value.clone(),
                     region,
-                    kind: if spatial {
-                        DependencyKind::SourceProjection
-                    } else {
-                        DependencyKind::Shared
-                    },
+                    kind: DependencyKind::Shared,
                 });
             }
         }
@@ -192,9 +176,7 @@ fn discover(
             .iter()
             .map(|(parent, _)| *parent)
             .collect::<HashSet<_>>();
-        let source_work = node.source_work;
         for parent in parents {
-            nodes[parent].source_work |= source_work;
             children[parent] -= 1;
             if children[parent] == 0 {
                 ready.push(parent);
@@ -282,8 +264,8 @@ impl Context {
             let Ok(mut work) = self.prepare_base(request) else {
                 continue;
             };
-            if matches!(work.work, PreparedWork::Units) && kind != DependencyKind::SourceProjection
-            {
+            // Unit traversal can assemble the consumer's declared read on demand.
+            if matches!(work.work, PreparedWork::Units) {
                 continue;
             }
             work.kind = kind;

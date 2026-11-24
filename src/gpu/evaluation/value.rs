@@ -26,6 +26,7 @@ pub struct Value {
     definition: Arc<Definition>,
     demand: Option<Output>,
     access: Access,
+    pub(super) reuse: bool,
 }
 
 /// A weak calculation handle; descriptions do not retain physical producer resources.
@@ -34,6 +35,7 @@ pub(crate) struct WeakValue {
     definition: std::sync::Weak<Definition>,
     demand: Option<Output>,
     access: Access,
+    reuse: bool,
 }
 
 impl WeakValue {
@@ -42,6 +44,7 @@ impl WeakValue {
             definition: self.definition.upgrade()?,
             demand: self.demand.clone(),
             access: self.access,
+            reuse: self.reuse,
         })
     }
 }
@@ -52,7 +55,16 @@ impl Value {
             definition: Arc::downgrade(&self.definition),
             demand: self.demand.clone(),
             access: self.access,
+            reuse: self.reuse,
         }
+    }
+
+    /// Produce demanded pixels at this graph boundary for reuse. The ordinary
+    /// cache decides retention; mathematical identity and coverage are unchanged.
+    #[cfg(feature = "editor")]
+    pub(crate) fn for_reuse(mut self) -> Self {
+        self.reuse = true;
+        self
     }
 }
 
