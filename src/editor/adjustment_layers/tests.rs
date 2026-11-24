@@ -12,12 +12,15 @@ fn reinterpret_fixture(editor: &mut Editor) {
     }
 }
 
-fn reorder(editor: &mut Editor, id: AdjustmentLayerId, slot: usize) {
-    let key = OrderKey {
-        source: editor.document.visit.current_source.unwrap(),
-        id,
-    };
-    editor.adjustment_layer_order_input(Some(id), Some((key, slot)), true);
+fn begin_reorder(editor: &mut Editor, id: AdjustmentLayerId) -> OrderKey {
+    let key = OrderKey(id);
+    editor.document.visit.adjustment_layers.reorder.0 = Some(key);
+    key
+}
+
+fn reorder_layer(editor: &mut Editor, id: AdjustmentLayerId, position: DropPosition) {
+    let key = begin_reorder(editor, id);
+    apply_drop(editor, key, position);
 }
 
 #[test]
@@ -127,7 +130,7 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
             )
             .unwrap();
         assert_eq!(accepted.clone(), renamed.clone());
-        reorder(&mut editor, order[0], 2);
+        reorder_layer(&mut editor, order[0], DropPosition::Above(order[1]));
         assert_eq!(ids(&editor), vec![order[1], order[0]]);
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
         assert_ne!(
@@ -171,7 +174,11 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
             &UiContext::render_only(),
         );
         assert_eq!(editor.document.state.project, before);
-        reorder(&mut editor, order[0], 3);
+        reorder_layer(
+            &mut editor,
+            order[0],
+            DropPosition::Below(AdjustmentLayerId(u64::MAX)),
+        );
         assert_eq!(editor.document.state.project, before);
         editor.set_test_busy(true);
         editor
@@ -188,30 +195,33 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
 }
 
 #[test]
-fn drag_captures_accepted_locals_after_rename_commits() {
+fn drop_uses_current_order_and_preserves_edits_made_during_the_drag() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         editor.reveal_adjustment_layers();
         let order = ids(&editor);
-        let key = OrderKey {
-            source: editor.document.visit.current_source.unwrap(),
-            id: order[0],
-        };
-        let cx = UiContext::render_only();
-        editor.apply_adjustment_layer_action(Action::Rename(order[0], "Renamed".into()), &cx);
-        editor.adjustment_layer_order_input(Some(order[0]), Some((key, 2)), true);
-        assert_eq!(ids(&editor), vec![order[1], order[0]]);
-        let layers = editor
-            .document
-            .state
-            .project
-            .source(key.source)
-            .unwrap()
-            .adjustment_layers
-            .as_ref()
+        let key = begin_reorder(&mut editor, order[0]);
+        editor
+            .edit_adjustment_layers(|layers| {
+                layers.layers[0].name = "Renamed".into();
+                layers.layers[0].adjustment.strength = 0.5;
+                let mut extra = layers.layers[0].adjustment;
+                extra.photo = AdjustmentLayerSettings::default();
+                layers.add("Unrelated".into(), extra)?;
+                layers.layers.rotate_right(1);
+                Ok(())
+            })
             .unwrap();
-        assert_eq!(layers.layers[1].name, "Renamed");
-        assert!(!editor.document.visit.layer_order_drag.is_some());
+
+        let mut expected = editor.document.state.project.clone();
+        let source = expected
+            .source_mut(editor.document.visit.current_source.unwrap())
+            .unwrap();
+        let records = &mut source.adjustment_layers.as_mut().unwrap().layers;
+        records.swap(1, 2);
+        apply_drop(&mut editor, key, DropPosition::Above(order[1]));
+        assert_eq!(editor.document.state.project, expected);
+        assert!(editor.document.visit.adjustment_layers.reorder.0.is_none());
     });
 }
 
@@ -247,13 +257,10 @@ fn drop_positions_insert_without_swapping_neighbours_or_consuming_ids() {
             .as_ref()
             .unwrap()
             .next_id;
-        editor
-            .reorder_adjustment(editor.order_drag(order[0]).unwrap(), 3)
-            .unwrap();
+        editor.reveal_adjustment_layers();
+        reorder_layer(&mut editor, order[0], DropPosition::Above(order[2]));
         assert_eq!(ids(&editor), vec![order[1], order[2], order[0]]);
-        editor
-            .reorder_adjustment(editor.order_drag(order[0]).unwrap(), 0)
-            .unwrap();
+        reorder_layer(&mut editor, order[0], DropPosition::Below(order[1]));
         assert_eq!(ids(&editor), order);
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
         assert_eq!(
@@ -274,29 +281,28 @@ fn drop_positions_insert_without_swapping_neighbours_or_consuming_ids() {
 }
 
 #[test]
-fn layer_drop_preserves_accepted_values_after_record_changes_or_scope_retirement() {
+fn layer_drop_preserves_accepted_values_after_layer_removal_or_scope_retirement() {
     pollster::block_on(async {
-        for changed_records in [false, true] {
+        for removed_layer in [false, true] {
             let (mut editor, _, _) = processing::tests::fixture().await;
-            let id = ids(&editor)[0];
+            editor.reveal_adjustment_layers();
+            let order = ids(&editor);
+            let id = order[0];
             editor.select_adjustment_layer(Target::Layer(id));
-            let key = editor.order_drag(id).unwrap().key;
-            editor.adjustment_layer_order_input(Some(id), None, false);
-            assert!(editor.document.visit.layer_order_drag.is_some());
-            if changed_records {
+            let key = begin_reorder(&mut editor, id);
+            assert!(editor.document.visit.adjustment_layers.reorder.0.is_some());
+            if removed_layer {
                 editor
-                    .edit_adjustment_layers(|layers| {
-                        layers.layers[0].name = "Renamed during drag".into();
-                        Ok(())
-                    })
+                    .edit_adjustment_layers(|layers| layers.remove(id))
                     .unwrap();
             } else {
                 let departed = editor.visit_lifetime();
                 reinterpret_fixture(&mut editor);
                 assert!(departed.upgrade().is_none());
-                assert!(editor.document.visit.layer_order_drag.is_none());
+                assert!(editor.document.visit.adjustment_layers.reorder.0.is_none());
             }
             let before = editor.document.state.project.clone();
+            let target = editor.adjustment_layer_target();
             let revision = editor.document.visit.canvas.original.continuation();
             let input = editor
                 .positive_processing(
@@ -305,17 +311,21 @@ fn layer_drop_preserves_accepted_values_after_record_changes_or_scope_retirement
                     editor.photo_settings(),
                 )
                 .unwrap();
-            editor.adjustment_layer_order_input(None, Some((key, 2)), true);
-            if changed_records {
-                assert!(editor.status.contains("layers changed during drag"));
+            apply_drop(&mut editor, key, DropPosition::Above(order[1]));
+            if removed_layer {
+                assert!(
+                    editor
+                        .status
+                        .contains("dragged adjustment layer no longer exists")
+                );
             }
-            assert!(editor.document.visit.layer_order_drag.is_none());
+            assert!(editor.document.visit.adjustment_layers.reorder.0.is_none());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(
                 editor.document.visit.canvas.original.continuation(),
                 revision
             );
-            assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
+            assert_eq!(editor.adjustment_layer_target(), target);
             let current = editor
                 .positive_processing(
                     editor.document.project.input,
@@ -454,34 +464,39 @@ fn starting_crop_preserves_the_selected_layer_and_accepted_grade() {
 }
 
 #[test]
-fn input_switch_preserves_the_selected_layer_and_its_workspace() {
+fn input_switch_keeps_the_photo_and_accepted_layers_but_resets_its_workspace() {
     pollster::block_on(async {
         let (editor, _, _) = processing::tests::fixture().await;
         crate::application::test_support::with_application(editor, |app| {
-            let (id, accepted, source) = app.enter(|editor, cx| {
-                let id = ids(editor)[1];
-                editor.select_adjustment_layer(Target::Layer(id));
+            let (fallback, accepted, source, drag) = app.enter(|editor, cx| {
+                let layers = ids(editor);
+                editor.select_adjustment_layer(Target::Layer(layers[0]));
+                assert_eq!(editor.adjustment_layer_target(), Target::Layer(layers[0]));
                 editor.document.visit.adjustment_layers.show_coverage = true;
+                editor.document.visit.canvas.viewport.zoom = Some(2.);
                 let accepted = editor.document.state.project.sources.clone();
                 let source = editor.document.visit.current_source;
+                let drag = begin_reorder(editor, layers[0]);
                 editor.request_input(crate::processing::InputSettings::Digital, cx);
                 if editor.dialogs.is_open() {
                     editor.dialogs.answer_for_test("Switch stage");
                 }
-                (id, accepted, source)
+                (layers[1], accepted, source, drag)
             });
             app.run_until(std::time::Duration::from_secs(5), |editor| {
                 editor.document.input_change.is_none()
             });
-            app.read(|editor| {
+            app.enter(|editor, _| {
                 assert_eq!(
                     editor.document.project.input,
                     crate::processing::InputSettings::Digital
                 );
                 assert_eq!(editor.document.visit.current_source, source);
-                assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
+                assert_eq!(editor.document.visit.canvas.viewport, Viewport::default());
+                assert_eq!(editor.adjustment_layer_target(), Target::Layer(fallback));
                 assert_eq!(editor.tab, 1);
-                assert!(editor.document.visit.adjustment_layers.show_coverage);
+                apply_drop(editor, drag, DropPosition::Above(fallback));
+                assert!(!editor.document.visit.adjustment_layers.show_coverage);
                 assert_eq!(editor.document.project.sources, accepted);
             });
         });
@@ -494,12 +509,12 @@ fn deferred_layer_actions_cannot_mutate_the_stack_after_leaving_the_photo_stage(
         let (mut editor, _, _) = processing::tests::fixture().await;
         let id = ids(&editor)[0];
         editor.select_adjustment_layer(Target::Layer(id));
-        let key = editor.order_drag(id).unwrap().key;
-        editor.adjustment_layer_order_input(Some(id), None, false);
+        let key = begin_reorder(&mut editor, id);
         editor.tab = 0;
         let before = editor.document.state.project.clone();
         editor.apply_adjustment_layer_action(Action::Enable(id, false), &UiContext::render_only());
-        editor.adjustment_layer_order_input(None, Some((key, 2)), true);
+        let target = ids(&editor)[1];
+        apply_drop(&mut editor, key, DropPosition::Above(target));
         editor.apply_adjustment_layer_action(Action::Delete(id), &UiContext::render_only());
         editor.apply_adjustment_layer_action(
             Action::Select(Target::Layer(id)),
@@ -671,8 +686,8 @@ fn deep_stack_reorder_and_reenable_preserve_selection_allocator_and_viewport() {
             let before = editor.document.state.project.clone();
             let viewport = editor.document.visit.canvas.viewport;
             if reorder {
-                let key = editor.order_drag(subject).unwrap().key;
-                editor.adjustment_layer_order_input(Some(subject), Some((key, 0)), true);
+                let first = ids(&editor)[0];
+                reorder_layer(&mut editor, subject, DropPosition::Below(first));
             } else {
                 editor.apply_adjustment_layer_action(
                     Action::Enable(subject, true),

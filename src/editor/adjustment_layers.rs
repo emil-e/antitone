@@ -10,14 +10,68 @@ pub(super) enum Target {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct OrderKey {
-    source: SourceId,
-    id: AdjustmentLayerId,
+struct OrderKey(AdjustmentLayerId);
+
+#[derive(Default)]
+struct LayerReorder(Option<OrderKey>);
+
+impl LayerReorder {
+    fn update(&mut self, ctx: &egui::Context, available: bool) {
+        if !available || !egui::DragAndDrop::has_payload_of_type::<OrderKey>(ctx) {
+            self.cancel(ctx);
+        }
+    }
+
+    fn cancel(&mut self, ctx: &egui::Context) {
+        if self.0.take().is_some() {
+            egui::DragAndDrop::take_payload::<OrderKey>(ctx);
+            ctx.request_repaint();
+        }
+    }
 }
 
-pub(super) struct OrderDrag {
-    key: OrderKey,
-    layers: AdjustmentLayers,
+#[derive(Clone, Copy)]
+enum DropPosition {
+    Above(AdjustmentLayerId),
+    Below(AdjustmentLayerId),
+}
+
+impl DropPosition {
+    fn move_layer(
+        self,
+        layers: &mut AdjustmentLayers,
+        dragged: AdjustmentLayerId,
+    ) -> Result<(), Error> {
+        let (target, above) = match self {
+            Self::Above(target) => (target, true),
+            Self::Below(target) => (target, false),
+        };
+        let index_of = |id| layers.layers.iter().position(|record| record.id == id);
+        let from = index_of(dragged).ok_or(Error::InvalidParameter(
+            "dragged adjustment layer no longer exists",
+        ))?;
+        let target_index = index_of(target).ok_or(Error::InvalidParameter(
+            "destination adjustment layer no longer exists",
+        ))?;
+        let slot = target_index + usize::from(above);
+        let to = slot - usize::from(from < slot);
+        if from != to {
+            let record = layers.layers.remove(from);
+            layers.layers.insert(to, record);
+        }
+        Ok(())
+    }
+}
+
+fn apply_drop(editor: &mut Editor, key: OrderKey, position: DropPosition) {
+    if editor.document.visit.adjustment_layers.reorder.0.take() == Some(key)
+        && editor.tab == 1
+        && editor.adjustment_layer_actions_available()
+        && let Err(error) =
+            editor.edit_adjustment_layers(|layers| position.move_layer(layers, key.0))
+    {
+        editor.status = format!("Adjustment edit rejected: {error}");
+    }
 }
 
 #[derive(Default)]
@@ -25,6 +79,7 @@ pub(super) struct AdjustmentLayerEditor {
     selected: Cell<Option<(SourceId, AdjustmentLayerId)>>,
     owns_delete: bool,
     rename: Option<(SourceId, AdjustmentLayerId, String)>,
+    reorder: LayerReorder,
 
     pub(super) show_coverage: bool,
     panel_collapsed: bool,
@@ -211,87 +266,6 @@ impl Editor {
         self.commit_project(draft)
     }
 
-    pub(super) fn adjustment_layer_order_input(
-        &mut self,
-        start: Option<AdjustmentLayerId>,
-        drop: Option<(OrderKey, usize)>,
-        finish: bool,
-    ) {
-        if !self.adjustment_layer_actions_available() || self.tab != 1 {
-            self.document.visit.layer_order_drag = None;
-            return;
-        }
-        if let Some(id) = start {
-            match self.order_drag(id) {
-                Ok(drag) => self.document.visit.layer_order_drag = Some(drag),
-                Err(error) => self.status = format!("Adjustment drag rejected: {error}"),
-            }
-        }
-        if let Some((key, slot)) = drop
-            && let Some(drag) = self
-                .document
-                .visit
-                .layer_order_drag
-                .take()
-                .filter(|drag| drag.key == key)
-            && let Err(error) = self.reorder_adjustment(drag, slot)
-        {
-            self.status = format!("Adjustment edit rejected: {error}");
-        }
-        if finish {
-            self.document.visit.layer_order_drag = None;
-        }
-    }
-
-    fn order_drag(&self, id: AdjustmentLayerId) -> Result<OrderDrag, Error> {
-        let source = self
-            .document
-            .visit
-            .current_source
-            .ok_or(Error::InvalidParameter("no selected source"))?;
-        let layers = self
-            .document
-            .project
-            .source(source)?
-            .adjustment_layers
-            .as_ref()
-            .ok_or(Error::InvalidParameter("no adjustment layers"))?
-            .clone();
-        if !layers.layers.iter().any(|record| record.id == id) {
-            return Err(Error::InvalidParameter("unknown adjustment-layer ID"));
-        }
-        Ok(OrderDrag {
-            key: OrderKey { source, id },
-            layers,
-        })
-    }
-
-    fn reorder_adjustment(&mut self, drag: OrderDrag, slot: usize) -> Result<(), Error> {
-        if Some(drag.key.source) != self.document.visit.current_source {
-            return Err(Error::InvalidParameter(
-                "adjustment source changed during drag",
-            ));
-        }
-        self.edit_adjustment_layers(|layers| {
-            if *layers != drag.layers {
-                return Err(Error::InvalidParameter("layers changed during drag"));
-            }
-            if slot > layers.layers.len() {
-                return Err(Error::InvalidParameter("invalid adjustment drop position"));
-            }
-            let index = layers
-                .layers
-                .iter()
-                .position(|record| record.id == drag.key.id)
-                .ok_or(Error::InvalidParameter("unknown adjustment-layer ID"))?;
-            let record = layers.layers.remove(index);
-            layers
-                .layers
-                .insert(slot - usize::from(index < slot), record);
-            Ok(())
-        })
-    }
-
     pub(super) fn apply_adjustment_layer_action(
         &mut self,
         action: Action,
@@ -395,26 +369,6 @@ impl Editor {
         }
     }
 
-    pub(super) fn sync_adjustment_layer_drag(&mut self, ctx: &egui::Context) {
-        if self
-            .document
-            .visit
-            .layer_order_drag
-            .as_ref()
-            .is_some_and(|drag| {
-                Some(drag.key.source) != self.document.visit.current_source
-                    || self.tab != 1
-                    || self.fullscreen.is_some()
-                    || !(self.tab == 1)
-                    || self.interaction_blocked()
-                    || !egui::DragAndDrop::has_payload_of_type::<OrderKey>(ctx)
-            })
-        {
-            self.document.visit.layer_order_drag = None;
-            egui::DragAndDrop::take_payload::<OrderKey>(ctx);
-        }
-    }
-
     pub(super) fn adjustment_layer_owns_delete(&self) -> bool {
         self.tab == 1
             && self.document.visit.adjustment_layers.owns_delete
@@ -422,9 +376,7 @@ impl Editor {
     }
 
     pub(super) fn delete_selected_adjustment_layer(&mut self, cx: &UiContext<'_, Self>) {
-        if self.document.visit.layer_order_drag.is_none()
-            && let Target::Layer(id) = self.adjustment_layer_target()
-        {
+        if let Target::Layer(id) = self.adjustment_layer_target() {
             self.apply_adjustment_layer_action(Action::Delete(id), cx);
         }
     }
@@ -703,6 +655,11 @@ impl Editor {
         };
         let adjustment = selected.map(|record| record.adjustment);
         let available = self.adjustment_layer_actions_available() && ui.is_enabled();
+        self.document
+            .visit
+            .adjustment_layers
+            .reorder
+            .update(ui.ctx(), available);
         let mut action = None;
         let mut rename_finish = None;
         let mut invert_action = None;
@@ -793,7 +750,7 @@ impl Editor {
                         if records.is_empty() {
                             ui.weak("Add a layer to adjust this photo.");
                         }
-                        for (index, record) in records.iter().enumerate().rev() {
+                        for record in records.iter().rev() {
                             ui.push_id(record.id, |ui| {
                                 if let Some((source, id, text)) =
                                     &mut self.document.visit.adjustment_layers.rename
@@ -861,13 +818,10 @@ impl Editor {
                                         action = Some(Action::Edit(record.id));
                                     }
 
-                                    let key = OrderKey {
-                                        source: self.document.visit.current_source.unwrap(),
-                                        id: record.id,
-                                    };
+                                    let key = OrderKey(record.id);
                                     row.dnd_set_drag_payload(key);
                                     if row.drag_started() {
-                                        start_drag = Some(record.id);
+                                        start_drag = Some(key);
                                     }
                                     let rect = toggle
                                         .as_ref()
@@ -880,9 +834,7 @@ impl Editor {
                                     if available
                                         && let Some(payload) =
                                             destination.dnd_hover_payload::<OrderKey>()
-                                        && self.document.visit.layer_order_drag.as_ref()
-                                            .is_some_and(|drag| drag.key == *payload)
-                                        && Some(payload.source) == self.document.visit.current_source
+                                        && self.document.visit.adjustment_layers.reorder.0 == Some(*payload)
                                     {
                                         let below = ui.input(|input| {
                                             input
@@ -890,8 +842,11 @@ impl Editor {
                                                 .interact_pos()
                                                 .is_some_and(|point| point.y >= rect.center().y)
                                         });
-                                        let slot = index + usize::from(!below);
-                                        let y = if below { rect.bottom() } else { rect.top() };
+                                        let (position, y) = if below {
+                                            (DropPosition::Below(record.id), rect.bottom())
+                                        } else {
+                                            (DropPosition::Above(record.id), rect.top())
+                                        };
                                         ui.painter().line_segment(
                                             [
                                                 egui::pos2(rect.left(), y),
@@ -902,7 +857,7 @@ impl Editor {
                                         if let Some(payload) =
                                             destination.dnd_release_payload::<OrderKey>()
                                         {
-                                            drop = Some((*payload, slot));
+                                            drop = Some((*payload, position));
                                         }
                                     }
                                     if toggle.is_some_and(|response| response.changed()) {
@@ -1015,14 +970,19 @@ impl Editor {
             ui.ctx().request_repaint();
         }
 
-        let finish = ui.input(|input| input.pointer.any_released())
-            || !egui::DragAndDrop::has_payload_of_type::<OrderKey>(ui.ctx());
-        if start_drag.is_some()
-            || drop.is_some()
-            || finish && self.document.visit.layer_order_drag.is_some()
-        {
-            self.adjustment_layer_order_input(start_drag, drop, finish);
+        if let Some(key) = start_drag {
+            self.document.visit.adjustment_layers.reorder.0 = Some(key);
+        }
+        if let Some((key, position)) = drop {
+            apply_drop(self, key, position);
             ui.ctx().request_repaint();
+        }
+        if !panel_expanded || ui.input(|input| input.pointer.any_released()) {
+            self.document
+                .visit
+                .adjustment_layers
+                .reorder
+                .cancel(ui.ctx());
         }
 
         if let Some(radial) = creation {

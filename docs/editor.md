@@ -36,7 +36,7 @@ Crop continuously centers the frame during handle resizing, retaining screen-spa
 
 The Film negative / Digital selector sits below the tool shelf and drawer. Flat-field correction, Calibration, Gamma & balance and Toe & shoulder appear only for negatives; White balance and Exposure are shared. Switching input owns one scoped project edit, including any confirmation before discarding negative settings or accepted correction. Acceptance records the interpretation once without acquiring RAW headers, pixels or GPU readiness. Missing, corrupt or changed photographs report failures when consumed; they do not undo the selected stage. [Projects](projects.md#source-interpretation-and-identity) describes saved per-source developments and identity checks.
 
-Undo/Redo restores accepted interpretation settings and correction. The photo visit retains its selected source, viewport and layer workspace across reinterpretation. Captured-input owners — tools, pickers, source loading and view products — retire together, so earlier results cannot present as the new interpretation. Their physical work and compatible keyed cache entries can finish independently. Consumers request resources through [captured source inputs](../src/source/input.rs), which own lazy resolution and preparation rather than requiring each feature to reconstruct that protocol.
+Undo/Redo restores accepted interpretation settings and correction. Reinterpretation keeps the selected photo and starts a fresh visit, resetting zoom and the Layers workspace. Tools, pickers, source loading and view products from the old visit retire together, so earlier results cannot present as the new interpretation. Their physical work and compatible keyed cache entries can finish independently. Consumers request resources through [captured source inputs](../src/source/input.rs), which own lazy resolution and preparation rather than requiring each feature to reconstruct that protocol.
 
 ### Gamma colour pivot
 
@@ -145,7 +145,7 @@ The creation icons and each gradient row's pencil enter the same photo-owned [ma
 
 The tool reads accepted geometry from the layer and retains only an unfinished gesture and its original target mask. Preview and release use current layer values; release changes only the target geometry, preserving later grading. Escape discards an unfinished refinement; Escape while idle or **Done** ends editing without undoing accepted changes. Changing the selected layer, leaving the photo or replacing the tool retires unfinished geometry. Handles and coverage follow tool activation, independently of Layers expansion or value adjustment. Drags outside handles navigate.
 
-Rows drag to reorder with an insertion line. Double-click starts inline rename; Enter or focus loss commits it, and Escape cancels. Layers retains its selection and inline text independently of image-tool replacement. Delete/Backspace on the Photo stage requests stale-safe layer deletion, with text editing and active-tool shortcuts taking precedence.
+Rows drag to reorder with an insertion line. A drop moves the dragged layer relative to the target row in the current stack, preserving intervening edits. Double-click starts inline rename; Enter or focus loss commits it, and Escape cancels. Layers retains its selection and inline text independently of image-tool replacement. Delete/Backspace on the Photo stage requests stale-safe layer deletion, with text editing and active-tool shortcuts taking precedence.
 
 ## A stable working view while grading
 

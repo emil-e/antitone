@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
+    editor::history::Direction,
     geometry::SourcePoint,
     project::{AdjustmentLayerId, AdjustmentLayers},
 };
@@ -633,6 +634,68 @@ fn dust_consumes_delete_before_the_retained_layer_selection() {
 }
 
 #[test]
+fn held_layer_drag_survives_a_hidden_list_but_not_a_photo_change() {
+    workflow::calibrated_workflow(|mut harness, _, _directory| {
+        let [sky, foreground] = harness.update(install_layers);
+        harness.step();
+        show_layers(&mut harness);
+        harness.get_by_label("Sky").scroll_to_me();
+        harness.try_run_realtime().unwrap();
+        let before = harness.read(|editor| editor.document.state.project.clone());
+        let active = harness.read(|editor| editor.document.visit.current_source);
+        let before_undo = harness.read(|editor| editor.history_label(Direction::Undo));
+        let from = harness.get_by_label("Sky").rect().center();
+        let to = harness.get_by_label("Foreground").rect().center() - egui::vec2(0., 5.);
+
+        super::masks::hold_drag(&mut harness, from, to);
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
+        harness.update(|editor| editor.tab = 0);
+        harness.step();
+        assert_eq!(harness.query_all_by_label("Foreground").count(), 0);
+        harness.update(|editor| editor.tab = 1);
+        harness.step();
+        let to = harness.get_by_label("Foreground").rect().center() - egui::vec2(0., 5.);
+        harness.hover_at(to);
+        harness.step();
+        super::masks::pointer(&mut harness, to, false);
+        harness.read(|editor| {
+            let order: Vec<_> = layers(editor)
+                .layers
+                .iter()
+                .map(|record| record.id)
+                .collect();
+            assert_eq!(order, [foreground, sky]);
+            assert_eq!(
+                editor.history_label(Direction::Undo),
+                Some("Adjustment layers")
+            );
+        });
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.step();
+        harness.read(|editor| {
+            assert_eq!(editor.document.state.project, before);
+            assert_eq!(editor.history_label(Direction::Undo), before_undo);
+        });
+
+        let from = harness.get_by_label("Sky").rect().center();
+        let to = harness.get_by_label("Foreground").rect().center() - egui::vec2(0., 5.);
+        super::masks::hold_drag(&mut harness, from, to);
+        harness.key_press(egui::Key::ArrowLeft);
+        harness.step();
+        harness.read(|editor| assert_ne!(editor.document.visit.current_source, active));
+        harness.key_press(egui::Key::ArrowRight);
+        harness.step();
+        harness.read(|editor| assert_eq!(editor.document.visit.current_source, active));
+        show_layers(&mut harness);
+        let to = harness.get_by_label("Foreground").rect().center() - egui::vec2(0., 5.);
+        harness.hover_at(to);
+        harness.step();
+        super::masks::pointer(&mut harness, to, false);
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
+    });
+}
+
+#[test]
 fn row_drag_escape_and_outside_release_preserve_order_and_canvas_state() {
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         harness.update(install_layers);
@@ -667,12 +730,19 @@ fn row_drag_escape_and_outside_release_preserve_order_and_canvas_state() {
             harness.step();
             harness.hover_at(outside);
             harness.step();
-            if escape {
+            let release = if escape {
                 harness.key_press(egui::Key::Escape);
                 harness.step();
-            }
+                let target =
+                    harness.get_by_label("Foreground").rect().center() - egui::vec2(0., 5.);
+                harness.hover_at(target);
+                harness.step();
+                target
+            } else {
+                outside
+            };
             harness.event(egui::Event::PointerButton {
-                pos: outside,
+                pos: release,
                 button: egui::PointerButton::Primary,
                 pressed: false,
                 modifiers: egui::Modifiers::NONE,
@@ -687,7 +757,6 @@ fn row_drag_escape_and_outside_release_preserve_order_and_canvas_state() {
                     ),
                     before
                 );
-                assert!(!editor.document.visit.layer_order_drag.is_some());
                 assert!(editor.mask_preview_geometry().is_none());
             });
         }

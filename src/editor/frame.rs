@@ -97,7 +97,6 @@ impl Editor {
         file_action: &mut Option<FileAction>,
         dialog_escape_available: bool,
     ) {
-        self.sync_adjustment_layer_drag(ui.ctx());
         if self.document.roll_order.drag.is_some() {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
                 self.document.roll_order.drag = None;
@@ -212,7 +211,6 @@ impl Editor {
     ) {
         let adjustment_delete = self.adjustment_layer_owns_delete();
         if adjustment_delete
-            && !self.document.visit.layer_order_drag.is_some()
             && ui.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
                     || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
@@ -222,7 +220,6 @@ impl Editor {
         }
         if !self.dusting()
             && !adjustment_delete
-            && !self.document.visit.layer_order_drag.is_some()
             && !self.editing()
             && ui.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
@@ -231,9 +228,7 @@ impl Editor {
         {
             *file_action = Some(FileAction::Remove);
         }
-        if !self.document.visit.layer_order_drag.is_some()
-            && !self.document.state.project.order.is_empty()
-        {
+        if !self.document.state.project.order.is_empty() {
             let previous = ui
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft));
             let next = ui
