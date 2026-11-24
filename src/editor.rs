@@ -102,7 +102,6 @@ mod crop_editor;
 pub(crate) use crate::gpu::display;
 mod export;
 mod filmstrip;
-mod frame;
 mod gamma_pivot;
 #[cfg(all(test, feature = "ui-tests"))]
 mod kittest_tests;
@@ -1006,6 +1005,18 @@ impl Editor {
         }
     }
 
+    fn show_inspector(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) -> Option<ScopeSlot> {
+        if self.fullscreen.is_some() {
+            return None;
+        }
+        // The fixed name column and balance wheel set the useful minimum width.
+        egui::Panel::right("controls")
+            .default_size(360.)
+            .min_size(270.)
+            .show(ui, |ui| self.controls(ui, cx))
+            .inner
+    }
+
     fn controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) -> Option<ScopeSlot> {
         use ui::ColorControl;
         use ui::SectionHeader;
@@ -1566,54 +1577,199 @@ impl host::App for Editor {
 
 impl Editor {
     fn draw_ui(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        self.activities.set_context(ui.ctx());
-        self.workspace_input.set_context(ui.ctx());
+        let context = ui.ctx().clone();
+        self.activities.set_context(&context);
+        self.workspace_input.set_context(&context);
         if self.allow_close {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            context.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
-        if self.initialize_ui(ui) {
+        if !self.started {
+            self.started = true;
+            ui::configure_branding(ui);
+            ui::configure_fonts(&context);
+            context.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1100., 800.)));
+            // Named font families become available at the start of the next pass.
+            context.request_discard("Initialize editor typography");
             return;
         }
-        // egui popups close on Escape without consuming it; preserve their input ownership.
-        let popup_was_open = egui::Popup::is_any_open(ui.ctx());
+
+        // Egui can close a popup or clear focus before later handlers see the same Escape.
+        let popup_was_open = egui::Popup::is_any_open(&context);
+        let text_focus_id = ui.id().with("editor-text-focus");
+        let text_was_focused =
+            context.data(|data| data.get_temp::<bool>(text_focus_id).unwrap_or(false));
         let panel_escape_available = !popup_was_open
             && !(self.menus.text_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)));
-        let tool_escape_available = !popup_was_open && self.menus.panel.is_none();
-        self.receive_frame();
-        self.update_fullscreen(ui.ctx());
-        let mut actions = self.application_actions(ui);
-        self.frame_shortcuts(ui, cx, tool_escape_available, self.canvas_frame.input_id);
+
+        self.refresh_canvas_preview();
+        self.update_fullscreen(&context);
+        let command = self.take_menu_command(ui);
+        if self.interaction_blocked() {
+            context.request_repaint_after(Duration::from_millis(50));
+        }
+        self.workspace_shortcuts(ui, cx, popup_was_open, text_was_focused);
 
         let was_dirty = self.document.dirty();
         self.disable_blocked_workspace(ui);
-        self.workspace_chrome(ui, cx, &mut actions);
-        let scope_slot = self.edit_frame_controls(ui, cx);
+        let return_requested = self.fullscreen.is_none() && self.workspace_header(ui);
+        if return_requested
+            || command.is_some_and(|command| !self.menu_targets_text(command.action))
+        {
+            ui::surrender_keyboard_focus(&context);
+        }
 
-        let menu_zoom = match actions.menu {
-            Some(crate::platform::menu::Action::ActualSize) => Some(1.),
-            Some(crate::platform::menu::Action::ZoomIn) => Some(-1.25),
-            Some(crate::platform::menu::Action::ZoomOut) => Some(-1. / 1.25),
-            _ => None,
-        };
+        self.workspace_status(ui);
+        self.show_filmstrip(ui, cx);
+        if self.dialogs.is_open() {
+            ui.disable();
+        }
+        let scope_slot = self.show_inspector(ui, cx);
+        let menu_zoom = command.and_then(|command| viewer_ui::menu_zoom(command.action));
         self.show_viewer(ui, menu_zoom, cx);
-        let text_focused = ui.ctx().text_edit_focused();
-        ui.ctx()
-            .data_mut(|data| data.insert_temp(ui.id().with("editor-text-focus"), text_focused));
+        let text_focused = context.text_edit_focused();
+        context.data_mut(|data| data.insert_temp(text_focus_id, text_focused));
         self.paint_scope(scope_slot);
         if self.document.dirty() != was_dirty {
-            ui.ctx().request_repaint();
+            context.request_repaint();
         }
 
-        // Platform menu and file intents are revalidated after workspace input.
-        self.application_panel(ui.ctx(), panel_escape_available);
-        self.dispatch_frame_actions(ui, cx, actions);
-        self.frame_dialogs(ui, cx, !popup_was_open);
-        if self.allow_close {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        self.application_panel(&context, panel_escape_available);
+        // A workspace control may have opened a dialog or started a transaction.
+        if command.is_none_or(|command| self.menu_command_available(command)) {
+            if return_requested && !command.is_some_and(menu::Command::is_file) {
+                self.queue_external_return(cx);
+            } else if let Some(command) = command {
+                self.run_menu_command(command, &context, cx);
+            }
         }
-        self.menus.text_focused = ui.ctx().text_edit_focused();
+        self.show_document_overlays(&context, cx, !popup_was_open);
+
+        if self.allow_close {
+            context.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        self.menus.text_focused = context.text_edit_focused();
         self.menus.history_input_blocked =
-            egui::Popup::is_any_open(ui.ctx()) || ui.input(|input| input.pointer.any_down());
+            egui::Popup::is_any_open(&context) || ui.input(|input| input.pointer.any_down());
+    }
+
+    fn workspace_shortcuts(
+        &mut self,
+        ui: &mut egui::Ui,
+        cx: &UiContext<'_, Self>,
+        popup_was_open: bool,
+        text_was_focused: bool,
+    ) {
+        let workspace_available = !self.workspace_input.is_blocked();
+        if self
+            .document
+            .roll_order
+            .handle_drag_shortcuts(ui.ctx(), workspace_available)
+        {
+            return;
+        }
+
+        let fullscreen_shortcut_available = !popup_was_open && self.menus.panel.is_none();
+        self.fullscreen_shortcuts(ui, text_was_focused, fullscreen_shortcut_available);
+        if !workspace_available
+            || (text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
+            || egui::Popup::is_any_open(ui.ctx())
+        {
+            return;
+        }
+
+        self.fit_view_shortcut(ui.ctx());
+        if ui.memory(|memory| {
+            memory
+                .focused()
+                .is_none_or(|id| Some(id) == self.canvas_frame.input_id)
+        }) {
+            self.select_active_shortcut(ui.ctx());
+            self.tool_shortcuts(ui, cx);
+            self.roll_navigation_shortcut(ui.ctx(), cx);
+        }
+    }
+
+    pub(super) fn disable_blocked_workspace(&self, ui: &mut egui::Ui) {
+        if self.workspace_input.is_blocked() {
+            ui.disable();
+        }
+    }
+
+    fn workspace_header(&self, ui: &mut egui::Ui) -> bool {
+        // The menu bar belongs to the platform; the header keeps the project identity.
+        let mut return_requested = false;
+        ui::app_header(
+            ui,
+            |ui| self.project_identity(ui),
+            |ui| return_requested = self.external_return_button(ui),
+        );
+        return_requested
+    }
+
+    fn project_identity(&self, ui: &mut egui::Ui) {
+        ui.separator();
+        let name = self
+            .document
+            .path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Untitled".into());
+        let label = format!(
+            "{name}{}",
+            if self.document.dirty() {
+                " • Modified"
+            } else {
+                ""
+            }
+        );
+        let detail = self
+            .document
+            .path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "Save to create a project document".into());
+        ui.add(egui::Label::new(label).truncate())
+            .on_hover_text(detail);
+    }
+
+    fn workspace_status(&self, ui: &mut egui::Ui) {
+        egui::Panel::bottom("status")
+            .exact_size(ui::ACTIVITY_BAR_HEIGHT)
+            .show(ui, |ui| {
+                if let Some(view) = self.activities.view() {
+                    view.compact(ui);
+                } else if let Some((status, error)) = self.preview_failure_status() {
+                    status.compact(ui).on_hover_text(error.to_string());
+                } else {
+                    ui.add(egui::Label::new(&self.status).truncate())
+                        .on_hover_text(&self.status);
+                }
+            });
+    }
+
+    fn show_document_overlays(
+        &mut self,
+        context: &egui::Context,
+        cx: &UiContext<'_, Self>,
+        escape_available: bool,
+    ) {
+        if self.dialogs.is_open() {
+            self.dialogs.paint(context, escape_available);
+            return;
+        }
+
+        self.export_dialogs(context, escape_available, cx);
+        if self.dialogs.is_open() {
+            // The export form submitted a decision after the dialog check.
+            context.request_repaint();
+        } else {
+            self.activities.modal(
+                context,
+                egui::Id::new("working-document"),
+                escape_available && !self.menus.text_focused,
+            );
+        }
     }
 }

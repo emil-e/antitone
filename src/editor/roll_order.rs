@@ -109,6 +109,30 @@ pub(super) struct View {
 }
 
 impl View {
+    pub fn handle_drag_shortcuts(
+        &mut self,
+        context: &egui::Context,
+        workspace_available: bool,
+    ) -> bool {
+        if self.drag.is_none() {
+            return false;
+        }
+        if workspace_available
+            && context
+                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.cancel_drag(context);
+            context.stop_dragging();
+        }
+        true
+    }
+
+    pub fn cancel_drag(&mut self, context: &egui::Context) {
+        if self.drag.take().is_some() {
+            context.request_repaint();
+        }
+    }
+
     pub fn control(&mut self, ui: &mut egui::Ui, has_capture_time: bool) {
         let button = ui::icons::button(
             ui,

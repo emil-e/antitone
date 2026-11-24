@@ -42,7 +42,25 @@ pub(super) struct BarResponse {
     pub action: Option<tool::Action>,
 }
 
+pub(super) fn menu_zoom(action: crate::platform::menu::Action) -> Option<f32> {
+    use crate::platform::menu::Action;
+    match action {
+        Action::ActualSize => Some(1.),
+        Action::ZoomIn => Some(-1.25),
+        Action::ZoomOut => Some(-1. / 1.25),
+        _ => None,
+    }
+}
+
 impl Editor {
+    pub(super) fn fit_view_shortcut(&mut self, context: &egui::Context) {
+        if !context.text_edit_focused()
+            && context.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
+        {
+            self.with_tool_viewport(Viewport::fit);
+        }
+    }
+
     pub(super) fn source_parameters(&self, exposure: f64) -> Result<ProcessingParameters, Error> {
         if let Some(ready) = &self.active_canvas().ready {
             return self.source_preview_parameters(

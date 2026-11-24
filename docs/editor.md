@@ -235,6 +235,8 @@ Use the existing component families rather than copying their painting or intera
 - [Viewer framing](../src/editor/ui/viewer.rs), [tools](../src/editor/ui/tools.rs), [actions](../src/editor/ui/actions.rs), [icons](../src/editor/ui/icons.rs), [cards](../src/editor/ui/cards.rs): shared framing and interaction components.
 - [Dialogs](../src/editor/ui/dialogs.rs), [feedback](../src/editor/ui/feedback.rs), [working](../src/editor/ui/progress.rs): shared modal layout, notices and progress presentation.
 
+[Editor](../src/editor.rs) composes the workspace, orders competing shortcuts, and dispatches menu commands after controls have handled input. Features own their bindings and actions; focused controls handle their own keys in place.
+
 Features compose `editor::ui` components through body closures and ordinary egui layout, owning availability, accepted/draft state and dispatch. [ParameterRow](../src/editor/ui/parameter.rs) receives an explicit identity, label, bounds and value options together at its call site; shared spacing and gestures stay inside the component. [BalanceControl](../src/editor/ui/balance.rs) composes those rows with a wheel, while [white balance](../src/editor/white_balance.rs) owns its section framing and actions. Non-numeric controls use the fixed-name inspector row where they share that layout, and ordinary themed egui controls inside it.
 
 Shared value widgets edit local values and return interaction responses; features validate and accept changed values through short mutations. Completed inputs are independently undoable, with continuous gestures grouped as one action. Inspector dropdowns fill the section width, with truncation rather than value-dependent sizing.

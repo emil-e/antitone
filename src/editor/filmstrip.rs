@@ -17,7 +17,18 @@ pub(super) struct Preview {
 }
 
 impl Editor {
+    pub(super) fn show_filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+        if self.fullscreen.is_some() {
+            self.hidden_filmstrip(ui, cx);
+        } else if self.has_hosted_tool() {
+            self.with_current_tool(|tool, editor| tool.filmstrip(ui, editor, cx));
+        } else {
+            self.filmstrip(ui, cx);
+        }
+    }
+
     pub(super) fn hidden_filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+        self.document.roll_order.cancel_drag(ui.ctx());
         thumbnails::ThumbnailProvider::default().publish_demand(self, ui.ctx(), cx);
     }
 
@@ -93,7 +104,7 @@ fn show_cards(
         let can_drag = ui.is_enabled() && order.len() > 1 && editor.reorder_available();
         let view = &mut editor.document.roll_order;
         if !can_drag || view.drag.as_ref().is_some_and(|drag| !drag.current(&order)) {
-            view.drag = None;
+            view.cancel_drag(ui.ctx());
         }
 
         visible_cards(ui, layout, order.len(), |ui, content, indices| {
@@ -274,7 +285,7 @@ fn drag_feedback(view: &mut View, ui: &egui::Ui, content: egui::Rect, pitch: f32
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     }
     if !held || !focused {
-        view.drag = None;
+        view.cancel_drag(ui.ctx());
     }
     None
 }

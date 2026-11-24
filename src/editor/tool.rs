@@ -252,6 +252,25 @@ impl Editor {
         }
         Some(result)
     }
+    pub(super) fn tool_shortcuts(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+        self.with_current_tool(|tool, editor| tool.shortcuts(ui, editor));
+        if let Some(tool) = self.current_tool() {
+            let primary = tool
+                .presentation()
+                .primary
+                .is_some_and(|primary| primary.enabled);
+            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                self.dispatch_tool(Action::Dismiss, cx);
+                ui.ctx().request_repaint();
+            } else if primary
+                && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+            {
+                self.dispatch_tool(Action::Primary, cx);
+                ui.ctx().request_repaint();
+            }
+        }
+    }
+
     pub(super) fn dispatch_tool(&mut self, action: Action, cx: &UiContext<'_, Self>) {
         self.with_current_tool(|tool, editor| tool.action(action, editor, cx));
     }

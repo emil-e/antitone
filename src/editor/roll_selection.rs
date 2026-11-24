@@ -128,6 +128,28 @@ impl Editor {
         }
     }
 
+    pub(super) fn select_active_shortcut(&mut self, context: &egui::Context) {
+        if context.input_mut(|input| {
+            input.consume_key(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::A,
+            )
+        }) {
+            self.select_active_photo_only();
+            context.request_repaint();
+        }
+    }
+
+    pub(super) fn roll_navigation_shortcut(
+        &mut self,
+        context: &egui::Context,
+        cx: &UiContext<'_, Self>,
+    ) {
+        if let Some(step) = take_navigation_step(context) {
+            self.browse_adjacent_roll_photo(step, cx);
+        }
+    }
+
     pub(super) fn select_active_photo_only(&mut self) {
         if let Some(id) = self
             .document

@@ -31,7 +31,9 @@ pub(super) use inspector::{
 };
 
 mod interaction;
-pub(super) use interaction::{ControlResponse, focused_delete, numeric_cancelled};
+pub(super) use interaction::{
+    ControlResponse, focused_delete, numeric_cancelled, surrender_keyboard_focus,
+};
 
 mod parameter;
 pub(super) use parameter::ParameterRow;

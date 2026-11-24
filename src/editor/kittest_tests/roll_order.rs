@@ -77,6 +77,15 @@ fn filmstrip_sort_controls_navigation_and_reordering() {
             assert_eq!(e.export_ids(Scope::Selected), [b, c, a]);
         });
 
+        stage(&mut h, "Photo");
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
+            .scroll_to_me();
+        h.try_run_realtime().unwrap();
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
+            .click();
+        h.step();
+        h.read(|e| assert!(e.cropping()));
+
         let start = h.get_by_label("frame1.dng").rect().center();
         let target = h.get_by_label("frame10.dng").rect().left_center() - egui::vec2(4., 0.);
         primary(&mut h, start, true);
@@ -85,11 +94,18 @@ fn filmstrip_sort_controls_navigation_and_reordering() {
         h.read(|e| assert!(e.document.roll_order.drag.is_some()));
         h.key_press(egui::Key::Escape);
         h.step();
+        h.read(|e| {
+            assert!(e.document.roll_order.drag.is_none());
+            assert!(e.cropping(), "Escape belongs to the reorder, not Crop");
+        });
         primary(&mut h, target, false);
         h.read(|e| {
             assert_eq!(e.document.project.order, ids);
             assert_eq!(e.document.roll_order.sort, Sort::NameAscending);
         });
+        h.key_press(egui::Key::Escape);
+        h.step();
+        h.read(|e| assert!(!e.cropping(), "the next Escape dismisses Crop"));
 
         primary(&mut h, start, true);
         h.event(egui::Event::PointerMoved(target));
@@ -169,5 +185,20 @@ fn capture_sort_and_edge_scroll_use_the_same_displayed_ids() {
             assert_eq!(e.document.project.order, custom);
             assert_eq!(e.document.roll_order.sort, Sort::CaptureNewest);
         });
+
+        let start = h.get_by_label("frame-3.dng").rect().center();
+        primary(&mut h, start, true);
+        h.hover_at(start - egui::vec2(30., 0.));
+        h.step();
+        h.read(|e| assert!(e.document.roll_order.drag.is_some()));
+        native_file_action(&mut h, crate::platform::menu::Action::PhotoInspection);
+        h.step();
+        h.read(|e| {
+            assert!(e.fullscreen_requested());
+            assert!(e.document.roll_order.drag.is_none());
+            assert_eq!(e.document.project.order, custom);
+        });
+        primary(&mut h, start, false);
+        h.read(|e| assert_eq!(e.document.project.order, custom));
     });
 }

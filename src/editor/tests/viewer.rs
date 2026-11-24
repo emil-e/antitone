@@ -1390,7 +1390,7 @@ fn photo_tool_shelf_keeps_replacement_tools_available_during_a_crop() {
 }
 
 #[test]
-fn pick_apply_requires_selection_and_gives_way_to_measurement_activity() {
+fn pick_apply_requires_selection_and_escape_cancels_the_measurement_activity() {
     let size = egui::vec2(800., 600.);
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
@@ -1440,23 +1440,12 @@ fn pick_apply_requires_selection_and_gives_way_to_measurement_activity() {
                 .any(|(_, node)| node.label() == Some("Cancel measurement") && !node.is_disabled())
         );
         frame(app, &context, size, key(egui::Key::Escape));
-        assert!(
-            app.read(Editor::measurement_pending),
-            "Escape cannot discard a running operation like a selection draft"
-        );
-        let text = labels(app, &context, size, vec![]);
-        click(
-            app,
-            &context,
-            size,
-            text.iter()
-                .find(|(label, _)| label == "Cancel measurement")
-                .unwrap()
-                .1
-                .center(),
-        );
         app.run_until(Duration::from_secs(5), |editor| {
             !editor.measurement_pending()
+        });
+        app.read(|editor| {
+            assert!(!editor.interaction_blocked());
+            assert!(!editor.has_hosted_tool());
         });
     });
 }

@@ -142,6 +142,26 @@ impl Editor {
         });
     }
 
+    pub(super) fn external_return_button(&self, ui: &mut egui::Ui) -> bool {
+        self.document
+            .external_edit
+            .presentation()
+            .is_some_and(|presentation| {
+                ui::TextAction::new(presentation.action)
+                    .enabled(self.external_return_available())
+                    .show(ui)
+                    .clicked()
+            })
+    }
+
+    pub(super) fn queue_external_return(&mut self, cx: &UiContext<'_, Self>) {
+        if let Some(task) = cx.spawn(|cx| async move {
+            cx.update(|editor| editor.return_external(&cx));
+        }) {
+            task.detach();
+        }
+    }
+
     pub(super) fn external_return_available(&self) -> bool {
         self.document.external_edit.session.is_some()
             && !self.document.external_edit.pending()
