@@ -2,10 +2,10 @@
 use super::photographic_reference as reference;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::photograph::test_support::CameraFixture;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::graph::test_support::CameraFixture;
 use antitone::adjustment_layers::AdjustmentLayer;
 use antitone::adjustment_layers::AdjustmentLayerCoverage;
 use antitone::adjustment_layers::AdjustmentLayerSettings;

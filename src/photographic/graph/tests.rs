@@ -4,8 +4,8 @@ use crate::geometry::SourcePoint;
 use crate::geometry::SourceRegion;
 use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::photograph::PhotographGraph;
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::graph::PhotographGraph;
 use crate::processing::Calibration;
 use crate::processing::InputPipeline;
 use crate::processing::InputSettings;
@@ -107,7 +107,7 @@ fn repaired_spatial_composition_matches_host_and_image_delivery() {
             .into_iter()
             .flatten()
             .reduce(f64::min);
-        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
             image = mtf.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;
@@ -123,7 +123,7 @@ fn repaired_spatial_composition_matches_host_and_image_delivery() {
             ..Grid::axis_aligned([0., 48.], [128., 8.])
         },
     };
-    let compose = |stages: &crate::gpu::photograph::assembly::Assembly| {
+    let compose = |stages: &crate::photographic::graph::assembly::Assembly| {
         let photograph = PhotographGraph::authored(
             &device.limits(),
             source(codes.clone()),

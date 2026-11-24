@@ -1,8 +1,8 @@
 use super::*;
 mod layout;
-use crate::gpu::photograph::request::PhotographRequest;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::request::PhotographRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 
 fn capture(pixels: &source::Context, base: &SourceRequest, offset: f64, wb: f64) -> Demand {
     let scan = pixels.scan().unwrap();

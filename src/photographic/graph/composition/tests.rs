@@ -330,10 +330,10 @@ fn correction_is_shared_upstream_of_positive_and_inspection_but_recorded_exposur
     assert!(grading.roll(positive.clone()).is_ok());
     #[cfg(feature = "editor")]
     {
-        let spec = crate::gpu::view::request::SourceRequest::for_recipe(
-            crate::frame_raster::FrameRaster::full(recipe.composition).unwrap(),
-            &recipe,
-        )
+        let spec = crate::photographic::graph::request::PhotographRequest::Recipe(Arc::new(
+            recipe.clone(),
+        ))
+        .source_request(crate::frame_raster::FrameRaster::full(recipe.composition).unwrap())
         .unwrap();
         assert!(
             PhotographGraph::filtered_recipe(&device.limits(), &spec, positive.clone(), &recipe)
@@ -403,7 +403,7 @@ fn recipe_quality_preserves_the_direct_operations_and_pixels_for_original_and_ph
         codes.clone(),
         None,
         &direct,
-        direct.source_transform().unwrap().matrix,
+        direct.source_transform().unwrap().matrix(),
         &direct.definition(),
     )
     .unwrap();
@@ -546,14 +546,16 @@ fn proxy_quality_omits_repair_execution_without_stripping_the_captured_intent() 
     .unwrap();
     let mut frame = crate::frame_raster::FrameRaster::full(recipe.composition).unwrap();
     frame.output = [32, 24];
-    let spec = crate::gpu::view::request::SourceRequest::for_recipe(frame, &recipe)
-        .unwrap()
-        .with_sampling(crate::acquisition::Sampling::CameraCells {
-            region: area,
-            size: [32, 24],
-        })
-        .unwrap();
     let request = super::super::request::PhotographRequest::Recipe(Arc::new(recipe.clone()));
+    let spec = request
+        .plan_sampling(
+            request.source_request(frame).unwrap(),
+            crate::acquisition::Sampling::CameraCells {
+                region: area,
+                size: [32, 24],
+            },
+        )
+        .unwrap();
     let (_, baseline) = request.sampled_prefix(&camera, None, spec.clone()).unwrap();
     let graph = request
         .sampled_graph(&device.limits(), &camera, None, spec)
@@ -617,7 +619,7 @@ fn filtered_recipe_keeps_the_photographs_mask_extent_instead_of_redefining_it_fr
         AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings,
     };
     use crate::geometry::{Composition, SourcePoint};
-    use crate::gpu::view::request::SourceRequest;
+    use crate::photographic::graph::view_source::SourceRequest;
 
     let (device, _queue, _renderer) = crate::gpu::test_support::render_context();
     let (mut project, id) = project(crate::processing::InputSettings::Digital);
@@ -641,11 +643,10 @@ fn filtered_recipe_keeps_the_photographs_mask_extent_instead_of_redefining_it_fr
         .interpreted()
         .unwrap()
         .unrepaired;
-    let full = SourceRequest::for_recipe(
-        crate::frame_raster::FrameRaster::full(recipe.composition).unwrap(),
-        &recipe,
-    )
-    .unwrap();
+    let full =
+        crate::photographic::graph::request::PhotographRequest::Recipe(Arc::new(recipe.clone()))
+            .source_request(crate::frame_raster::FrameRaster::full(recipe.composition).unwrap())
+            .unwrap();
     assert!(
         PhotographGraph::filtered_recipe(&device.limits(), &full, neutral.clone(), &recipe).is_ok()
     );

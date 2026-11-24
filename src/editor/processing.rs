@@ -31,7 +31,7 @@ pub(super) fn validate_source_with_matrix(
     if !input.ready() {
         return Ok(());
     }
-    crate::gpu::photograph::admission::prepare(
+    crate::photographic::graph::admission::prepare(
         &device.map(|device| device.limits()).unwrap_or_default(),
         input,
         roll,
@@ -171,11 +171,11 @@ impl Editor {
 pub(super) fn image_paint(
     presentation: &Presentation,
     image: Arc<GpuImage>,
-    capture: Option<crate::gpu::photograph::request::PhotographRequest>,
+    capture: Option<crate::photographic::graph::request::PhotographRequest>,
     field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
     mapping: crate::geometry::TextureMapping,
 ) -> Result<ImagePaint, Error> {
-    use crate::gpu::photograph::request::PhotographRequest;
+    use crate::photographic::graph::request::PhotographRequest;
     let (root, luts) = match capture {
         Some(capture @ (PhotographRequest::Recipe(_) | PhotographRequest::Inspection(_))) => (
             Some(image.capture_calculation(&capture, field)?),

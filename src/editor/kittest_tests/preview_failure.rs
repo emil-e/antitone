@@ -5,7 +5,7 @@ const UNAVAILABLE: &str = "Preview unavailable: not enough graphics memory";
 
 #[test]
 fn proxy_that_needs_production_paints_before_the_working_view_without_a_failure() {
-    use crate::gpu::photograph::authoring::with_suffix;
+    use crate::photographic::graph::authoring::with_suffix;
 
     let file = crate::dng_fixture::Fixture {
         side: 384,

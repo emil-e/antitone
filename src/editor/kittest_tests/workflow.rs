@@ -706,7 +706,7 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
             let error = editor
                 .working_view(
                     frame,
-                    &crate::gpu::photograph::request::PhotographRequest::Fixture(bad),
+                    &crate::photographic::graph::request::PhotographRequest::Fixture(bad),
                     &egui::Context::default(),
                     cx,
                 )

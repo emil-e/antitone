@@ -8,7 +8,7 @@ fn resident_camera(image: &Value) -> Value {
         .ancestors()
         .find(|node| {
             (node.operation().as_ref() as &dyn std::any::Any)
-                .is::<crate::gpu::photograph::operations::ResidentCamera>()
+                .is::<crate::photographic::graph::operations::ResidentCamera>()
         })
         .expect("resident camera input")
         .clone()
@@ -98,12 +98,14 @@ fn project_corrections_share_fixed_camera_samples_and_retain_only_their_own_reso
             let inspected = resident_camera(&inspection);
             assert!(codes.same_definition(&inspected));
             assert!(
-                crate::gpu::photograph::PhotographGraph::shares_resident_camera(&codes, &inspected)
+                crate::photographic::graph::PhotographGraph::shares_resident_camera(
+                    &codes, &inspected
+                )
             );
             if let Some(original) = &original {
                 assert!(
                     original.same_definition(&codes)
-                        && crate::gpu::photograph::PhotographGraph::shares_resident_camera(
+                        && crate::photographic::graph::PhotographGraph::shares_resident_camera(
                             original, &codes
                         ),
                     "correction must not replace uploaded camera samples or their coordinate declaration"

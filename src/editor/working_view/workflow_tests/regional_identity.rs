@@ -68,7 +68,7 @@ fn repaired_previews_keep_the_neutral_dependency_when_pans_exclude_other_repairs
             .set_test_pressure(pressure);
         let pixels = editor.source_context().unwrap();
         let scan = pixels.scan().unwrap();
-        let (graph, _) = crate::gpu::photograph::PhotographGraph::preview(
+        let (graph, _) = crate::photographic::graph::PhotographGraph::preview(
             &device.limits(),
             &scan,
             None,

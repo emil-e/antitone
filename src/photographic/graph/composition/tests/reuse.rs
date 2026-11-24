@@ -1,6 +1,6 @@
 use super::*;
 use crate::gpu::evaluation::{Image, ImageBacking, ImageFormat, ImageLayout, Materializations};
-use crate::gpu::photograph::request::PhotographRequest;
+use crate::photographic::graph::request::PhotographRequest;
 
 pub(super) fn materialize(
     renderer: &crate::render_fixture::RenderFixture,

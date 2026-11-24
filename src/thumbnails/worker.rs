@@ -212,7 +212,7 @@ impl Worker {
         use crate::gpu::view::RenderedView;
         use crate::gpu::view::ViewImage;
         use crate::gpu::view::ViewKernels;
-        use crate::gpu::view::request::SourceRequest;
+        use crate::photographic::graph::view_source::SourceRequest;
         if !self.active(job) {
             return Ok(None);
         }
@@ -229,7 +229,8 @@ impl Worker {
             .as_ref()
             .and_then(|product| product.positive.as_ref());
         let tick = std::time::Instant::now();
-        let capture = crate::gpu::photograph::request::PhotographRequest::Recipe(recipe.clone());
+        let capture =
+            crate::photographic::graph::request::PhotographRequest::Recipe(recipe.clone());
         let view = if let Some(previous) = previous {
             let source = previous.product().expect("photographic thumbnail product");
             RenderedView::render_from_retained(
@@ -251,9 +252,7 @@ impl Worker {
                 Default::default(),
             )?)?;
             frame.output = proxy.dimensions();
-            let spec = SourceRequest::for_recipe(frame, &recipe)?;
-            let capture =
-                crate::gpu::photograph::request::PhotographRequest::Recipe(recipe.clone());
+            let spec = SourceRequest::for_frame(frame)?;
             let kernels = self
                 .kernels
                 .get_or_init(|| pollster::block_on(ViewKernels::new(device)))

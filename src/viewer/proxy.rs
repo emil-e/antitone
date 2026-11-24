@@ -109,7 +109,7 @@ impl GpuProxy {
         queue: &crate::gpu::submission::Queue,
         kernels: Arc<crate::gpu::view::ViewKernels>,
         input: &AuthoredPhotograph,
-        spec: crate::gpu::view::request::SourceRequest,
+        spec: crate::photographic::graph::view_source::SourceRequest,
     ) -> Result<Arc<crate::gpu::view::ViewImage>, Error> {
         crate::gpu::view::ViewImage::from_processing_with_display(
             self.0.evaluation.clone(),
@@ -128,9 +128,9 @@ impl GpuProxy {
     pub(crate) fn preview(
         &self,
         kernels: Arc<crate::gpu::view::ViewKernels>,
-        request: &crate::gpu::photograph::request::PhotographRequest,
+        request: &crate::photographic::graph::request::PhotographRequest,
         field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
-        spec: crate::gpu::view::request::SourceRequest,
+        spec: crate::photographic::graph::view_source::SourceRequest,
         target: OutputTarget,
     ) -> Result<crate::gpu::view::rendering::Request, Error> {
         crate::gpu::view::rendering::Request::camera_proxy(

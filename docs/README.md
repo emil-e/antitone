@@ -29,16 +29,16 @@ Where each area's implementation lives — navigation, not specification. Follow
 
 | Area | Start here | Responsibility |
 | --- | --- | --- |
-| Processing | [processing](../src/processing.rs), [photographic](../src/photographic.rs), [colour](../src/color.rs) | Response parameters, grading controls and numerical admission |
+| Processing | [processing](../src/processing.rs), [photographic calculations](../src/photographic/graph.rs), [colour](../src/color.rs) | Response, grading, stage composition and numerical admission |
 | Adjustment layers | [controls and masks](../src/adjustment_layers.rs), [GPU grading](../src/gpu/grading.rs), [editor routing](../src/editor/processing.rs) | Immutable snapshots, analytic masks, source-owned layers and consumer-local numerical admission |
 | RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [source acquisition](../src/source/mod.rs), [GPU camera source](../src/gpu/source/native.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership and immutable camera RGB |
 | DNG backend | [adapter](../src/dng.rs), [native owner](../native/dng_bridge.cpp) | Direct SDK development and decode-free inspection in the shared source model |
 | Scan correction | [flat-field](../src/flat_field.rs), [GPU map](../src/gpu/flat.rs) | Source-coordinate illumination gains |
 | Image recipe and repairs | [captured recipe](../src/image_recipe.rs), [repair model](../src/dust_repair.rs), [interaction/search](../src/editor/dust.rs), [healing calculations](../src/gpu/repairs/definition.rs) | Photographic intent and authoring; common graph execution |
 | Roll analysis | [spatial support](../src/scan_regions.rs), [estimator](../src/roll_analysis.rs), [fitter](../src/roll_analysis/gamma.rs) | Source-owned sampling hypotheses, sample-derived starting settings |
-| GPU | [setup](../src/gpu.rs), [photographic calculations](../src/gpu/photograph.rs), [evaluation](../src/gpu/evaluation.rs), [display startup](../src/gpu/display.rs) | Device setup, photographic graphs, bounded evaluation and rendering resources |
+| GPU | [setup](../src/gpu.rs), [evaluation](../src/gpu/evaluation.rs), [display startup](../src/gpu/display.rs) | Device setup, bounded evaluation and rendering resources |
 | Rendering/output | [rendering](../src/rendering.rs), [export](../src/export.rs), [native transform](../native/rendering_transform.h) | ACES, file encoding and output safety |
-| Film texture | [coupled grain settings](../src/grain/settings.rs), [graph composition](../src/gpu/photograph/composition.rs) | Coordinated source-scale image MTF and RGB grain, with independent halation |
+| Film texture | [coupled grain settings](../src/grain/settings.rs), [graph composition](../src/photographic/graph/composition.rs) | Coordinated source-scale image MTF and RGB grain, with independent halation |
 | Colour treatments | [asset/import](../src/looks.rs), [film/paper model](../src/looks/spektrafilm.rs), [GPU resources](../src/gpu/lut3d.rs), [selection](../src/editor/look.rs) | Independent embedded LUT and Film & paper stages before output ACES |
 | Geometry | [geometry](../src/geometry.rs), [coverage](../src/coverage.rs), [crop](../src/crop.rs), [auto-crop](../src/auto_crop.rs) | Coordinate mappings, source-cell coverage, measured-frame proposals |
 | Viewer | [working owner](../src/editor/working_view.rs), [GPU view](../src/gpu/view.rs), [viewer](../src/viewer.rs), [original-view owner](../src/editor/original_view.rs), [refinement](../src/refinement.rs), [viewport](../src/viewport.rs) | Physical-view grading/inspection, original-sample tool reconstruction and presentation |

@@ -178,8 +178,8 @@ mod tests {
     use super::*;
     use crate::{
         geometry::{Composition, FramePoint},
-        gpu::photograph::assembly::Assembly,
         image_mtf::ImageMtfParameters,
+        photographic::graph::assembly::Assembly,
     };
 
     fn frame(side: u32, output: [u32; 2]) -> FrameRaster {
@@ -209,13 +209,15 @@ mod tests {
                     .into_iter()
                     .flatten()
                     .reduce(f64::min);
-                crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
-                    image = mtf.compose(image)?;
-                    if let Some(output) = output {
-                        image = output.compose(image)?;
-                    }
-                    Ok(image)
-                })
+                crate::photographic::graph::assembly::Assembly::authored(
+                    move |mut image, output| {
+                        image = mtf.compose(image)?;
+                        if let Some(output) = output {
+                            image = output.compose(image)?;
+                        }
+                        Ok(image)
+                    },
+                )
                 .with_view_pitch(pitch)
             };
             let sampled = pipeline
@@ -246,7 +248,7 @@ mod tests {
                 .into_iter()
                 .flatten()
                 .reduce(f64::min);
-            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
                 image = mtf.compose(image)?;
                 if let Some(output) = output {
                     image = output.compose(image)?;
@@ -281,7 +283,7 @@ mod tests {
                 .into_iter()
                 .flatten()
                 .reduce(f64::min);
-            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
                 image = mtf.compose(image)?;
                 if let Some(output) = output {
                     image = output.compose(image)?;
@@ -347,13 +349,15 @@ mod tests {
                     .into_iter()
                     .flatten()
                     .reduce(f64::min);
-                crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
-                    image = mtf.compose(image)?;
-                    if let Some(output) = output {
-                        image = output.compose(image)?;
-                    }
-                    Ok(image)
-                })
+                crate::photographic::graph::assembly::Assembly::authored(
+                    move |mut image, output| {
+                        image = mtf.compose(image)?;
+                        if let Some(output) = output {
+                            image = output.compose(image)?;
+                        }
+                        Ok(image)
+                    },
+                )
                 .with_view_pitch(pitch)
             };
             let sampled = pipeline

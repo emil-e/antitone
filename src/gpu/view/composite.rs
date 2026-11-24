@@ -96,7 +96,7 @@ impl RenderedView {
                 },
             ],
         });
-        let spec = detail.spec.clone().with_frame(frame)?;
+        let spec = SourceRequest::for_frame(frame)?.with_identity(detail.spec.identity.clone());
         Ok(Arc::new(Self {
             image,
             spec,

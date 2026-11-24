@@ -540,7 +540,8 @@ impl Product {
             + if positive {
                 std::mem::size_of::<crate::gpu::view::ViewImage>()
                     + std::mem::size_of::<crate::gpu::view::RenderedView>()
-                    + 2 * std::mem::size_of::<crate::gpu::photograph::request::PhotographRequest>()
+                    + 2 * std::mem::size_of::<crate::photographic::graph::request::PhotographRequest>(
+                    )
             } else {
                 0
             }

@@ -69,13 +69,13 @@ impl Assembly {
         grading: Grading,
         repairs: Vec<crate::dust_repair::Repair>,
     ) -> Result<Self, Error> {
-        let area = grading.area;
+        let area = grading.area();
         admission::prepare(
             limits,
-            program.input,
-            grading.roll,
+            program.input(),
+            grading.roll_settings(),
             grading.snapshot(),
-            program.matrix,
+            program.matrix(),
             area,
         )?;
         let mut assembly =

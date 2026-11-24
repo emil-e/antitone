@@ -1,6 +1,6 @@
 #![cfg(feature = "gpu")]
-use crate::gpu::photograph::test_support::CameraFixture;
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::graph::test_support::CameraFixture;
 use antitone::adjustment_layers::{
     AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
 };

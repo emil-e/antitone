@@ -1,6 +1,6 @@
 use super::*;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     halation::{HalationSettings, reference},
@@ -44,7 +44,7 @@ fn independent_halation_acquires_real_neighbours_beyond_a_rotated_physical_view(
     )
     .unwrap()
     .with_definition(
-        crate::gpu::photograph::assembly::Assembly::emulation(
+        crate::photographic::graph::assembly::Assembly::emulation(
             Default::default(),
             halo,
             composition.crop().size,

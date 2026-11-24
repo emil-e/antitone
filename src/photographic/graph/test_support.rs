@@ -44,8 +44,8 @@ pub fn settings(area: CellRegion) -> (RollSettings, AdjustmentLayerSnapshot) {
     .unwrap();
     (roll, snapshot)
 }
-use crate::gpu::photograph::PhotographGraph;
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::graph::PhotographGraph;
 
 pub(crate) struct CameraFixture {
     context: Context,

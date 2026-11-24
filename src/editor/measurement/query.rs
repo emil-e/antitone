@@ -8,7 +8,7 @@ use crate::gpu::evaluation::Region;
 use crate::gpu::evaluation::Tiling;
 use crate::gpu::evaluation::Value;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::photograph::PhotographGraph;
+use crate::photographic::graph::PhotographGraph;
 use crate::scan::Scan;
 use glam::DVec3;
 use std::sync::Arc;
@@ -116,9 +116,9 @@ impl<'a> Samples<'a> {
     pub(in crate::editor) fn pipeline<'r>(
         &self,
         recipe: &'r crate::image_recipe::ImageRecipe,
-    ) -> Result<crate::gpu::photograph::RecipeGraph<'r>, Error> {
+    ) -> Result<crate::photographic::graph::RecipeGraph<'r>, Error> {
         recipe.neutral.require_scan(self.scan)?;
-        Ok(crate::gpu::photograph::RecipeGraph::originals(
+        Ok(crate::photographic::graph::RecipeGraph::originals(
             self.source.clone(),
             self.field.clone(),
             recipe,

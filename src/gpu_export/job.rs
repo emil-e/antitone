@@ -60,7 +60,7 @@ pub(crate) fn write(
     check()?;
 
     let (scan, recipe) = crate::photo_preparation::native_image(job.scan, job.recipe)?;
-    let pipeline = crate::gpu::photograph::RecipeGraph::originals(
+    let pipeline = crate::photographic::graph::RecipeGraph::originals(
         crate::gpu::source::camera_source(&scan)?,
         job.field,
         &recipe,

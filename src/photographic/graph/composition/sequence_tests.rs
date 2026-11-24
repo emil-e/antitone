@@ -52,7 +52,7 @@ fn native_and_working_identity_use_captured_values_not_uniform_packing() {
 #[test]
 fn repair_dag_provenance_is_described_without_pixels_and_rejects_mixed_interpretations() {
     use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
-    use crate::gpu::{evaluation as e, photograph::PhotographGraph, repairs::definition};
+    use crate::gpu::{evaluation as e, repairs::definition};
     struct Unread;
     impl e::Source for Unread {
         fn domain(&self) -> e::Domain {
@@ -71,7 +71,7 @@ fn repair_dag_provenance_is_described_without_pixels_and_rejects_mixed_interpret
         Assembly::captured(
             Captured::new(
                 CameraInput {
-                    matrix: program.matrix,
+                    matrix: program.matrix(),
                     field: None,
                     continuous: false,
                     mapping: Mapping::Originals,
@@ -318,7 +318,7 @@ fn original_endpoints_preserve_interpretation_and_order_post_grade_operations() 
     let scale = Scale(DVec3::new(0.75, 1.25, 0.9));
     let effects = {
         let square = Square;
-        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
             image = square.compose(image)?;
             image = scale.compose(image)?;
             if let Some(output) = output {
@@ -383,7 +383,7 @@ fn filtered_output_keeps_upstream_nodes_and_explicit_reconstruction_order() {
     .unwrap();
     let effects = {
         let footprint_scale = FootprintScale;
-        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
             if let Some(output) = output {
                 image = output.compose(image)?;
             }

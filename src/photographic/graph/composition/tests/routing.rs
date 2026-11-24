@@ -1,7 +1,7 @@
 use super::*;
-use crate::gpu::photograph::request::PhotographRequest;
 use crate::gpu::source::{ProcessingSource, SourceGeometry};
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::request::PhotographRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 use crate::rendering::OutputTarget;
 
 #[derive(Debug, PartialEq)]
@@ -154,7 +154,7 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
         .unwrap();
     let target = OutputTarget::Srgb;
     let display = Some(target);
-    let authored = crate::gpu::photograph::authoring::with_suffix(
+    let authored = crate::photographic::graph::authoring::with_suffix(
         |image| Suffix.compose(image),
         || {
             let graph = RecipeGraph::originals(codes, None, &recipe).unwrap();
@@ -300,8 +300,7 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
 }
 
 #[test]
-fn returned_recipe_requests_replan_with_the_captured_photograph_after_preview_sampling_and_regrading()
- {
+fn preview_and_proxy_layouts_can_be_replanned_with_an_explicit_capture() {
     use crate::acquisition::Sampling;
     let (device, _, renderer) = crate::gpu::test_support::render_context();
     let limits = device.limits();
@@ -335,57 +334,65 @@ fn returned_recipe_requests_replan_with_the_captured_photograph_after_preview_sa
     let capture = PhotographRequest::Recipe(recipe.clone());
     let mut frame = crate::frame_raster::FrameRaster::full(recipe.composition).unwrap();
     frame.output = [8, 6];
-    let fresh = capture.source_request(frame).unwrap();
+    let identity = crate::gpu::source::identity::Identity::camera(scan.source().identity());
+    let fresh = capture
+        .source_request(frame)
+        .unwrap()
+        .with_identity(identity.clone());
     assert!(
         fresh.plan().output().output[0] > frame.output[0],
         "the fixture must need photographic refinement"
     );
 
-    let check = |capture: &PhotographRequest, returned: &SourceRequest| {
-        let mut moved = returned.frame();
-        moved.output = [7, 5];
+    let mut changed = (*recipe).clone();
+    changed.grain.enabled = false;
+    changed.halation.enabled = false;
+    let changed = PhotographRequest::Recipe(Arc::new(changed));
+    let check = |returned: &SourceRequest| {
+        let moved = crate::frame_raster::FrameRaster {
+            output: [7, 5],
+            ..returned.frame()
+        };
         let proxy = Sampling::CameraProxy {
             region: scan.area,
             size: [scan.area.width, scan.area.height],
         };
-        for sampling in [Sampling::NeutralFootprints, proxy] {
-            let actual = returned
-                .clone()
-                .with_sampling(sampling)
+        for frame in [
+            moved,
+            crate::frame_raster::FrameRaster::full(moved.composition).unwrap(),
+        ] {
+            // Navigation chooses the frame; the current capture determines its working grid.
+            let demand = SourceRequest::for_frame(frame)
                 .unwrap()
-                .with_frame(moved)
-                .unwrap();
-            let expected = capture
-                .source_request(moved)
-                .unwrap()
-                .with_sampling(sampling)
-                .unwrap();
-            assert!(
-                actual.plan().same_acquisition_layout(expected.plan()),
-                "replanning must retain the current photograph's refinement and neighbours"
-            );
+                .with_identity(returned.identity.clone());
+            for sampling in [Sampling::NeutralFootprints, proxy] {
+                let refined = capture.plan_sampling(demand.clone(), sampling).unwrap();
+                let plain = changed.plan_sampling(demand.clone(), sampling).unwrap();
+                for planned in [&refined, &plain] {
+                    assert_eq!(planned.frame(), frame);
+                    assert_eq!(planned.plan().sampling(), sampling);
+                    assert!(planned.same_source(returned));
+                }
+                assert_eq!(plain.plan().output(), frame);
+                if frame == moved {
+                    assert!(refined.plan().output().output[0] > frame.output[0]);
+                }
+            }
         }
-        let actual = returned.underlay().unwrap();
-        let expected = capture
-            .source_request(returned.frame())
-            .unwrap()
-            .with_sampling(returned.plan().sampling())
-            .unwrap()
-            .underlay()
-            .unwrap();
-        assert!(actual.plan().same_acquisition_layout(expected.plan()));
     };
     let (_, preview) = capture
         .preview_output(
             &device.limits(),
             &scan,
             None,
-            SourceRequest::for_frame(frame).unwrap(),
+            SourceRequest::for_frame(frame)
+                .unwrap()
+                .with_identity(identity.clone()),
             renderer.looks(),
             renderer.drt(OutputTarget::Srgb),
         )
         .unwrap();
-    check(&capture, &preview);
+    check(&preview);
 
     let proxy = crate::scan::CameraProxy::from_scan(&scan).unwrap();
     let camera = ProcessingSource::new_continuous(
@@ -414,23 +421,32 @@ fn returned_recipe_requests_replan_with_the_captured_photograph_after_preview_sa
             None,
             SourceRequest::for_frame(full)
                 .unwrap()
+                .with_identity(identity.clone())
                 .with_sampling(sampling)
                 .unwrap(),
         )
         .unwrap();
-    check(&capture, &sampled.request);
+    check(&sampled.request);
 
     let acquired = capture
-        .source_request(full)
-        .unwrap()
-        .with_sampling(sampling)
+        .plan_sampling(
+            capture
+                .source_request(full)
+                .unwrap()
+                .with_identity(identity),
+            sampling,
+        )
         .unwrap();
-    let mut changed = (*recipe).clone();
-    changed.grain.enabled = false;
-    changed.halation.enabled = false;
-    let changed = PhotographRequest::Recipe(Arc::new(changed));
     let retained = changed
         .retained_graph(&limits, &sampled.processed, None, &acquired)
         .unwrap();
-    check(&changed, &retained.request);
+    assert!(retained.request.same_source(&sampled.request));
+    assert_eq!(retained.request.frame(), full);
+    assert!(
+        retained
+            .request
+            .plan()
+            .same_acquisition_layout(acquired.plan())
+    );
+    check(&retained.request);
 }

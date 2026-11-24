@@ -194,7 +194,7 @@ fn refinement_paints_its_current_draft_and_escape_restores_accepted_geometry() {
                 candidate,
                 "render capture must contain the gesture, not accepted geometry"
             );
-            crate::gpu::photograph::request::PhotographRequest::Recipe(Arc::new(recipe))
+            crate::photographic::graph::request::PhotographRequest::Recipe(Arc::new(recipe))
         });
         wait_for(&mut h, |editor| {
             editor

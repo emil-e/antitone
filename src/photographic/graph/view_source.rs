@@ -1,12 +1,11 @@
-//! Captured source-space demand and the photographic definition used when replanning.
+//! Source identity, presentation framing and acquisition geometry.
 
+#[cfg(test)]
+use super::assembly::Assembly;
+use crate::acquisition::{Plan, Request as AcquisitionRequest, Sampling};
 #[cfg(test)]
 use crate::gpu::interpretation::InputTransform;
 use crate::{Error, frame_raster::FrameRaster, gpu::source::SourceGeometry};
-use crate::{
-    acquisition::{Plan, Request as AcquisitionRequest, Sampling},
-    gpu::photograph::assembly::Assembly,
-};
 #[cfg(test)]
 use glam::DMat3;
 use std::sync::Arc;
@@ -21,6 +20,7 @@ pub struct SourceRequest {
     pub field: Option<Arc<crate::flat_field::FlatField>>,
     plan: Arc<Plan>,
     presentation: FrameRaster,
+    #[cfg(test)]
     definition: Arc<Assembly>,
 }
 
@@ -38,21 +38,6 @@ impl PartialEq for SourceRequest {
 }
 
 impl SourceRequest {
-    #[cfg(test)]
-    pub(crate) fn with_program_fixture(mut self, program: InputTransform) -> Self {
-        let input = crate::gpu::test_inputs::AuthoredPhotograph::new(
-            &wgpu::Limits::default(),
-            program.input,
-            Default::default(),
-            crate::adjustment_layers::AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
-            program.matrix,
-            self.area,
-        )
-        .expect("admitted source fixture");
-        self.fixture = Some(SourceFixture::Photograph(input));
-        self
-    }
-
     #[cfg(test)]
     pub fn for_processing(
         frame: FrameRaster,
@@ -90,8 +75,7 @@ impl SourceRequest {
         &self.plan
     }
 
-    pub(crate) fn with_plan(mut self, definition: Assembly, plan: Plan) -> Self {
-        self.definition = Arc::new(definition);
+    pub(crate) fn with_plan(mut self, plan: Plan) -> Self {
         self.plan = Arc::new(plan);
         self
     }
@@ -128,6 +112,7 @@ impl SourceRequest {
             && self.plan.same_acquisition_layout(&other.plan)
     }
 
+    #[cfg(test)]
     pub fn with_frame(mut self, frame: FrameRaster) -> Result<Self, Error> {
         if frame.composition.area() != self.area {
             return Err(Error::InvalidParameter(
@@ -140,6 +125,7 @@ impl SourceRequest {
         self.replan(sampling)
     }
 
+    #[cfg(test)]
     pub(crate) fn with_definition(mut self, definition: Assembly) -> Result<Self, Error> {
         self.definition = Arc::new(definition);
         let sampling = self.plan.sampling();
@@ -151,12 +137,18 @@ impl SourceRequest {
         &self.definition
     }
 
+    #[cfg(test)]
     pub fn with_sampling(self, sampling: Sampling) -> Result<Self, Error> {
         self.replan(sampling)
     }
 
-    fn replan(mut self, sampling: Sampling) -> Result<Self, Error> {
+    #[cfg(test)]
+    fn replan(self, sampling: Sampling) -> Result<Self, Error> {
         let layout = self.definition.view_sampling(self.presentation, sampling)?;
+        Ok(self.with_layout(layout))
+    }
+
+    pub(super) fn with_layout(mut self, layout: super::sampling::ViewSampling) -> Self {
         log::trace!(
             "captured view sampling: ideal {:?}, working {:?}, limited {}",
             layout.ideal,
@@ -164,32 +156,7 @@ impl SourceRequest {
             layout.limited()
         );
         self.presentation = layout.presentation;
-        self.plan = Arc::new(layout.plan);
-        Ok(self)
-    }
-
-    fn view_grid_sufficient(&self, definition: &Assembly) -> bool {
-        definition
-            .view_sampling(self.presentation, self.plan.sampling())
-            .is_ok_and(|wanted| {
-                (0..2).all(|i| self.plan.output().output[i] >= wanted.plan.output().output[i])
-            })
-    }
-
-    pub fn processing_plan(&self, definition: &Assembly) -> Result<Plan, Error> {
-        if !self.view_grid_sufficient(definition) {
-            return Err(Error::InvalidParameter(
-                "acquired view grid is too coarse for processing",
-            ));
-        }
-        Plan::for_graph(
-            AcquisitionRequest {
-                output: self.plan.output(),
-                sampling: self.plan.sampling(),
-            },
-            |input| definition.sampling_image(input),
-        )?
-        .using_input(&self.plan)
+        self.with_plan(layout.plan)
     }
 
     #[cfg(test)]
@@ -210,14 +177,6 @@ impl SourceRequest {
     #[cfg(test)]
     pub fn input_frame(&self) -> Result<FrameRaster, Error> {
         self.plan.processing_frame()
-    }
-
-    pub fn underlay(&self) -> Result<Self, Error> {
-        let mut frame = FrameRaster::full(self.frame().composition)?;
-        // Bound coarse navigation coverage independently of selected detail resolution.
-        let scale = (f64::from(frame.output[0].max(frame.output[1])) / 1024.).max(1.);
-        frame.output = frame.output.map(|n| (f64::from(n) / scale).ceil() as u32);
-        self.clone().with_frame(frame)
     }
 
     #[cfg(test)]
@@ -271,7 +230,7 @@ impl SourceRequest {
     #[cfg(test)]
     pub fn matrix(&self) -> DMat3 {
         match self.fixture.as_ref().expect("declared scalar fixture") {
-            SourceFixture::Photograph(input) => input.input_transform().matrix,
+            SourceFixture::Photograph(input) => input.input_transform().matrix(),
             SourceFixture::Inspection(matrix) => *matrix,
         }
     }
@@ -311,6 +270,7 @@ impl SourceRequest {
             #[cfg(test)]
             field: None,
             presentation: frame,
+            #[cfg(test)]
             definition: Arc::default(),
             plan: Arc::new(Plan::new(AcquisitionRequest {
                 output: frame,

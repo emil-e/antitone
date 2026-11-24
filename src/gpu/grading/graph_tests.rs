@@ -202,7 +202,7 @@ fn standalone_vibrance_precedes_film_paper_and_both_display_targets() {
                 })
                 .collect();
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                let displayed = crate::gpu::photograph::display_output(
+                let displayed = crate::photographic::graph::display_output(
                     graded.clone(),
                     &chain,
                     &renderer.looks,
@@ -285,7 +285,7 @@ fn tonal_ranges_grade_before_display_and_respect_feathered_exposure() {
     }
 
     let display = |image| {
-        crate::gpu::photograph::display_output(
+        crate::photographic::graph::display_output(
             image,
             &Default::default(),
             &renderer.looks,
@@ -550,7 +550,7 @@ fn overflowing_matrix_products_retry_without_turning_signed_channels_into_nan() 
     let function = Function::new(
         format!(
             "{}\n{}",
-            crate::gpu::photograph::shader::functions(),
+            crate::photographic::graph::shader::functions(),
             r#"
 fn matrix_retry_probe(pixel: vec4f, position: vec2f) -> vec4f {
     let columns = array<vec4f, 3>(

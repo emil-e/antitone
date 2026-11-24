@@ -45,7 +45,7 @@ fn neutral_readout_bounds_extreme_samples_and_keeps_representable_hdr_and_floor_
         let program = InputTransform::new(input, matrix).unwrap();
         let capture = Captured::new(
             CameraInput {
-                matrix: program.matrix,
+                matrix: program.matrix(),
                 field: None,
                 continuous: true,
                 mapping: Mapping::Originals,

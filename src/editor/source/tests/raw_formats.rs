@@ -6,7 +6,7 @@ use crate::geometry::FramePoint;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::RenderedView;
 use crate::gpu::view::ViewKernels;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 use crate::processing::Calibration;
 use crate::processing::InputSettings;
 use crate::rendering::OutputTarget;

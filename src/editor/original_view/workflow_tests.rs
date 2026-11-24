@@ -380,7 +380,7 @@ fn rapid_output_demand_drops_queued_inputs_and_only_latest_reconstruction_can_pu
                     .as_ref()
                     .unwrap()
                     .capture
-                    == crate::gpu::photograph::request::PhotographRequest::Fixture(
+                    == crate::photographic::graph::request::PhotographRequest::Fixture(
                         AuthoredPhotograph::from(
                             ProcessingParameters::source_inspection(0.39).unwrap()
                         )

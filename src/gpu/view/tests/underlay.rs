@@ -643,9 +643,13 @@ fn physical_view_underlay_texture_composition_does_not_inherit_storage_buffer_si
         let photo = AdjustmentLayerSettings::default();
         let input = processing_input(&device, cal, roll, photo, &scan);
         let make = |s| RenderedView::new(&device, s, &input, OutputTarget::Srgb, None).unwrap();
-        let composite =
-            RenderedView::composite(&device, make(detail_source), make(base_source), full, None)
-                .unwrap();
+        let detail = make(detail_source);
+        let underlay = make(base_source);
+        let composite = crate::photographic::graph::authoring::with_suffix(
+            |_| panic!("compositing finished images must not author a photograph"),
+            || RenderedView::composite(&device, detail, underlay, full, None),
+        )
+        .unwrap();
         composite.ensure_submitted(&device, &queue, &context);
         assert!(
             image(&device, &queue, &composite.image)

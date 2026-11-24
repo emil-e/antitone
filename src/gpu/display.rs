@@ -24,7 +24,7 @@ impl Warmup {
             targets,
             foreground: LazyLock::new(Box::new(move || {
                 let targets = LazyLock::force(&pending).as_ref().map_err(Clone::clone)?;
-                crate::gpu::photograph::prewarm_viewer(&context, targets)
+                crate::photographic::graph::prewarm_viewer(&context, targets)
             })),
         })
     }

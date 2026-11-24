@@ -29,7 +29,7 @@ struct Parameters {
 #[derive(Clone)]
 struct Key {
     #[cfg(feature = "editor")]
-    rendered_source: Option<(crate::gpu::view::request::SourceRequest, bool)>,
+    rendered_source: Option<(crate::photographic::graph::view_source::SourceRequest, bool)>,
     image: Weak<GpuImage>,
     calculation: Option<crate::gpu::evaluation::value::WeakValue>,
     look: Option<LookId>,

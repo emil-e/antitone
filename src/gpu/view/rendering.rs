@@ -113,7 +113,7 @@ impl Request {
         capture: &PhotographRequest,
         spec: SourceRequest,
     ) -> Result<Self, Error> {
-        let spec = ViewImage::proxy_request(source, spec)?;
+        let spec = ViewImage::proxy_request(source, capture, spec)?;
         let (definition, spec) = capture.sampled_output(
             &context.device().limits(),
             source,
@@ -152,7 +152,8 @@ impl Request {
         ));
         let limits = context.device().limits();
         let request_view = |spec: SourceRequest| {
-            let underlay = spec.underlay()?;
+            let underlay = SourceRequest::for_frame(underlay_frame(spec.frame())?)?
+                .with_identity(spec.identity.clone());
             let images = [spec, underlay]
                 .into_iter()
                 .map(|spec| {

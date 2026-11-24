@@ -2,7 +2,7 @@ use super::*;
 use crate::gpu_export::authored::{Request, write};
 use crate::{
     gpu::evaluation::{self, Value},
-    gpu::photograph::test_effects::NeighbourEffect,
+    photographic::graph::test_effects::NeighbourEffect,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -131,7 +131,7 @@ fn supplied_pipeline_uses_original_neighbours_before_rotated_output_reconstructi
                         gain: 1.,
                     };
                     let square = Square;
-                    crate::gpu::photograph::assembly::Assembly::authored(
+                    crate::photographic::graph::assembly::Assembly::authored(
                         move |mut image, output| {
                             image = neighbour.compose(image)?;
                             image = square.compose(image)?;

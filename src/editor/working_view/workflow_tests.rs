@@ -1,7 +1,7 @@
 use super::*;
-use crate::gpu::photograph::request::PhotographRequest;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::request::PhotographRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 use crate::{
     application::test_support::with_application,
     geometry::{Composition, FramePoint},
@@ -144,7 +144,7 @@ fn positive_spec(frame: FrameRaster, input: &source::Context, sigma: f64) -> Sou
             .into_iter()
             .flatten()
             .reduce(f64::min);
-        crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
             image = mtf.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;
@@ -168,7 +168,7 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
     let queued = positive_spec(frame, &input, 0.5);
     let latest = positive_spec(frame, &input, 0.75);
     assert!(
-        small.processing_plan(latest.definition()).is_err(),
+        latest.definition().processing_plan(&small).is_err(),
         "fixture must actually increase required raster support"
     );
     assert!(

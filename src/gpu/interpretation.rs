@@ -142,7 +142,10 @@ impl InputTransform {
         Ok(Self { input, matrix })
     }
 
-    #[cfg(all(test, feature = "editor"))]
+    pub(crate) fn input(&self) -> InputSettings {
+        self.input
+    }
+
     pub(crate) fn matrix(&self) -> DMat3 {
         self.matrix
     }
@@ -161,17 +164,17 @@ impl InputTransform {
         ProcessingSource::new_continuous(device, pixels, self.matrix, geometry)
     }
 
-    pub(super) fn neutral_parameters(&self) -> Result<ProcessingParameters, Error> {
+    pub(crate) fn neutral_parameters(&self) -> Result<ProcessingParameters, Error> {
         crate::gpu::parameters::input_parameters(self.input, self.matrix)
     }
 
     #[cfg(feature = "raw")]
-    pub(super) fn matches_native(&self, scan: &crate::scan::Scan) -> Result<bool, Error> {
+    pub(crate) fn matches_native(&self, scan: &crate::scan::Scan) -> Result<bool, Error> {
         Ok(scan.positive_matrix(&self.input)? == self.matrix)
     }
 
     #[cfg(feature = "raw")]
-    pub(super) fn matches_proxy(&self, proxy: &crate::scan::CameraProxy) -> Result<bool, Error> {
+    pub(crate) fn matches_proxy(&self, proxy: &crate::scan::CameraProxy) -> Result<bool, Error> {
         Ok(proxy.positive_matrix(&self.input)? == self.matrix)
     }
 }

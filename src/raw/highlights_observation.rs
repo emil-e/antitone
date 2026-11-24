@@ -1,5 +1,6 @@
 //! Read-only photographic source-development diagnostic; outputs stay in .cache.
-use crate::gpu::{evaluation::*, grading::Grading, photograph::PhotographGraph};
+use crate::gpu::{evaluation::*, grading::Grading};
+use crate::photographic::graph::PhotographGraph;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     processing::{InputSettings, RollSettings},

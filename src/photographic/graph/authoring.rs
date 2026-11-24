@@ -20,7 +20,7 @@ pub(crate) fn original_chain(
                 "original input differs from captured camera source".into(),
             ));
         }
-        program.matrix
+        program.matrix()
     } else {
         scan.camera_to_ap1
     };

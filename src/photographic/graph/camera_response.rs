@@ -1,7 +1,7 @@
 //! Pointwise native-camera response, shared by gamma picking and statistical model evaluation.
 
 use super::*;
-use crate::gpu::photograph::PhotographGraph;
+use crate::photographic::graph::PhotographGraph;
 use crate::{
     gpu::{drt, interpretation::InputTransform},
     processing::{Inversion, NegativeInput},

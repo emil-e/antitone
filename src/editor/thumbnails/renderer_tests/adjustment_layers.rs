@@ -6,10 +6,10 @@
 ))]
 use crate as api;
 use crate::adjustment_layers::AdjustmentLayerSettings;
-use crate::gpu::photograph::test_support::CameraFixture;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::graph::test_support::CameraFixture;
 use crate::raw_test_support::train_raw;
 use api::adjustment_layers::AdjustmentLayer;
 use api::adjustment_layers::AdjustmentLayerCoverage;

@@ -58,7 +58,7 @@ pub(super) fn fixture() -> Authored {
     }
 }
 
-use crate::gpu::photograph::test_support::{matrix, settings};
+use crate::photographic::graph::test_support::{matrix, settings};
 
 pub(super) fn reduced(domain: Domain, size: [u32; 2]) -> Domain {
     let area = domain.finite().unwrap();

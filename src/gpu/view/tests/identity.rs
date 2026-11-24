@@ -1,6 +1,6 @@
 use super::*;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings},
     geometry::{SourcePoint, SourceRegion},
@@ -31,7 +31,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
                 .into_iter()
                 .flatten()
                 .reduce(f64::min);
-            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
                 image = mtf.compose(image)?;
                 if let Some(output) = output {
                     image = output.compose(image)?;
@@ -49,7 +49,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
                 .into_iter()
                 .flatten()
                 .reduce(f64::min);
-            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
                 image = mtf.compose(image)?;
                 if let Some(output) = output {
                     image = output.compose(image)?;
@@ -71,7 +71,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
                 .into_iter()
                 .flatten()
                 .reduce(f64::min);
-            crate::gpu::photograph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
                 image = mtf.compose(image)?;
                 if let Some(output) = output {
                     image = output.compose(image)?;
@@ -87,7 +87,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
         "extra coarse neighbours cannot satisfy a finer sampling request"
     );
     assert!(
-        large.processing_plan(finer.definition()).is_err(),
+        finer.definition().processing_plan(&large).is_err(),
         "a coarse fallback must not run a finer effect request"
     );
     let moved = large
@@ -100,7 +100,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
         .unwrap();
     assert!(large.same_source(&moved));
     assert!(
-        large.processing_plan(moved.definition()).is_ok(),
+        moved.definition().processing_plan(&large).is_ok(),
         "the retained footprint can still be graded as a navigation fallback"
     );
     assert!(

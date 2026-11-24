@@ -5,9 +5,9 @@ use crate::{
     frame_raster::FrameRaster,
     gpu::{
         flat::GpuFlatField,
-        photograph::request::PhotographRequest,
         view::{RenderedView, ViewImage, ViewKernels},
     },
+    photographic::graph::{request::PhotographRequest, view_source::SourceRequest},
     rendering::OutputTarget,
     viewer::GpuProxy,
 };
@@ -121,7 +121,7 @@ impl Preview {
         context: &egui::Context,
         cx: &UiContext<'_, Editor>,
     ) -> Result<PreviewState, Error> {
-        let spec = demand.capture.source_request(demand.frame)?;
+        let spec = SourceRequest::for_frame(demand.frame)?;
         let request = demand.proxy.preview(
             kernels,
             &demand.capture,

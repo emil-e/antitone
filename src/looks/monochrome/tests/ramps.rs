@@ -52,7 +52,7 @@ fn all_materials_keep_neutral_exposure_order_through_both_delivered_targets() {
                 film_and_paper: Some(asset),
             };
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                let image = crate::gpu::photograph::display_output(
+                let image = crate::photographic::graph::display_output(
                     source.clone(),
                     &chain,
                     &renderer.looks,

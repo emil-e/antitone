@@ -546,7 +546,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
     ) -> Vec<[f32; 4]> {
         use crate::gpu::view::RenderedView;
         use crate::gpu::view::ViewKernels;
-        use crate::gpu::view::request::SourceRequest;
+        use crate::photographic::graph::view_source::SourceRequest;
         let services = e.source_services.as_ref().unwrap();
         let (device, queue) = (&services.device, &services.queue);
         let composition =

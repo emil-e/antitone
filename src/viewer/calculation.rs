@@ -5,10 +5,10 @@ use crate::gpu::{
     evaluation::Value,
     grading::Grading,
     interpretation::{InputTransform, InspectionView},
-    photograph::{PhotographGraph, operations::CameraInput},
     raster::Raster,
 };
 use crate::looks::LutChain;
+use crate::photographic::graph::{PhotographGraph, operations::CameraInput};
 
 impl ImageProcessing {
     fn camera(&self, raster: Raster) -> Result<Value, Error> {
@@ -36,7 +36,7 @@ impl GpuImage {
             .processing
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        crate::gpu::photograph::display_output(
+        crate::photographic::graph::display_output(
             prefix,
             luts,
             &processing.looks,
@@ -89,7 +89,7 @@ impl GpuImage {
     #[cfg(feature = "editor")]
     pub(crate) fn capture_calculation(
         &self,
-        capture: &crate::gpu::photograph::request::PhotographRequest,
+        capture: &crate::photographic::graph::request::PhotographRequest,
         field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
     ) -> Result<Value, Error> {
         let processing = self
@@ -116,7 +116,7 @@ impl GpuImage {
             .processing
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        crate::gpu::photograph::request::PhotographRequest::Recipe(Arc::new(recipe.clone()))
+        crate::photographic::graph::request::PhotographRequest::Recipe(Arc::new(recipe.clone()))
             .resident_processed(&self.device_limits, &processing.source, self.size(), field)
     }
 
@@ -141,7 +141,7 @@ impl GpuImage {
         } else {
             self.inspection(input.parameters(), input.field.clone())?
         };
-        crate::gpu::photograph::display_output(
+        crate::photographic::graph::display_output(
             image,
             input.luts(),
             &processing.looks,

@@ -143,7 +143,7 @@ fn reopened_tiff_and_ap0_exr_include_independent_halation_after_the_full_grade()
                     format,
                     luts: look.into(),
                     calculation: Some(std::sync::Arc::new({
-                        let definition = crate::gpu::photograph::assembly::Assembly::emulation(
+                        let definition = crate::photographic::graph::assembly::Assembly::emulation(
                             Default::default(),
                             settings,
                             composition.crop().size,

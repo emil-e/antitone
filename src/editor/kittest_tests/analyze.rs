@@ -54,7 +54,7 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
             .expect("review uses original-source tool presentation");
         assert!(
             signature.capture
-                == crate::gpu::photograph::request::PhotographRequest::inspection(
+                == crate::photographic::graph::request::PhotographRequest::inspection(
                     source.parameters()
                 )
                 .unwrap()

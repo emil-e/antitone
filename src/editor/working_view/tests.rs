@@ -3,9 +3,9 @@ use super::*;
 mod retry;
 use crate::geometry::{Composition, FramePoint};
 use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::photograph::request::PhotographRequest;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
+use crate::photographic::graph::request::PhotographRequest;
+use crate::photographic::graph::view_source::SourceRequest;
 
 #[test]
 fn demand_revision_tracks_view_intent_and_idle_requires_presentation() {
@@ -150,7 +150,7 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
                                 .into_iter()
                                 .flatten()
                                 .reduce(f64::min);
-                            crate::gpu::photograph::assembly::Assembly::authored(
+                            crate::photographic::graph::assembly::Assembly::authored(
                                 move |mut image, output| {
                                     image = mtf.compose(image)?;
                                     if let Some(output) = output {

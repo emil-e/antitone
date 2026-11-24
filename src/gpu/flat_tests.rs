@@ -2,10 +2,10 @@ use super::*;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::parameters::CameraMatrix;
 use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::photograph::test_support::CameraFixture;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::graph::test_support::CameraFixture;
 use crate::processing::RollSettings;
 #[cfg(target_os = "macos")]
 use crate::{
@@ -156,7 +156,7 @@ fn corrected_conversion_and_processing_preserve_spatial_gains_and_floor_flags() 
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}",
-                    crate::gpu::photograph::shader::functions(),
+                    crate::photographic::graph::shader::functions(),
                     r#"
 @group(0) @binding(1) var<storage, read_write> output: array<vec4f>;
 @compute @workgroup_size(64)

@@ -1,13 +1,14 @@
 //! Select a photograph or its source-view branch; prepared arguments stay in graph operations.
 
+use super::view_source::SourceRequest;
 use super::*;
+use crate::acquisition::Sampling;
 use crate::gpu::interpretation::InputTransform;
 use crate::gpu::interpretation::InspectionView;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::source::camera_source;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::request::SourceRequest;
 use crate::gpu::{drt, lut3d::Looks};
 use crate::image_recipe::{ImageRecipe, quality::Quality};
 use crate::looks::LutChain;
@@ -64,26 +65,9 @@ impl PhotographRequest {
     }
 }
 
-impl crate::gpu::view::request::SourceRequest {
-    pub fn for_recipe(
-        frame: crate::frame_raster::FrameRaster,
-        recipe: &ImageRecipe,
-    ) -> Result<Self, Error> {
-        let program = InputTransform::from_recipe(&recipe.neutral)?;
-        program.neutral_parameters()?;
-        let request = Self::for_frame(frame)?;
-        #[cfg(test)]
-        let request = request.with_program_fixture(program);
-        request.with_definition(RecipeGraph::view_definition(
-            &wgpu::Limits::default(),
-            recipe,
-        )?)
-    }
-}
-
 /// A preview value and its authored spatial demand.
 pub(crate) struct ViewGraph {
-    pub request: crate::gpu::view::request::SourceRequest,
+    pub request: SourceRequest,
     pub processed: Value,
 }
 
@@ -149,10 +133,10 @@ impl PhotographRequest {
                 let program = self.input_transform()?;
                 super::admission::prepare(
                     limits,
-                    program.input,
+                    program.input(),
                     recipe.roll,
                     &recipe.grade,
-                    program.matrix,
+                    program.matrix(),
                     recipe.neutral.source_development.active_area().into(),
                 )
                 .map(|_| ())
@@ -163,41 +147,39 @@ impl PhotographRequest {
         }
     }
 
-    pub(crate) fn planned_request(
+    pub(crate) fn plan_sampling(
         &self,
-        limits: &wgpu::Limits,
-        request: crate::gpu::view::request::SourceRequest,
-        plan: crate::acquisition::Plan,
-    ) -> Result<crate::gpu::view::request::SourceRequest, Error> {
-        let definition = match self {
-            Self::Recipe(recipe) => RecipeGraph::view_definition(limits, recipe)?,
+        request: SourceRequest,
+        sampling: Sampling,
+    ) -> Result<SourceRequest, Error> {
+        let assembly = match self {
+            Self::Recipe(recipe) => {
+                InputTransform::from_recipe(&recipe.neutral)?.neutral_parameters()?;
+                RecipeGraph::view_definition(&wgpu::Limits::default(), recipe)?
+            }
             Self::Inspection(_) => Assembly::default(),
             #[cfg(test)]
-            Self::Fixture(input) => {
-                let mut definition = input.definition();
-                definition.grading = input.grade().cloned();
-                definition
-            }
+            Self::Fixture(_) => request.definition().clone(),
         };
-        Ok(request.with_plan(definition, plan))
+        let layout = assembly.view_sampling(request.frame(), sampling)?;
+        Ok(request.with_layout(layout))
     }
 
+    #[cfg(test)]
     pub fn source_request(
         &self,
         frame: crate::frame_raster::FrameRaster,
-    ) -> Result<crate::gpu::view::request::SourceRequest, Error> {
-        use crate::gpu::view::request::SourceRequest;
-        let request = match self {
-            Self::Recipe(recipe) => SourceRequest::for_recipe(frame, recipe)?,
-            Self::Inspection(_) => SourceRequest::for_frame(frame)?,
-            #[cfg(test)]
+    ) -> Result<SourceRequest, Error> {
+        match self {
+            Self::Recipe(_) => self.plan_sampling(
+                SourceRequest::for_frame(frame)?,
+                Sampling::NeutralFootprints,
+            ),
             Self::Fixture(input) if input.is_positive() => {
-                SourceRequest::for_processing(frame, input)?
+                SourceRequest::for_processing(frame, input)
             }
-            #[cfg(test)]
-            Self::Fixture(_) => SourceRequest::for_frame(frame)?,
-        };
-        Ok(request)
+            Self::Inspection(_) | Self::Fixture(_) => SourceRequest::for_frame(frame),
+        }
     }
 
     pub fn input_transform(&self) -> Result<crate::gpu::interpretation::InputTransform, Error> {
@@ -269,11 +251,11 @@ impl PhotographRequest {
         limits: &wgpu::Limits,
         source: &ProcessingSource,
         field: Option<Arc<GpuFlatField>>,
-        spec: crate::gpu::view::request::SourceRequest,
+        spec: SourceRequest,
     ) -> Result<ViewGraph, Error> {
         let (request, baseline) = self.sampled_prefix(source, field, spec)?;
         let (processed, plan) = self.filtered(limits, &request, baseline)?;
-        let request = self.planned_request(limits, request, plan)?;
+        let request = request.with_plan(plan);
         Ok(ViewGraph { request, processed })
     }
 
@@ -282,11 +264,11 @@ impl PhotographRequest {
         limits: &wgpu::Limits,
         baseline: &Value,
         field: Option<Arc<GpuFlatField>>,
-        request: &crate::gpu::view::request::SourceRequest,
+        request: &SourceRequest,
     ) -> Result<ViewGraph, Error> {
         let baseline = self.retained_prefix(baseline, field, request)?;
         let (processed, plan) = self.filtered(limits, request, baseline)?;
-        let request = self.planned_request(limits, request.clone(), plan)?;
+        let request = request.clone().with_plan(plan);
         Ok(ViewGraph { request, processed })
     }
 
@@ -294,8 +276,8 @@ impl PhotographRequest {
         &self,
         source: &ProcessingSource,
         field: Option<Arc<GpuFlatField>>,
-        spec: crate::gpu::view::request::SourceRequest,
-    ) -> Result<(crate::gpu::view::request::SourceRequest, Value), Error> {
+        spec: SourceRequest,
+    ) -> Result<(SourceRequest, Value), Error> {
         let geometry = source
             .geometry()
             .ok_or_else(|| Error::Gpu("preview source has no geometry".into()))?;
@@ -328,10 +310,7 @@ impl PhotographRequest {
         Ok((spec.clone(), Self::sampled_domain(root, &spec)?))
     }
 
-    fn sampled_domain(
-        root: Value,
-        spec: &crate::gpu::view::request::SourceRequest,
-    ) -> Result<Value, Error> {
+    fn sampled_domain(root: Value, spec: &SourceRequest) -> Result<Value, Error> {
         let output = match spec.plan().sampling() {
             crate::acquisition::Sampling::CameraCells { .. } => Domain {
                 grid: Grid {
@@ -355,11 +334,11 @@ impl PhotographRequest {
         &self,
         source: &Value,
         field: Option<Arc<GpuFlatField>>,
-        spec: &crate::gpu::view::request::SourceRequest,
+        spec: &SourceRequest,
     ) -> Result<Value, Error> {
         let program = self.input_transform()?;
         let root = self
-            .neutral_input(field, program.matrix, Quality::CameraProxy)?
+            .neutral_input(field, program.matrix(), Quality::CameraProxy)?
             .recompose_resident(source)?;
         Self::sampled_domain(root, spec)
     }
@@ -376,7 +355,7 @@ impl PhotographRequest {
     #[cfg(test)]
     fn filtered_fixture(
         limits: &wgpu::Limits,
-        spec: &crate::gpu::view::request::SourceRequest,
+        spec: &SourceRequest,
         neutral: Value,
         input: &AuthoredPhotograph,
     ) -> Result<(Value, crate::acquisition::Plan), Error> {
@@ -398,7 +377,7 @@ impl PhotographRequest {
                     "physical-view source inspection identity differs".into(),
                 ));
             }
-            let root = crate::gpu::photograph::PhotographGraph::inspection_view(
+            let root = crate::photographic::graph::PhotographGraph::inspection_view(
                 neutral,
                 parameters,
                 presentation,
@@ -408,7 +387,7 @@ impl PhotographRequest {
         let program = input.source_transform().ok_or_else(|| {
             Error::Gpu("positive view requires captured source interpretation".into())
         })?;
-        if crate::gpu::photograph::PhotographGraph::input_transform(&neutral)?
+        if crate::photographic::graph::PhotographGraph::input_transform(&neutral)?
             .is_some_and(|captured| captured != *program)
         {
             return Err(Error::Gpu("physical-view source is stale".into()));
@@ -416,12 +395,12 @@ impl PhotographRequest {
         input.grade().unwrap().require_extent(spec.area)?;
         input.validate_controls(limits)?;
         let stages = input.definition();
-        let plan = spec.processing_plan(&stages)?;
+        let plan = stages.processing_plan(spec)?;
         let grading = input
             .grade()
             .unwrap()
             .for_grid(neutral.domain().grid.coverage);
-        let root = crate::gpu::photograph::PhotographGraph::filtered(
+        let root = crate::photographic::graph::PhotographGraph::filtered(
             &grading,
             neutral,
             &stages,
@@ -434,7 +413,7 @@ impl PhotographRequest {
     pub fn filtered(
         &self,
         limits: &wgpu::Limits,
-        spec: &crate::gpu::view::request::SourceRequest,
+        spec: &SourceRequest,
         neutral: crate::gpu::evaluation::Value,
     ) -> Result<(crate::gpu::evaluation::Value, crate::acquisition::Plan), Error> {
         match self {
@@ -454,7 +433,7 @@ impl PhotographRequest {
         &self,
         scan: &crate::scan::Scan,
         field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
-        specs: &[crate::gpu::view::request::SourceRequest],
+        specs: &[SourceRequest],
     ) -> Result<Vec<crate::gpu::evaluation::Value>, Error> {
         let source = camera_source(scan)?;
         specs
@@ -619,7 +598,7 @@ impl PhotographRequest {
                 self.filtered(limits, &spec, source)?
             }
         };
-        let spec = self.planned_request(limits, spec, plan)?;
+        let spec = spec.with_plan(plan);
         Ok((self.display(image, looks, target)?, spec))
     }
 }

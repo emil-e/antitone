@@ -360,7 +360,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     let target = editor.document.target();
     editor.document.visit.working_view.observe(
         frame,
-        crate::gpu::photograph::request::PhotographRequest::Fixture(input.clone()),
+        crate::photographic::graph::request::PhotographRequest::Fixture(input.clone()),
         target,
     );
     assert!(editor.document.visit.working_view.revision().is_some());
@@ -370,7 +370,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
         frame: None,
     };
     let original_demand = super::super::original_view::Demand {
-        capture: crate::gpu::photograph::request::PhotographRequest::Recipe(Arc::new(
+        capture: crate::photographic::graph::request::PhotographRequest::Recipe(Arc::new(
             editor
                 .positive_recipe(
                     editor.document.project.input,
@@ -479,7 +479,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
         original_revision
     );
     let original_demand = super::super::original_view::Demand {
-        capture: crate::gpu::photograph::request::PhotographRequest::Recipe(Arc::new(
+        capture: crate::photographic::graph::request::PhotographRequest::Recipe(Arc::new(
             editor
                 .positive_recipe(
                     editor.document.project.input,
