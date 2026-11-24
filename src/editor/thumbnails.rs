@@ -243,11 +243,19 @@ impl Thumbnails {
         self.protect_cpu();
     }
 
-    pub(super) fn refresh_hidden_memory(&mut self) {
+    pub(super) fn clear_visible(&mut self) {
+        self.visible.clear();
         self.embedded.request_visible(&[]);
-        self.processed.protect_images(Vec::new());
-        self.visible_keys.clear();
+        self.protect_visible(&[]);
+    }
+
+    fn protect_visible(&mut self, wanted: &[ImageKey]) {
+        self.visible_keys = wanted
+            .iter()
+            .filter_map(|key| key.source.store_key())
+            .collect();
         self.protect_cpu();
+        self.processed.protect_images(wanted.to_vec());
     }
 
     fn protect_cpu(&self) {
@@ -470,15 +478,15 @@ impl Thumbnails {
 }
 
 impl Editor {
-    fn thumbnail_key(&self, source: &Source, path: &std::path::Path) -> Option<ImageKey> {
+    fn thumbnail_key(&self, source: &Source, path: &std::path::Path) -> ImageKey {
         let recipe = self.thumbnail_recipe(source.id);
-        Some(ImageKey {
+        ImageKey {
             source: SourceKey::new(source, self.document.file_key(path))
                 .with_development(self.document.development_for(source, self.input())),
             recipe,
             target: self.document.target(),
             field: self.correction().map().cloned().map(FieldKey),
-        })
+        }
     }
 
     fn thumbnail_composition(&self, source: &Source) -> Composition {
@@ -592,29 +600,11 @@ impl Editor {
     }
 }
 
-pub(super) fn prepare_filmstrip_images(
-    editor: &mut Editor,
-    preview: Preview,
-    context: &egui::Context,
-) {
-    let thumbnails = &mut editor.document.thumbnails;
-    thumbnails.preview = preview;
-    thumbnails.repaint.get_or_init(|| context.clone());
-    editor.apply_cache_budgets();
-    if editor.document.visit.canvas.ready.is_none()
-        && editor.document.visit.pending_preview.is_none()
-    {
-        editor.document.thumbnails.release_selected();
-    }
-
-    let field = editor.correction().map().cloned().map(FieldKey);
-    editor.document.thumbnails.processed.retain_field(field);
-}
-
+/// Supplies thumbnails to roll views and reports their ordered visible demand
+/// to the document's single preview scheduler.
 #[derive(Default)]
 pub(super) struct ThumbnailProvider {
-    visible: Vec<SourceId>,
-    protected: Vec<ImageKey>,
+    wanted: Vec<ImageKey>,
     camera_wanted: Vec<(usize, ImageKey, PathBuf)>,
     awaiting_correction: bool,
 }
@@ -628,16 +618,38 @@ pub(super) struct NavigationImage<'a> {
 pub(super) struct NavigationPhotograph<'a> {
     image: Arc<GpuImage>,
     parameters: Option<crate::gpu::photograph::request::PhotographRequest>,
-    pub composition: Composition,
+    composition: Composition,
     correction: correction::Resources,
     presentation: &'a Result<Presentation, Error>,
 }
 
 impl NavigationPhotograph<'_> {
-    pub(super) fn paint(
-        self,
-        mapping: crate::geometry::TextureMapping,
-    ) -> Result<Option<ImagePaint>, String> {
+    pub(super) fn fitted_rect(&self, slot: egui::Rect) -> egui::Rect {
+        let [width, height] = self.composition.size();
+        let aspect = width as f32 / height as f32;
+        let size = egui::vec2(
+            (slot.height() * aspect).min(slot.width()),
+            (slot.width() / aspect).min(slot.height()),
+        );
+        egui::Rect::from_center_size(slot.center(), size)
+    }
+
+    pub(super) fn show(self, ui: &egui::Ui, full: egui::Rect) -> Result<(), String> {
+        let draw = full.intersect(ui.clip_rect());
+        let Some(mapping) =
+            clipped_mapping(self.composition, full, draw, ui.ctx().pixels_per_point())
+        else {
+            return Ok(());
+        };
+        if let Some(paint) = self.paint(mapping)? {
+            ui.painter()
+                .with_clip_rect(draw)
+                .add(egui_wgpu::Callback::new_paint_callback(draw, paint));
+        }
+        Ok(())
+    }
+
+    fn paint(self, mapping: crate::geometry::TextureMapping) -> Result<Option<ImagePaint>, String> {
         if self.parameters.is_some() && self.correction.pending() {
             return Ok(None);
         }
@@ -656,21 +668,61 @@ impl NavigationPhotograph<'_> {
     }
 }
 
+fn clipped_mapping(
+    composition: Composition,
+    full: egui::Rect,
+    draw: egui::Rect,
+    scale: f32,
+) -> Option<crate::geometry::TextureMapping> {
+    use crate::geometry::FramePoint;
+
+    // egui-wgpu clamps offscreen viewports; remap clipped, pixel-rounded bounds
+    // instead of squeezing the whole image into the remaining space.
+    let min = (full.min.to_vec2() * scale).round();
+    let extent = (full.max.to_vec2() * scale).round() - min;
+    let draw_min = (draw.min.to_vec2() * scale).round();
+    let draw_max = (draw.max.to_vec2() * scale).round();
+    if draw_max.x <= draw_min.x || draw_max.y <= draw_min.y {
+        return None;
+    }
+    let dimensions = composition.size();
+    let frame_point = |point: egui::Vec2| {
+        let fraction = (point - min) / extent;
+        FramePoint([
+            f64::from(fraction.x) * f64::from(dimensions[0]),
+            f64::from(fraction.y) * f64::from(dimensions[1]),
+        ])
+    };
+    Some(composition.texture_mapping(
+        frame_point(draw_min),
+        frame_point(draw_max),
+        composition.area(),
+    ))
+}
+
 impl ThumbnailProvider {
+    pub(super) fn begin(editor: &mut Editor, preview: Preview, context: &egui::Context) -> Self {
+        let thumbnails = &mut editor.document.thumbnails;
+        thumbnails.preview = preview;
+        thumbnails.repaint.get_or_init(|| context.clone());
+        editor.apply_cache_budgets();
+        if editor.document.visit.canvas.ready.is_none()
+            && editor.document.visit.pending_preview.is_none()
+        {
+            editor.document.thumbnails.release_selected();
+        }
+        let field = editor.correction().map().cloned().map(FieldKey);
+        editor.document.thumbnails.processed.retain_field(field);
+        Self::default()
+    }
+
     pub(super) fn lookup<'a>(
         &mut self,
         editor: &'a Editor,
         source: &Source,
         path: &std::path::Path,
     ) -> NavigationImage<'a> {
-        self.visible.push(source.id);
-        let Some(key) = editor.thumbnail_key(source, path) else {
-            return NavigationImage {
-                photograph: None,
-                camera: None,
-                updating: false,
-            };
-        };
+        let key = editor.thumbnail_key(source, path);
         let thumbnails = &editor.document.thumbnails;
         let camera = thumbnails.embedded.get(&key.source);
         let thumbnail = thumbnails.processed.image(&key);
@@ -682,9 +734,9 @@ impl ThumbnailProvider {
             };
         if thumbnail.is_none() {
             self.camera_wanted
-                .push((self.visible.len() - 1, key.clone(), path.to_owned()));
+                .push((self.wanted.len(), key.clone(), path.to_owned()));
         }
-        self.protected.push(key);
+        self.wanted.push(key);
 
         let photograph = thumbnail.map(|result| {
             let thumbnail = result?;
@@ -718,58 +770,26 @@ impl ThumbnailProvider {
         cx: &UiContext<'_, Editor>,
     ) {
         let Self {
-            visible,
-            protected,
+            wanted,
             camera_wanted,
             awaiting_correction,
         } = self;
-        editor
-            .document
-            .thumbnails
-            .processed
-            .touch_visible(&protected);
+        editor.document.thumbnails.processed.touch_visible(&wanted);
         if awaiting_correction {
             editor.document.correction.observe(cx);
         }
 
         let thumbnails = &mut editor.document.thumbnails;
-        thumbnails.visible = visible;
-        thumbnails.visible_keys = protected
-            .iter()
-            .filter_map(|key| key.source.store_key())
-            .collect();
-        thumbnails.protect_cpu();
-        thumbnails.processed.protect_images(protected.clone());
-        editor.apply_cache_budgets();
-        editor
-            .document
-            .thumbnails
-            .embedded
-            .request_visible(&camera_wanted);
-        editor.apply_cache_budgets();
+        thumbnails.repaint.get_or_init(|| context.clone());
+        thumbnails.visible = wanted.iter().map(|key| key.source.id).collect();
+        thumbnails.embedded.request_visible(&camera_wanted);
+        editor.schedule_with_visible_keys(cx, std::time::Instant::now(), false, wanted);
         start_next_embedded_preview(editor, context, cx);
-        editor.schedule_with_visible_keys(cx, std::time::Instant::now(), false, protected);
         if editor.document.thumbnails.processed.has_pending()
             || editor.document.thumbnails.embedded.pending()
         {
             context.request_repaint_after(Duration::from_millis(50));
         }
-    }
-}
-
-pub(super) fn clear_visible_photos(
-    editor: &mut Editor,
-    context: &egui::Context,
-    cx: &UiContext<'_, Editor>,
-) {
-    let thumbnails = &mut editor.document.thumbnails;
-    thumbnails.repaint.get_or_init(|| context.clone());
-    thumbnails.visible.clear();
-    thumbnails.refresh_hidden_memory();
-    editor.apply_cache_budgets();
-    editor.advance_thumbnail_demand(cx);
-    if editor.document.thumbnails.processed.has_pending() {
-        context.request_repaint_after(Duration::from_millis(50));
     }
 }
 
@@ -882,9 +902,8 @@ impl Editor {
         for id in &self.document.thumbnails.visible {
             if let Ok(source) = self.document.state.project.source(*id)
                 && let Ok(path) = self.document.source_path(*id)
-                && let Some(key) = self.thumbnail_key(source, &path)
             {
-                protected.push(key);
+                protected.push(self.thumbnail_key(source, &path));
             }
         }
         self.schedule_with_visible_keys(cx, now, continuing, protected);
@@ -910,7 +929,7 @@ impl Editor {
                     .source(key.source.id)
                     .ok()
                     .zip(self.document.source_path(key.source.id).ok())
-                    .and_then(|(source, path)| self.thumbnail_key(source, &path))
+                    .map(|(source, path)| self.thumbnail_key(source, &path))
                     .as_ref()
                     == Some(key)
             };
@@ -919,15 +938,7 @@ impl Editor {
                 .processed
                 .reconcile(current, visible, eager, &protected);
         }
-        self.document.thumbnails.visible_keys = protected
-            .iter()
-            .filter_map(|key| key.source.store_key())
-            .collect();
-        self.document.thumbnails.protect_cpu();
-        self.document
-            .thumbnails
-            .processed
-            .protect_images(protected.clone());
+        self.document.thumbnails.protect_visible(&protected);
         self.apply_cache_budgets();
         let processed = &mut self.document.thumbnails.processed;
         if processed.mark_unavailable(&protected)
@@ -936,24 +947,21 @@ impl Editor {
         {
             return;
         }
-        let visible_indices: Vec<_> = self
+        let eager_ids = self
             .document
+            .state
             .project
             .order
             .iter()
-            .enumerate()
-            .filter_map(|(index, id)| visible.contains(id).then_some(index))
-            .collect();
-        let mut candidates: Vec<_> = (0..self.document.state.project.order.len())
-            .filter(|index| visible_indices.contains(index) || eager)
-            .collect();
-        candidates.sort_by_key(|index| !visible_indices.contains(index));
-        for index in candidates {
-            let id = self.document.state.project.order[index];
-            let visible = visible.contains(&id);
-            let key = if visible {
-                protected.iter().find(|key| key.source.id == id).cloned()
-            } else {
+            .copied()
+            .filter(|id| eager && !visible.contains(id));
+        let candidates = protected
+            .into_iter()
+            .map(|key| (key.source.id, Some(key)))
+            .chain(eager_ids.map(|id| (id, None)));
+        for (id, visible_key) in candidates {
+            let visible = visible_key.is_some();
+            let key = visible_key.unwrap_or_else(|| {
                 let source = self
                     .document
                     .project
@@ -964,10 +972,7 @@ impl Editor {
                     .source_path(id)
                     .expect("thumbnail demand locator");
                 self.thumbnail_key(source, &path)
-            };
-            let Some(key) = key else {
-                continue;
-            };
+            });
             let render = match self
                 .document
                 .thumbnails

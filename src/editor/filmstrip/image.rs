@@ -2,7 +2,6 @@ use super::super::{
     thumbnails::{NavigationImage, NavigationPhotograph},
     ui,
 };
-use crate::geometry::{Composition, FramePoint};
 
 pub(super) struct Card<'a> {
     pub image: NavigationImage<'a>,
@@ -64,25 +63,8 @@ fn draw_photo(
     ui: &egui::Ui,
     image_rect: egui::Rect,
 ) -> Result<(), String> {
-    let dimensions = photo.composition.size();
-    let aspect = dimensions[0] as f32 / dimensions[1] as f32;
-    let size = egui::vec2(
-        (image_rect.height() * aspect).min(image_rect.width()),
-        (image_rect.width() / aspect).min(image_rect.height()),
-    );
-    let full = egui::Rect::from_center_size(image_rect.center(), size);
-    let draw = full.intersect(ui.clip_rect());
-    let painter = ui.painter().with_clip_rect(draw);
-    let mapping = clipped_mapping(photo.composition, full, draw, ui.ctx().pixels_per_point());
-    let result = if let Some(mapping) = mapping {
-        photo.paint(mapping).map(|paint| {
-            if let Some(paint) = paint {
-                painter.add(egui_wgpu::Callback::new_paint_callback(draw, paint));
-            }
-        })
-    } else {
-        Ok(())
-    };
+    let full = photo.fitted_rect(image_rect);
+    let result = photo.show(ui, full);
 
     if let Some((outline, [x, y, width, height])) = outline {
         let points = outline.map(|point| {
@@ -92,42 +74,14 @@ fn draw_photo(
                     ((point[1] - f64::from(y)) / f64::from(height)) as f32 * full.height(),
                 )
         });
-        painter.add(egui::Shape::closed_line(
-            points.to_vec(),
-            ui.visuals().selection.stroke,
-        ));
+        ui.painter()
+            .with_clip_rect(full.intersect(ui.clip_rect()))
+            .add(egui::Shape::closed_line(
+                points.to_vec(),
+                ui.visuals().selection.stroke,
+            ));
     }
     result
-}
-
-fn clipped_mapping(
-    composition: Composition,
-    full: egui::Rect,
-    draw: egui::Rect,
-    scale: f32,
-) -> Option<crate::geometry::TextureMapping> {
-    // egui-wgpu clamps offscreen viewports; remap clipped, pixel-rounded bounds
-    // instead of squeezing the whole image into the remaining space.
-    let min = (full.min.to_vec2() * scale).round();
-    let extent = (full.max.to_vec2() * scale).round() - min;
-    let draw_min = (draw.min.to_vec2() * scale).round();
-    let draw_max = (draw.max.to_vec2() * scale).round();
-    if draw_max.x <= draw_min.x || draw_max.y <= draw_min.y {
-        return None;
-    }
-    let dimensions = composition.size();
-    let frame_point = |point: egui::Vec2| {
-        let fraction = (point - min) / extent;
-        FramePoint([
-            f64::from(fraction.x) * f64::from(dimensions[0]),
-            f64::from(fraction.y) * f64::from(dimensions[1]),
-        ])
-    };
-    Some(composition.texture_mapping(
-        frame_point(draw_min),
-        frame_point(draw_max),
-        composition.area(),
-    ))
 }
 
 fn draw_camera(ui: &egui::Ui, image_rect: egui::Rect, texture: &egui::TextureHandle) {

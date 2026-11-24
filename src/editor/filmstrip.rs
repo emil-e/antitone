@@ -17,7 +17,7 @@ pub(super) struct Preview {
 
 impl Editor {
     pub(super) fn hidden_filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        thumbnails::clear_visible_photos(self, ui.ctx(), cx);
+        thumbnails::ThumbnailProvider::default().publish_demand(self, ui.ctx(), cx);
     }
 
     pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
@@ -31,9 +31,8 @@ pub(super) fn show_preview(
     mut preview: Preview,
     cx: &UiContext<'_, Editor>,
 ) {
-    thumbnails::prepare_filmstrip_images(editor, std::mem::take(&mut preview.images), ui.ctx());
-
-    let mut thumbnails = thumbnails::ThumbnailProvider::default();
+    let mut thumbnails =
+        thumbnails::ThumbnailProvider::begin(editor, std::mem::take(&mut preview.images), ui.ctx());
     let actions = show_cards(editor, ui, &mut thumbnails, &preview);
     if actions.auto_crop {
         let photos = editor

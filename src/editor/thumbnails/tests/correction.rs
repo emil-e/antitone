@@ -69,7 +69,7 @@ fn failed_map_preserves_source_thumbnail_paint_but_still_fails_precision_acquisi
         gpu_bytes: budgets.images as u64,
     });
     let path = editor.document.source_path(id).unwrap();
-    let key = editor.thumbnail_key(&source, &path).unwrap();
+    let key = editor.thumbnail_key(&source, &path);
     assert!(key.recipe.as_ref().unwrap().is_none());
     let job = service_job(&editor.document.thumbnails, key, path, source, None, true);
     complete_service_request(&mut editor.document.thumbnails, &editor.document.state, job);
@@ -142,7 +142,7 @@ fn camera_thumbnail_paint_requests_its_map_without_waiting_or_using_an_absent_co
     });
     editor.document.correction = correction.clone().into();
     let path = editor.document.source_path(id).unwrap();
-    let key = editor.thumbnail_key(&source, &path).unwrap();
+    let key = editor.thumbnail_key(&source, &path);
     assert!(key.recipe.as_ref().unwrap().is_none());
     let job = service_job(
         &editor.document.thumbnails,
@@ -229,7 +229,7 @@ fn positive_thumbnail_waits_for_the_captured_map_and_cancellation_keeps_another_
     });
     editor.document.correction = correction.clone().into();
     let path = editor.document.source_path(id).unwrap();
-    let key = editor.thumbnail_key(&source, &path).unwrap();
+    let key = editor.thumbnail_key(&source, &path);
     assert_eq!(key.field.as_ref().map(|field| &field.0), Some(&map));
     assert!(key.recipe.as_ref().unwrap().is_some());
     let worker = thumbnails.processed.services.clone().unwrap();

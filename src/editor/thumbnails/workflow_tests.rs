@@ -131,6 +131,70 @@ fn visible_then_eager_demand_finishes_without_paint_at_zero_optional_limits() {
 }
 
 #[test]
+fn visible_preview_order_drives_work_and_a_new_pass_reuses_ready_images() {
+    let (mut document, _sources) = document(3);
+    document.project.set_dmin(Some([0.8; 3]));
+    document.project.set_dmax(Some([0.02; 3]));
+    let [first, _, third] = document.project.order[..] else {
+        unreachable!();
+    };
+    let disk = tempfile::tempdir().unwrap();
+    let scheduler = source_loading::SourceLoader::new();
+    let editor = editor(document, disk.path(), scheduler.clone());
+    let context = egui::Context::default();
+    let pass = |editor: &mut Editor, ids: [SourceId; 2]| {
+        let mut demand = ThumbnailProvider::begin(editor, Preview::default(), &context);
+        let images = ids.map(|id| {
+            let photo = editor.document.project.source(id).unwrap();
+            let path = editor.document.source_path(id).unwrap();
+            demand
+                .lookup(editor, photo, &path)
+                .photograph
+                .map(|result| result.map(|photo| photo.image))
+        });
+        (demand, images)
+    };
+    with_application(editor, |app| {
+        app.enter(|editor, access| {
+            let (demand, images) = pass(editor, [third, first]);
+            assert!(images.iter().all(Option::is_none));
+            demand.publish_demand(editor, &context, access);
+            let processed = &editor.document.thumbnails.processed;
+            assert_eq!(processed.pending_key().unwrap().source.id, third);
+        });
+        app.run_until(Duration::from_secs(30), |editor| {
+            let processed = &editor.document.thumbnails.processed;
+            !processed.work.pending() && processed.attempted_sources.len() == 3
+        });
+        app.enter(|editor, access| {
+            let (demand, images) = pass(editor, [third, first]);
+            let [old_third, old_first] = images.map(|image| image.unwrap().unwrap());
+            demand.publish_demand(editor, &context, access);
+
+            // Another viewer submits the same visible photos in a different order.
+            let (demand, images) = pass(editor, [first, third]);
+            let [new_first, new_third] = images.map(|image| image.unwrap().unwrap());
+            assert!(Arc::ptr_eq(&old_first, &new_first));
+            assert!(Arc::ptr_eq(&old_third, &new_third));
+            demand.publish_demand(editor, &context, access);
+            assert!(!editor.document.thumbnails.processed.work.pending());
+
+            ThumbnailProvider::default().publish_demand(editor, &context, access);
+            assert!(
+                editor
+                    .document
+                    .thumbnails
+                    .processed
+                    .cache
+                    .entries
+                    .is_empty()
+            );
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
 fn changing_thumbnail_demand_preserves_compatible_cards_and_refreshes_the_latest_roll() {
     let (mut document, _sources) = document(2);
     document.project.set_dmin(Some([0.8; 3]));
@@ -170,7 +234,7 @@ fn changing_thumbnail_demand_preserves_compatible_cards_and_refreshes_the_latest
             for id in &visible {
                 let source = editor.document.state.project.source(*id).unwrap();
                 let path = editor.document.source_path(*id).unwrap();
-                let wanted = editor.thumbnail_key(source, &path).unwrap();
+                let wanted = editor.thumbnail_key(source, &path);
                 assert!(
                     editor
                         .document
@@ -413,10 +477,9 @@ fn retiring_visible_gpu_demand_keeps_document_cpu_completion_and_disk_publicatio
             );
             std::thread::yield_now();
         }
-        app.update(|editor| {
+        app.enter(|editor, access| {
+            ThumbnailProvider::default().publish_demand(editor, &egui::Context::default(), access);
             editor.document.thumbnails.processed.cancel();
-            editor.document.thumbnails.visible = Vec::new();
-            editor.document.thumbnails.refresh_hidden_memory();
         });
         assert!(app.read(|editor| editor.document.thumbnails.processed.work.pending()));
         release.send(()).unwrap();
