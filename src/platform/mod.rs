@@ -27,6 +27,12 @@ pub(crate) use native::{
     quit_cancel_on_unwind,
 };
 
+/// Prepare the editor process before argument parsing, which can itself write output.
+#[cfg(feature = "editor")]
+pub fn prepare_process() {
+    native::prepare_process();
+}
+
 /// The surface formats a platform can present the shared sRGB-encoded output in, best first,
 /// and the colour space those values are interpreted in.
 pub(crate) struct Presentation {

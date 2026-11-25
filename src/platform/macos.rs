@@ -23,6 +23,9 @@ pub(crate) fn configure_presentation(surface: &wgpu::Surface<'_>) -> Result<(), 
 }
 
 #[cfg(feature = "editor")]
+pub(super) fn prepare_process() {}
+
+#[cfg(feature = "editor")]
 pub fn install_icon() -> Result<(), Box<dyn std::error::Error>> {
     set_application_icon()
 }

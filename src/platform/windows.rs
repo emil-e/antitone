@@ -19,6 +19,15 @@ pub(crate) fn configure_presentation(_surface: &wgpu::Surface<'_>) -> Result<(),
     Ok(())
 }
 
+/// Reuse the caller's console for CLI output if there is one, without opening a new window.
+#[cfg(feature = "editor")]
+pub(super) fn prepare_process() {
+    use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+
+    // SAFETY: AttachConsole accepts the parent-process sentinel and takes no pointers.
+    unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+}
+
 #[cfg(feature = "editor")]
 pub fn install_icon() -> Result<(), Box<dyn std::error::Error>> {
     // The window icon is set per window; see `configure_window`.

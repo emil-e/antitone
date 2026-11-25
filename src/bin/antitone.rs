@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
+
 use antitone::{editor::Editor, platform::host};
 use clap::Parser;
 use std::path::PathBuf;
@@ -27,6 +29,8 @@ struct Arguments {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    antitone::platform::prepare_process();
+
     let arguments = Arguments::parse();
     if arguments.check_semantic_wb_runtime {
         println!(
