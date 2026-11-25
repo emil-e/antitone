@@ -2,12 +2,12 @@
 
 use crate::Error;
 use crate::gpu::evaluation::*;
-use crate::gpu::flat::GpuFlatField;
 #[cfg(any(test, feature = "editor"))]
 use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::source::ProcessingSource;
-#[cfg(any(test, feature = "editor"))]
-use crate::gpu::source::SourceGeometry;
+use crate::gpu::source::{Mapping, ProcessingSource};
+#[cfg(feature = "editor")]
+use crate::photographic::stages::flat_field::operation::CameraCorrection;
+use crate::photographic::stages::flat_field::{GpuFlatField, operation::apply as camera_image};
 use crate::photographic::stages::grading::Grading;
 use crate::reconstruction::reconstruct_cells;
 use std::sync::Arc;
@@ -50,13 +50,11 @@ mod tests;
 #[cfg(feature = "editor")]
 pub(crate) mod view_source;
 use crate::photographic::stages::interpretation::operation::{Interpretation, NativeIdentity};
-use operations::{CameraCorrection, Mapping, ResidentCamera, validate_camera_range};
+use operations::{ResidentCamera, validate_camera_range};
 #[cfg(feature = "render")]
 mod prewarm;
 #[cfg(test)]
 pub mod test_support;
-
-use composition::camera_image;
 
 #[cfg(feature = "editor")]
 pub(crate) fn resident_camera_buffers(image: &Value) -> Vec<wgpu::Buffer> {
@@ -124,22 +122,7 @@ fn camera_patches(
     }
 
     validate_camera_range(glam::DMat3::IDENTITY, field.as_deref(), true)?;
-    let geometry = field
-        .as_ref()
-        .map(|field| SourceGeometry::new(field.field().area(), [1, 1]))
-        .transpose()?;
-    let function = Function::new(
-        format!(
-            "{}\n{}",
-            crate::photographic::stages::shader::functions(),
-            include_str!("graph/gathered.wgsl")
-        ),
-        "gathered_camera_light",
-    )
-    .with_storage(18, bytemuck::cast_slice(origins).to_vec())
-    .with_uniform(19, &[patch[0], patch[1], 0u32, 0u32]);
-    let function = GpuFlatField::bind(field.as_deref(), geometry, function)?;
-    Ok(pointwise(source, function))
+    crate::photographic::stages::flat_field::gathered(source, field.as_deref(), origins, patch)
 }
 
 /// Corrected original camera light, excluding interpretation and recorded positive exposure.

@@ -85,10 +85,8 @@ fn composed_working_view_validates() {
     );
     validate(
         "camera-cell adjustments",
-        &format!(
-            "{}\n{}",
-            crate::photographic::stages::grading::Grading::shader(),
-            include_str!("photographic/stages/grading/camera_adjustments.wgsl")
+        &crate::photographic::stages::grading::Grading::camera_shader(
+            &crate::photographic::stages::grading::Grading::shader(),
         ),
         &[],
     );

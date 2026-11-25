@@ -14,7 +14,7 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
             &device,
             &values,
             glam::DMat3::IDENTITY,
-            Some(SourceGeometry::original_tile([0, 0, 64, 64], [64; 2]).unwrap()),
+            Some(crate::gpu::source::SourceGeometry::new([0, 0, 64, 64], [64; 2]).unwrap()),
         )
         .unwrap()
     };

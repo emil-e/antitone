@@ -160,7 +160,7 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
             &camera,
             scan.positive_matrix(&InputSettings::Digital).unwrap(),
             Some(
-                SourceGeometry::original_tile(
+                SourceGeometry::new(
                     [area.x, area.y, area.width, area.height],
                     [area.width, area.height],
                 )

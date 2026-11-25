@@ -94,13 +94,8 @@ impl Operation for Grade {
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
         let operation = if let Some(geometry) = self.coordinates() {
-            let code = format!(
-                "{}\n{}",
-                self.function.code,
-                include_str!("camera_adjustments.wgsl")
-            );
-            let function =
-                crate::gpu::flat::bind_source_coordinates(self.function.clone(), geometry);
+            let code = Grading::camera_shader(&self.function.code);
+            let function = crate::gpu::source::coordinates::bind(self.function.clone(), geometry);
             value::Operation::new(
                 "camera-coordinate grading v1",
                 self.definition.clone(),
@@ -153,6 +148,15 @@ impl Grading {
             }
         }
         Ok(images)
+    }
+
+    pub(crate) fn camera_shader(grading: &str) -> String {
+        [
+            grading,
+            &crate::gpu::source::coordinates::shader(),
+            include_str!("camera_adjustments.wgsl"),
+        ]
+        .join("\n")
     }
 
     pub(crate) fn shader() -> String {

@@ -576,7 +576,9 @@ pub(crate) fn resident_camera_bytes(image: &Value) -> u64 {
 pub(crate) fn has_correction(image: &Value, field: Option<&Arc<GpuFlatField>>) -> bool {
     let mut found = false;
     for node in image.ancestors() {
-        if let Some(camera) = node.parameters::<operations::CameraIdentity>() {
+        if let Some(camera) =
+            node.parameters::<crate::photographic::stages::flat_field::operation::CameraIdentity>()
+        {
             if camera.field.as_ref() != field.map(|field| field.field()) {
                 return false;
             }

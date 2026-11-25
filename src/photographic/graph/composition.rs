@@ -393,18 +393,6 @@ pub(crate) fn reconstruct_neutral(neutral: Value, working: FrameRaster) -> Resul
     )
 }
 
-pub(super) fn camera_image(
-    source: Value,
-    field: Option<Arc<GpuFlatField>>,
-    mapping: Mapping,
-) -> Value {
-    Value::from_operation(
-        source.domain(),
-        Some(source),
-        CameraCorrection { field, mapping },
-    )
-}
-
 pub(super) fn native_image(camera: Value, interpretation: Interpretation) -> Result<Value, Error> {
     Ok(Value::from_operation(
         camera.domain(),

@@ -92,7 +92,7 @@ fn working_request_awaits_its_captured_correction_without_an_inspector_observer(
                 .ancestors()
                 .find_map(|node| {
                     (node.operation().as_ref() as &dyn std::any::Any)
-                        .downcast_ref::<crate::photographic::graph::operations::CameraCorrection>()
+                        .downcast_ref::<crate::photographic::stages::flat_field::operation::CameraCorrection>()
                 })
                 .expect("completed graph must contain corrected camera light");
             assert!(Arc::ptr_eq(camera.field.as_ref().unwrap(), &correction.gpu));
