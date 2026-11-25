@@ -24,11 +24,12 @@ function Assert-PortableApplication {
     try {
         $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
         [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-        $smoke = @(& '.\antitone.exe' --version)
+        # Windows PowerShell waits for GUI executables and captures stdout only in a pipeline.
+        $smoke = @(& '.\antitone.exe' --version | ForEach-Object { $_ })
         if ($LASTEXITCODE -ne 0 -or $smoke.Count -ne 1 -or $smoke[0] -ne $Version) {
             throw "Packaged executable failed version check: '$smoke' (exit $LASTEXITCODE)"
         }
-        $loaded = @(& '.\antitone.exe' --check-semantic-wb-runtime)
+        $loaded = @(& '.\antitone.exe' --check-semantic-wb-runtime | ForEach-Object { $_ })
         if ($LASTEXITCODE -ne 0 -or $loaded.Count -ne 1) {
             throw "Packaged ONNX Runtime smoke failed: '$loaded' (exit $LASTEXITCODE)"
         }
@@ -60,7 +61,11 @@ if (-not $SkipBuild) {
 
 $binary = Join-Path $root 'target/release/antitone.exe'
 if (-not (Test-Path $binary)) { throw "Missing $binary; run without -SkipBuild first." }
-$version = (& $binary --version).Trim()
+$versionLines = @(& $binary --version | ForEach-Object { $_ })
+if ($LASTEXITCODE -ne 0 -or $versionLines.Count -ne 1 -or -not $versionLines[0]) {
+    throw "Built executable failed version check: '$versionLines' (exit $LASTEXITCODE)"
+}
+$version = $versionLines[0]
 
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force $stage | Out-Null
@@ -80,9 +85,12 @@ $omp = Get-Content -Raw (Join-Path $root 'native/openmp/pins.txt') | ConvertFrom
 $openmp = Join-Path $root ".cache/native-deps/openmp-$($omp.version)-windows-x64-install"
 Copy-Item -LiteralPath (Get-LlvmOpenMPRuntime -Prefix $openmp) -Destination $stage
 $devcmd = Join-Path $installation 'Common7/Tools/VsDevCmd.bat'
-$imports = & cmd.exe /d /c "call `"$devcmd`" -arch=x64 -host_arch=x64 >nul && dumpbin /dependents `"$binary`""
-if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the production OpenMP imports.' }
-Assert-LlvmOpenMPImports -Lines $imports
+$imageInfo = & cmd.exe /d /c "call `"$devcmd`" -arch=x64 -host_arch=x64 >nul && dumpbin /headers /dependents `"$binary`""
+if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the production executable.' }
+if (-not ($imageInfo -match '^\s*2\s+subsystem\s+\(Windows GUI\)')) {
+    throw 'Antitone must use the Windows GUI subsystem to launch without a console window.'
+}
+Assert-LlvmOpenMPImports -Lines $imageInfo
 
 $onnxPinsPath = Join-Path $root 'native/onnxruntime/pins.txt'
 $onnx = Get-Content -Raw $onnxPinsPath | ConvertFrom-StringData
