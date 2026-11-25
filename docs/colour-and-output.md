@@ -36,7 +36,7 @@ Import declares this working-space contract: a `.cube` cannot prove colour inten
 
 ## Source inspection has its own exposure convention
 
-[Negative source viewing](../src/gpu/interpretation.rs) balances unity-developed camera light for inspection before ACES. LibRaw uses green-relative daylight/as-shot gain ratios, expressed in the cached source's AP1 basis. The DNG SDK supplies profile-adapted viewing matrices; applying generic gains on top would balance it twice. Header preparation retains these per-source transforms separately from development identity. Unavailable as-shot WB falls back to daylight; unavailable daylight leaves the source's existing balance.
+[Negative source viewing](../src/photographic/stages/interpretation.rs) balances unity-developed camera light for inspection before ACES. LibRaw uses green-relative daylight/as-shot gain ratios, expressed in the cached source's AP1 basis. The DNG SDK supplies profile-adapted viewing matrices; applying generic gains on top would balance it twice. Header preparation retains these per-source transforms separately from development identity. Unavailable as-shot WB falls back to daylight; unavailable daylight leaves the source's existing balance.
 
 Canvas and source-preview thumbnails use a common **+1 EV** ACES inspection baseline, with manual inspection EV relative to it. They consume the [shared source exposure scale](processing.md#start-with-the-cameras-measurements) without repeating WB normalization. This extra stop belongs only to inspection; Digital positives and exports use their [per-capture starting exposure](processing.md#digital-starting-brightness). [Source inspection](editor.md#source-inspection-is-a-view) owns the transient controls.
 

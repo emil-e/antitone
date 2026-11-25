@@ -5,12 +5,12 @@
 //! Inspection branches before inversion; request routing and operation mathematics have separate owners.
 
 use super::assembly::SourceImages;
-use super::operations::{Native, Working};
 use super::*;
 #[cfg(feature = "project")]
-use crate::gpu::interpretation::InputTransform;
-#[cfg(feature = "project")]
 use crate::image_recipe::{ImageRecipe, quality::Quality};
+#[cfg(feature = "project")]
+use crate::photographic::stages::interpretation::InputTransform;
+use crate::photographic::stages::interpretation::operation::{Native, Working};
 
 #[cfg(all(test, feature = "editor"))]
 mod sequence_tests;
@@ -628,7 +628,9 @@ impl PhotographGraph {
         frame: crate::frame_raster::FrameRaster,
         native_grid: Option<crate::frame_raster::FrameRaster>,
     ) -> Result<(Self, crate::acquisition::Plan), Error> {
-        let program = crate::gpu::interpretation::InputTransform::from_recipe(&recipe.neutral)?;
+        let program = crate::photographic::stages::interpretation::InputTransform::from_recipe(
+            &recipe.neutral,
+        )?;
         if !program.matches_native(scan)?
             || scan.flat_field() != recipe.neutral.correction.as_ref()
             || recipe.neutral.correction.as_ref() != field.as_ref().map(|field| field.field())
@@ -702,7 +704,7 @@ impl PhotographGraph {
 impl CameraGraph {
     pub(super) fn inspection(
         &self,
-        view: crate::gpu::interpretation::InspectionView,
+        view: crate::photographic::stages::interpretation::InspectionView,
     ) -> Result<Value, Error> {
         Ok(Assembly::captured(Captured::new(
             self.input.clone(),
@@ -720,7 +722,7 @@ impl PhotographGraph {
         limits: &wgpu::Limits,
         source: Value,
         field: Option<Arc<GpuFlatField>>,
-        program: crate::gpu::interpretation::InputTransform,
+        program: crate::photographic::stages::interpretation::InputTransform,
         grading: Grading,
         repairs: &[crate::dust_repair::Repair],
     ) -> Result<Value, Error> {
@@ -731,7 +733,7 @@ impl PhotographGraph {
         limits: &wgpu::Limits,
         source: Value,
         field: Option<Arc<GpuFlatField>>,
-        program: crate::gpu::interpretation::InputTransform,
+        program: crate::photographic::stages::interpretation::InputTransform,
         grading: Grading,
         repairs: Vec<crate::dust_repair::Repair>,
     ) -> Result<Self, Error> {
@@ -760,7 +762,7 @@ impl PhotographGraph {
         source: Value,
         field: Option<Arc<GpuFlatField>>,
         matrix: glam::DMat3,
-        view: crate::gpu::interpretation::InspectionView,
+        view: crate::photographic::stages::interpretation::InspectionView,
     ) -> Result<Value, Error> {
         if source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2]) {
             return Err(Error::InvalidParameter(
@@ -787,7 +789,10 @@ impl PhotographGraph {
     ) -> Result<Value, Error> {
         let output = view_domain(presentation, neutral.domain().grid.coverage);
         window(
-            crate::gpu::interpretation::inspect_filtered(neutral.for_reuse(), parameters)?,
+            crate::photographic::stages::interpretation::inspect_filtered(
+                neutral.for_reuse(),
+                parameters,
+            )?,
             output.finite()?,
         )
     }

@@ -30,7 +30,7 @@ Where each area's implementation lives — navigation, not specification. Follow
 | Area | Start here | Responsibility |
 | --- | --- | --- |
 | Processing | [processing](../src/processing.rs), [photographic calculations](../src/photographic/graph.rs), [colour](../src/color.rs) | Response, grading, stage composition and numerical admission |
-| Adjustment layers | [controls and masks](../src/adjustment_layers.rs), [GPU grading](../src/gpu/grading.rs), [editor routing](../src/editor/processing.rs) | Immutable snapshots, analytic masks, source-owned layers and consumer-local numerical admission |
+| Adjustment layers | [controls and masks](../src/adjustment_layers.rs), [Grading stage](../src/photographic/stages/grading.rs), [editor routing](../src/editor/processing.rs) | Immutable snapshots, analytic masks, source-owned layers and consumer-local numerical admission |
 | RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [source acquisition](../src/source/mod.rs), [GPU camera source](../src/gpu/source/native.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership and immutable camera RGB |
 | DNG backend | [adapter](../src/dng.rs), [native owner](../native/dng_bridge.cpp) | Direct SDK development and decode-free inspection in the shared source model |
 | Scan correction | [flat-field](../src/flat_field.rs), [GPU map](../src/gpu/flat.rs) | Source-coordinate illumination gains |

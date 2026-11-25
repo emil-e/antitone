@@ -1,15 +1,13 @@
 //! Authored operation arguments applied to a consumer's camera cells, not a second image recipe.
 #![allow(dead_code)] // Integration executables exercise different subsets of these consumers.
 
+use antitone::photographic::stages::{grading::Grading, interpretation::InputTransform};
 use antitone::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
     frame_raster::FrameRaster,
     geometry::{SourceRegion, TextureMapping},
-    gpu::{
-        evaluation::Value, grading::Grading, interpretation::InputTransform,
-        parameters::ProcessingParameters,
-    },
+    gpu::{evaluation::Value, parameters::ProcessingParameters},
     gpu_scopes::{GpuScopes, ScopePaint},
     processing::{InputSettings, RollSettings},
     scopes::{Counts, Settings},

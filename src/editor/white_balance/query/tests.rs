@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::grading::Grading;
+use crate::photographic::stages::grading::Grading;
 use crate::{
     adjustment_layers::AdjustmentLayerCoverage,
     geometry::{SourcePoint, SourceRegion},

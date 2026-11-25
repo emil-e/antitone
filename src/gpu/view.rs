@@ -111,7 +111,10 @@ impl RenderedView {
                 .map(|lut| lut.byte_len())
                 .sum::<u64>()
             + self.product.as_ref().map_or(0, |image| {
-                image.byte_len() + crate::gpu::grading::Grading::captured_bytes(&image.definition)
+                image.byte_len()
+                    + crate::photographic::stages::grading::Grading::captured_bytes(
+                        &image.definition,
+                    )
             })
     }
 

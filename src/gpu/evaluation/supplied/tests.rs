@@ -365,7 +365,7 @@ fn produced_photographic_values_can_supply_their_captured_group_and_resolve_stag
     let data = Pixels::new(true);
     let input = source(Arc::new(data.clone()));
     let make = |exposure| {
-        let grading = crate::gpu::grading::Grading::new(
+        let grading = crate::photographic::stages::grading::Grading::new(
             &device.limits(),
             crate::processing::RollSettings {
                 exposure,

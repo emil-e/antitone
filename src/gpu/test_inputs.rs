@@ -1,9 +1,9 @@
 //! Authored mathematical inputs for tests that supply their own camera raster.
 
-use crate::gpu::grading::Grading;
-use crate::gpu::interpretation::InputTransform;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::source::ProcessingSource;
+use crate::photographic::stages::grading::Grading;
+use crate::photographic::stages::interpretation::InputTransform;
 use crate::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
@@ -51,7 +51,12 @@ impl Processing {
                     grading: bg,
                     area: ba,
                 },
-            ) => a == b && ag.roll == bg.roll && ag.snapshot() == bg.snapshot() && aa == ba,
+            ) => {
+                a == b
+                    && ag.roll_settings() == bg.roll_settings()
+                    && ag.snapshot() == bg.snapshot()
+                    && aa == ba
+            }
             _ => false,
         }
     }
@@ -106,10 +111,10 @@ impl AuthoredPhotograph {
         grading.require_extent(area)?;
         Self::validate_limits(
             limits,
-            input.input,
-            grading.roll,
+            input.input(),
+            grading.roll_settings(),
             grading.snapshot(),
-            input.matrix,
+            input.matrix(),
             area,
         )?;
         Ok(Self::capture(Processing::Photograph {
@@ -147,10 +152,10 @@ impl AuthoredPhotograph {
         {
             crate::photographic::graph::admission::prepare(
                 limits,
-                source.input,
-                grading.roll,
+                source.input(),
+                grading.roll_settings(),
                 grading.snapshot(),
-                source.matrix,
+                source.matrix(),
                 *area,
             )?;
         }
@@ -292,8 +297,12 @@ impl AuthoredPhotograph {
             Processing::Parameters(parameters) => **parameters,
             Processing::Photograph {
                 source, grading, ..
-            } => ProcessingParameters::interpret(source.input, grading.roll, source.matrix)
-                .expect("captured photographic constants were admitted"),
+            } => ProcessingParameters::interpret(
+                source.input(),
+                grading.roll_settings(),
+                source.matrix(),
+            )
+            .expect("captured photographic constants were admitted"),
         }
     }
 
@@ -443,13 +452,13 @@ mod tests {
         ));
         let captured = AuthoredPhotograph::from_recipe(&wgpu::Limits::default(), &recipe).unwrap();
         assert_eq!(
-            captured.input_transform().matrix,
+            captured.input_transform().matrix(),
             DMat3::from_diagonal(DVec3::new(1.8, 2.2, 2.4))
         );
         assert_ne!(recipe.roll, RollSettings::default());
         assert!(recipe.grade.layers().iter().any(|layer| layer.is_active()));
-        assert_eq!(captured.input_transform().input, recipe.neutral.input);
-        assert_eq!(captured.grade().unwrap().roll, recipe.roll);
+        assert_eq!(captured.input_transform().input(), recipe.neutral.input);
+        assert_eq!(captured.grade().unwrap().roll_settings(), recipe.roll);
         assert_eq!(captured.snapshot(), &recipe.grade);
         let pipeline = captured.definition();
         let film = pipeline.grain.unwrap();

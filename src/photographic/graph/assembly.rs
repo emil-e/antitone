@@ -1,8 +1,8 @@
 //! Captured photographic arguments and source-prefix values used by composition.
 
 use super::*;
-use crate::gpu::grading::Grading;
-use crate::gpu::interpretation::InputTransform;
+use crate::photographic::stages::grading::Grading;
+use crate::photographic::stages::interpretation::InputTransform;
 
 #[derive(Clone)]
 pub(crate) struct Assembly {
@@ -122,10 +122,10 @@ impl Assembly {
     #[cfg(feature = "editor")]
     pub fn input_transform(
         image: &Value,
-    ) -> Result<Option<crate::gpu::interpretation::InputTransform>, Error> {
+    ) -> Result<Option<crate::photographic::stages::interpretation::InputTransform>, Error> {
         let mut captured = None;
         for node in image.ancestors() {
-            if let Some(native) = node.parameters::<super::operations::NativeIdentity>()
+            if let Some(native) = node.parameters::<crate::photographic::stages::interpretation::operation::NativeIdentity>()
                 && let Interpretation::Program(program) = native.0
             {
                 if captured.is_some_and(|prior| prior != program) {

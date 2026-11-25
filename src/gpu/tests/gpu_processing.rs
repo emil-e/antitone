@@ -265,7 +265,7 @@ fn creative_operators_preserve_identity_oklab_lightness_hue_and_finite_signed_va
             label: Some("direct photographic primitive gate"),
             source: wgpu::ShaderSource::Wgsl(
                 [
-                    crate::photographic::graph::shader::functions(),
+                    crate::photographic::stages::shader::functions(),
                     r#"
 struct PrimitiveParameters { amounts: vec4f, vibrance: vec4f }
 @group(0) @binding(2) var<uniform> primitive: PrimitiveParameters;
@@ -356,7 +356,7 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let grading = crate::gpu::grading::Grading::new(
+        let grading = crate::photographic::stages::grading::Grading::new(
             &device.limits(),
             RollSettings::default(),
             AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -370,7 +370,7 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
         .unwrap();
         let context = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("OKLab working-space conversion"),
-            contents: bytemuck::bytes_of(&grading.context),
+            contents: grading.context_bytes(),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let mut contrast_effect = 0_f64;

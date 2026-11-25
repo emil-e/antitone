@@ -87,11 +87,11 @@ fn native_output_resources() {
                     &device.limits(),
                     crate::gpu::source::camera_source(&scan)?,
                     None,
-                    crate::gpu::interpretation::InputTransform::for_scan(
+                    crate::photographic::stages::interpretation::InputTransform::for_scan(
                         &scan,
                         crate::processing::InputSettings::Digital,
                     )?,
-                    crate::gpu::grading::Grading::new(
+                    crate::photographic::stages::grading::Grading::new(
                         &device.limits(),
                         Default::default(),
                         grade.clone(),

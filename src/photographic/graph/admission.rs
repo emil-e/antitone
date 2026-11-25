@@ -4,7 +4,8 @@ use crate::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
     geometry::SourceRegion,
-    gpu::{grading::Grading, interpretation::InputTransform, parameters::ProcessingParameters},
+    gpu::parameters::ProcessingParameters,
+    photographic::stages::{grading::Grading, interpretation::InputTransform},
     processing::{InputSettings, RollSettings},
 };
 use glam::DMat3;

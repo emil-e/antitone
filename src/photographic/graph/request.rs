@@ -3,8 +3,6 @@
 use super::view_source::SourceRequest;
 use super::*;
 use crate::acquisition::Sampling;
-use crate::gpu::interpretation::InputTransform;
-use crate::gpu::interpretation::InspectionView;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::source::camera_source;
 #[cfg(test)]
@@ -12,6 +10,8 @@ use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::{drt, lut3d::Looks};
 use crate::image_recipe::{ImageRecipe, quality::Quality};
 use crate::looks::LutChain;
+use crate::photographic::stages::interpretation::InputTransform;
+use crate::photographic::stages::interpretation::InspectionView;
 
 static NO_LUTS: LutChain = LutChain {
     lut: None,
@@ -95,8 +95,10 @@ impl PhotographRequest {
         let photograph = match self {
             Self::Recipe(recipe) => {
                 recipe.neutral.require_scan(scan)?;
-                if !crate::gpu::interpretation::InputTransform::from_recipe(&recipe.neutral)?
-                    .matches_native(scan)?
+                if !crate::photographic::stages::interpretation::InputTransform::from_recipe(
+                    &recipe.neutral,
+                )?
+                .matches_native(scan)?
                 {
                     return Err(Error::Gpu(
                         "recipe interpretation differs from captured source".into(),
@@ -182,10 +184,14 @@ impl PhotographRequest {
         }
     }
 
-    pub fn input_transform(&self) -> Result<crate::gpu::interpretation::InputTransform, Error> {
+    pub fn input_transform(
+        &self,
+    ) -> Result<crate::photographic::stages::interpretation::InputTransform, Error> {
         match self {
             Self::Recipe(recipe) => {
-                crate::gpu::interpretation::InputTransform::from_recipe(&recipe.neutral)
+                crate::photographic::stages::interpretation::InputTransform::from_recipe(
+                    &recipe.neutral,
+                )
             }
             Self::Inspection(_) => Err(Error::InvalidParameter(
                 "a positive requires input interpretation",
@@ -208,7 +214,7 @@ impl PhotographRequest {
         matrix: glam::DMat3,
         quality: Quality,
     ) -> Result<super::NeutralInput, Error> {
-        use crate::gpu::interpretation::SourceInterpretation;
+        use crate::photographic::stages::interpretation::SourceInterpretation;
         let repairs = match self {
             Self::Recipe(recipe) if quality.includes_repairs() => recipe.repairs.clone(),
             #[cfg(test)]
@@ -510,7 +516,7 @@ impl PhotographRequest {
                         codes,
                         source,
                         field,
-                        crate::gpu::interpretation::InspectionView::from_parameters(
+                        crate::photographic::stages::interpretation::InspectionView::from_parameters(
                             input.parameters(),
                         )?,
                     )?

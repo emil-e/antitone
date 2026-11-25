@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    geometry::SourcePoint, gpu::evaluation::CellRegion as Rect, gpu::grading::Grading,
-    processing::RollPipeline, rendering::OutputTarget,
+    geometry::SourcePoint, gpu::evaluation::CellRegion as Rect,
+    photographic::stages::grading::Grading, processing::RollPipeline, rendering::OutputTarget,
 };
 use glam::DVec3;
 

@@ -19,7 +19,7 @@ class FormatChecks(unittest.TestCase):
             "native/artwork.swift",
             "scripts/tool.py",
             "scripts/setup.sh",
-            "src/gpu/interpretation/film_response.wgsl",
+            "src/photographic/stages/interpretation/film_response.wgsl",
         ]
         commands = []
         with (

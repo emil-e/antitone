@@ -82,8 +82,13 @@ impl ImageSource<'_> {
     }
 
     #[cfg(feature = "gpu")]
-    pub fn gpu_program(&self) -> Result<crate::gpu::interpretation::InputTransform> {
-        crate::gpu::interpretation::InputTransform::new(self.identity.input, self.identity.matrix)
+    pub fn gpu_program(
+        &self,
+    ) -> Result<crate::photographic::stages::interpretation::InputTransform> {
+        crate::photographic::stages::interpretation::InputTransform::new(
+            self.identity.input,
+            self.identity.matrix,
+        )
     }
 }
 

@@ -1,4 +1,4 @@
 use super::*;
-use crate::gpu::interpretation::InputTransform;
+use crate::photographic::stages::interpretation::InputTransform;
 
 mod tests;

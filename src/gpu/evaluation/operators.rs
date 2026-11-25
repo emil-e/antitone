@@ -3,7 +3,7 @@
 use super::CellRegion as Rect;
 use super::*;
 #[cfg(all(test, feature = "editor"))]
-use crate::gpu::grading::Grading;
+use crate::photographic::stages::grading::Grading;
 #[cfg(all(test, feature = "editor"))]
 use wgpu::util::DeviceExt;
 

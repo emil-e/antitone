@@ -189,8 +189,8 @@ fn repair_inputs_keep_masked_values_zero_and_saturate_extreme_required_values() 
         &device.limits(),
         crate::gpu::source::camera_source(&scan).unwrap(),
         None,
-        crate::gpu::interpretation::InputTransform::new(input, matrix).unwrap(),
-        crate::gpu::grading::Grading::new(
+        crate::photographic::stages::interpretation::InputTransform::new(input, matrix).unwrap(),
+        crate::photographic::stages::grading::Grading::new(
             &device.limits(),
             Default::default(),
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),

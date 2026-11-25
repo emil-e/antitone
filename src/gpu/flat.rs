@@ -87,6 +87,11 @@ impl GpuFlatField {
     }
 }
 
+/// Bind the original-camera coordinate mapping without a correction field.
+pub(crate) fn bind_source_coordinates(function: Function, geometry: SourceGeometry) -> Function {
+    function.with_uniform(5, &FieldGeometry::uncorrected(Some(geometry)))
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(super) struct FieldGeometry {

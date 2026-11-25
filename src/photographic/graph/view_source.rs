@@ -4,7 +4,7 @@
 use super::assembly::Assembly;
 use crate::acquisition::{Plan, Request as AcquisitionRequest, Sampling};
 #[cfg(test)]
-use crate::gpu::interpretation::InputTransform;
+use crate::photographic::stages::interpretation::InputTransform;
 use crate::{Error, frame_raster::FrameRaster, gpu::source::SourceGeometry};
 #[cfg(test)]
 use glam::DMat3;

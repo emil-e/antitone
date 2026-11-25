@@ -102,9 +102,10 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
         camera.input.size() + second.input.size()
     );
     let arguments = NeutralInput {
-        interpretation: crate::gpu::interpretation::SourceInterpretation::Photograph(
-            *input.source_transform().unwrap(),
-        ),
+        interpretation:
+            crate::photographic::stages::interpretation::SourceInterpretation::Photograph(
+                *input.source_transform().unwrap(),
+            ),
         field: Some(field.clone()),
         repairs: input.repairs.clone(),
         replacements: Vec::new(),

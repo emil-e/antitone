@@ -1,6 +1,6 @@
 use super::*;
 use crate::gpu::evaluation;
-use crate::gpu::interpretation::InspectionView;
+use crate::photographic::stages::interpretation::InspectionView;
 use crate::project::{Development, Project, Source, SourceDevelopment, SourceId};
 use glam::{DMat3, DVec3};
 

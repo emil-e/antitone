@@ -156,7 +156,7 @@ fn corrected_conversion_and_processing_preserve_spatial_gains_and_floor_flags() 
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}",
-                    crate::photographic::graph::shader::functions(),
+                    crate::photographic::stages::shader::functions(),
                     r#"
 @group(0) @binding(1) var<storage, read_write> output: array<vec4f>;
 @compute @workgroup_size(64)

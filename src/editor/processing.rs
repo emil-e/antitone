@@ -47,7 +47,7 @@ impl Editor {
     pub(super) fn neutral_source_signature(
         &self,
         input: &InputSettings,
-    ) -> Result<crate::gpu::interpretation::InputTransform, Error> {
+    ) -> Result<crate::photographic::stages::interpretation::InputTransform, Error> {
         self.document
             .visit
             .canvas
@@ -59,7 +59,7 @@ impl Editor {
             self.document.project_snapshot().roll,
             self.photo_settings(),
         )?;
-        crate::gpu::interpretation::InputTransform::from_recipe(&recipe.neutral)
+        crate::photographic::stages::interpretation::InputTransform::from_recipe(&recipe.neutral)
     }
 
     pub(super) fn positive_recipe_for_source(
