@@ -121,7 +121,5 @@ jobs:
             --title "Antitone $GITHUB_REF_NAME" \
             --notes "$notes" \
             --generate-notes \
-            .cache/release/Antitone-macos-arm64.zip \
-            .cache/release/Antitone-windows-x64.zip \
-            .cache/release/Antitone-Lightroom.zip \
+            .cache/release/*.zip \
             .cache/release/SHA256SUMS

@@ -4,7 +4,7 @@ The [Antitone plug-in](Antitone.lrplugin/) opens camera RAW originals in a separ
 
 ## Install and choose Antitone
 
-1. Extract the Antitone application package for your platform and the matching `Antitone-Lightroom.zip`. Keep the extracted `Antitone.lrplugin` folder in a stable location.
+1. Extract the Antitone application ZIP for your platform and the Lightroom plug-in ZIP from the same release. Keep the extracted `Antitone.lrplugin` folder in a stable location.
 2. In Lightroom, open **File → Plug-in Manager → Add** and select `Antitone.lrplugin`. Disable an older Antitone entry before enabling this one.
 3. In the plug-in's **Antitone** section, choose **Choose Antitone Application…** and select `Antitone.app` on macOS or `antitone.exe` on Windows. Keep the Windows executable beside the DLLs from its application package. A standalone `antitone` executable can also be selected for development.
 

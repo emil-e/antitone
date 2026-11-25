@@ -42,33 +42,40 @@ class ReleaseTests(unittest.TestCase):
         rows = [row for row in rows if row.split()[1] != name]
         manifest.write_text("\n".join([*rows, f"{digest}  {name}"]) + "\n", encoding="ascii")
 
-    def test_both_platforms_are_preserved_with_a_combined_verifiable_manifest(self):
-        release.assemble(self.macos, self.windows, self.output)
-        self.assertEqual(
-            set(p.name for p in self.output.iterdir()),
-            {*release.PACKAGES, release.LIGHTROOM, "SHA256SUMS"},
+    def assemble(self):
+        release.assemble(self.macos, self.windows, self.output, tag="v1.2.3")
+
+    def test_release_archives_are_versioned_and_match_the_combined_manifest(self):
+        self.assemble()
+        expected_names = [
+            "Antitone-macos-arm64-v1.2.3.zip",
+            "Antitone-Lightroom-v1.2.3.zip",
+            "Antitone-windows-x64-v1.2.3.zip",
+        ]
+        self.assertCountEqual(
+            (path.name for path in self.output.iterdir()),
+            [*expected_names, "SHA256SUMS"],
         )
-        recorded = dict(
-            (name, digest)
-            for digest, name in (
-                line.split() for line in (self.output / "SHA256SUMS").read_text().splitlines()
-            )
-        )
-        for directory, name in self.inputs:
+        expected_checksums = []
+        for (directory, name), asset_name in zip(self.inputs, expected_names, strict=True):
             source = (directory / name).read_bytes()
-            self.assertEqual((self.output / name).read_bytes(), source)
-            self.assertEqual(recorded[name], hashlib.sha256(source).hexdigest())
+            self.assertEqual((self.output / asset_name).read_bytes(), source)
+            expected_checksums.append(f"{hashlib.sha256(source).hexdigest()}  {asset_name}")
+        self.assertCountEqual(
+            (self.output / "SHA256SUMS").read_text().splitlines(),
+            expected_checksums,
+        )
 
     def test_missing_windows_archive_never_creates_publishable_output(self):
         (self.windows / release.PACKAGES[1]).unlink()
         with self.assertRaises(FileNotFoundError):
-            release.assemble(self.macos, self.windows, self.output)
+            self.assemble()
         self.assertFalse(self.output.exists())
 
     def test_missing_plugin_archive_prevents_publishing_an_incomplete_pair(self):
         (self.macos / release.LIGHTROOM).unlink()
         with self.assertRaises(FileNotFoundError):
-            release.assemble(self.macos, self.windows, self.output)
+            self.assemble()
         self.assertFalse(self.output.exists())
 
     def test_changed_archive_is_rejected_even_when_it_is_still_a_valid_zip(self):
@@ -78,7 +85,7 @@ class ReleaseTests(unittest.TestCase):
                 with zipfile.ZipFile(directory / name, "a") as archive:
                     archive.writestr("unexpected", b"changed")
                 with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
-                    release.assemble(self.macos, self.windows, self.output)
+                    self.assemble()
                 self.assertFalse(self.output.exists())
                 (directory / name).write_bytes(original)
 
@@ -89,7 +96,7 @@ class ReleaseTests(unittest.TestCase):
             with self.subTest(manifest=text):
                 manifest.write_text(text)
                 with self.assertRaisesRegex(ValueError, "exactly one checksum"):
-                    release.assemble(self.macos, self.windows, self.output)
+                    self.assemble()
                 self.assertFalse(self.output.exists())
 
     def test_valid_digest_does_not_make_an_empty_or_invalid_zip_a_package(self):
@@ -103,7 +110,7 @@ class ReleaseTests(unittest.TestCase):
                         pass
                 self.checksum(self.windows, name)
                 with self.assertRaises((ValueError, zipfile.BadZipFile)):
-                    release.assemble(self.macos, self.windows, self.output)
+                    self.assemble()
                 self.assertFalse(self.output.exists())
 
     def test_existing_output_is_never_overwritten(self):
@@ -111,7 +118,7 @@ class ReleaseTests(unittest.TestCase):
         sentinel = self.output / "existing"
         sentinel.write_bytes(b"keep")
         with self.assertRaises(FileExistsError):
-            release.assemble(self.macos, self.windows, self.output)
+            self.assemble()
         self.assertEqual(sentinel.read_bytes(), b"keep")
 
     def test_tag_matches_the_package_not_another_workspace_member(self):
