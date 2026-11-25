@@ -7,6 +7,7 @@ pub mod flat_field;
 pub mod grading;
 pub mod grain;
 pub mod halation;
+pub mod healing;
 pub mod image_mtf;
 pub mod interpretation;
 #[cfg(any(feature = "gpu", feature = "project"))]

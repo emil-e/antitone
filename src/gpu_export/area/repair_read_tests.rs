@@ -23,7 +23,7 @@ fn masked_replacement_declares_only_its_requested_original_cells_without_reading
     })));
     let support =
         crate::dust_repair::SupportMask::new([16, 24], [16, 16], vec![true; 256]).unwrap();
-    let root = crate::gpu::repairs::definition::compose_images(
+    let root = crate::photographic::stages::healing::operation::compose_images(
         base.clone(),
         vec![(support, replacement.clone())],
     )

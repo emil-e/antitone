@@ -205,8 +205,10 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                     .with_flat_field(Some(gpu_field.clone()));
                 if let Some(repaired) = &repaired {
                     input.replacements =
-                        crate::gpu::repairs::fixtures::replacements(std::slice::from_ref(repaired))
-                            .unwrap();
+                        crate::photographic::stages::healing::fixtures::replacements(
+                            std::slice::from_ref(repaired),
+                        )
+                        .unwrap();
                 }
                 let raster = crate::gpu::raster::Raster::region(region, size);
                 let photo = PhotographTaps::from_resident_fixture(

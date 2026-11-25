@@ -32,14 +32,15 @@ fn photographic_functions_and_masked_composition_validate() {
         &crate::photographic::stages::shader::functions(),
         &[],
     );
+    use crate::photographic::stages::healing::{fixtures, operation};
     use gpu::evaluation::*;
     let region = CellRegion::new([0, 0], [4, 4]);
     let domain = Domain {
         bounds: Some(region),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
     };
-    let base = gpu::repairs::fixtures::image(domain, vec![[1.; 4]; 16]).unwrap();
-    let replacement = gpu::repairs::fixtures::image(
+    let base = fixtures::image(domain, vec![[1.; 4]; 16]).unwrap();
+    let replacement = fixtures::image(
         Domain {
             bounds: Some(CellRegion::new([1, 1], [2, 2])),
             ..domain
@@ -50,7 +51,7 @@ fn photographic_functions_and_masked_composition_validate() {
     let mask =
         crate::dust_repair::SupportMask::new([1, 1], [2, 2], vec![true, false, false, false])
             .unwrap();
-    let root = gpu::repairs::definition::compose_images(base, vec![(mask, replacement)]).unwrap();
+    let root = operation::compose_images(base, vec![(mask, replacement)]).unwrap();
     let plan = Plan::with_policy(root, region, Tiling { tile: [4, 4] }, Policy::Composed).unwrap();
     let mut computes = 0;
     for work in plan.tiles.iter().flat_map(|tile| &tile.fragment.work) {

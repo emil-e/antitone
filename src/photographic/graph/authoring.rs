@@ -28,7 +28,7 @@ pub(crate) struct Assembly {
     pub seed: u64,
     pub author: Option<Arc<Author>>,
     pub preferred_pitch: Option<f64>,
-    pub replacements: Vec<crate::gpu::repairs::fixtures::Replacement>,
+    pub replacements: Vec<crate::photographic::stages::healing::fixtures::Replacement>,
 }
 
 impl Assembly {
@@ -330,8 +330,10 @@ impl PhotographTaps {
         recipe: &ImageRecipe,
     ) -> Result<Self, Error> {
         let unrepaired = composition::original_unrepaired(source.clone(), field, recipe)?;
-        let neutral =
-            crate::gpu::repairs::definition::compose(unrepaired.clone(), &recipe.repairs)?;
+        let neutral = crate::photographic::stages::healing::operation::compose(
+            unrepaired.clone(),
+            &recipe.repairs,
+        )?;
         let grading = composition::recipe_grading(limits, recipe, Mapping::Originals)?;
         let source = SourceImages {
             codes: source,

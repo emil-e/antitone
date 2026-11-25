@@ -28,7 +28,7 @@ fn an_operand_view_cannot_hide_mathematics_needed_by_a_later_demand() {
     let initial = CellRegion::new([0, 0], [1, 2]);
     let later = CellRegion::new([2, 0], [1, 2]);
     let capture = |replacement: f32| {
-        let image = crate::gpu::repairs::definition::compose_images(
+        let image = crate::photographic::stages::healing::operation::compose_images(
             base.clone(),
             vec![(
                 crate::dust_repair::SupportMask::new([2, 0], [1, 2], vec![true; 2]).unwrap(),

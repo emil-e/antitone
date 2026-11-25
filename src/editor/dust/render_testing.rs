@@ -22,7 +22,9 @@ pub(super) fn pixels(
         recipe,
     )
     .unwrap();
-    let image = crate::gpu::repairs::definition::healing_image(base.image(), repair).unwrap();
+    let image =
+        crate::photographic::stages::healing::operation::healing_image(base.image(), repair)
+            .unwrap();
     let mut reader =
         crate::gpu::repair_source::Source::from_image(&services.evaluation, &services.queue, image)
             .unwrap();
@@ -148,8 +150,10 @@ impl Editor {
             .into_iter()
             .map(|repair| {
                 Arc::new(Image {
-                    definition: crate::gpu::repairs::definition::healing_image(&base, repair)
-                        .unwrap(),
+                    definition: crate::photographic::stages::healing::operation::healing_image(
+                        &base, repair,
+                    )
+                    .unwrap(),
                     repair: repair.clone(),
                     services: self.source_services.clone().expect("image-query services"),
                 })

@@ -157,9 +157,11 @@ fn repair_demand(
         recipe,
     )
     .unwrap();
-    let repair =
-        crate::gpu::repairs::definition::healing_image(&photo.unrepaired, &recipe.repairs[index])
-            .unwrap();
+    let repair = crate::photographic::stages::healing::operation::healing_image(
+        &photo.unrepaired,
+        &recipe.repairs[index],
+    )
+    .unwrap();
     let frame = crate::frame_raster::FrameRaster::full(recipe.composition).unwrap();
     let region = CellRegion::new([0, 0], frame.output);
     let root = crate::reconstruction::reconstruct(

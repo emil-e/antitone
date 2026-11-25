@@ -28,7 +28,6 @@ pub(crate) mod raster;
 pub(crate) mod recorded_image;
 
 pub mod parameters;
-pub(crate) mod repairs;
 pub mod source;
 pub mod submission;
 #[cfg(test)]

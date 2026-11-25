@@ -54,7 +54,8 @@ impl<'a> Source<'a> {
         repair: &crate::dust_repair::Repair,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Option<bool>, Error> {
-        let healed = crate::gpu::repairs::definition::healing_image(&self.image, repair)?;
+        let healed =
+            crate::photographic::stages::healing::operation::healing_image(&self.image, repair)?;
         let point = repair
             .support
             .selected_points()

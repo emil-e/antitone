@@ -1,4 +1,5 @@
 use super::*;
+use test_support::*;
 mod normalization;
 
 /// Search fixtures can supply a previous accepted donor; only the final result
@@ -26,106 +27,6 @@ fn suggest_offset(
             SearchOutcome::Impossible => panic!("fixture has a valid previous donor"),
         },
     )
-}
-
-#[test]
-fn linear_distance_transform_preserves_every_reference_distance_bit() {
-    assert!(exact_distance_squares((1 << 26) + 1, (1 << 26) + 1));
-    assert!(!exact_distance_squares((1 << 26) + 2, (1 << 26) + 1));
-    assert!(exact_distance_squares(94_906_266, 1));
-    assert!(!exact_distance_squares(94_906_267, 1));
-    assert!(!exact_distance_squares(usize::MAX, usize::MAX));
-    let distant = [true, false];
-    assert_eq!(
-        distance_to_unknown(&distant, 94_906_267, 1, &|| false),
-        distance_to_unknown_scalar(&distant, 94_906_267, &|| false)
-    );
-    let check = |known: &[bool], width, height| {
-        let exact = distance_to_unknown(known, width, height, &|| false).unwrap();
-        let reference = distance_to_unknown_scalar(known, width, &|| false).unwrap();
-        assert_eq!(exact, reference, "{width}x{height}");
-    };
-    for (width, height) in [(1usize, 2048usize), (2048, 1), (257, 7), (63, 41), (64, 64)] {
-        for mode in 0..5 {
-            let known = (0..width * height)
-                .map(|i| match mode {
-                    0 => true,
-                    1 => false,
-                    2 => i != width * height / 2,
-                    3 => (i % width + i / width) % 3 != 0,
-                    _ => (i.wrapping_mul(2654435761usize).rotate_left(7) & 15) != 0,
-                })
-                .collect::<Vec<_>>();
-            check(&known, width, height);
-        }
-    }
-}
-
-fn circle(size: [u32; 2], center: [i32; 2], radius: i32) -> Vec<bool> {
-    let mut mask = vec![false; (size[0] * size[1]) as usize];
-    for y in 0..size[1] as i32 {
-        for x in 0..size[0] as i32 {
-            mask[(y as u32 * size[0] + x as u32) as usize] =
-                (x - center[0]).pow(2) + (y - center[1]).pow(2) <= radius.pow(2);
-        }
-    }
-    mask
-}
-
-fn gradient(size: [u32; 2]) -> Vec<Ap1> {
-    (0..size[1])
-        .flat_map(|y| {
-            (0..size[0]).map(move |x| {
-                [
-                    0.04 + x as f32 * 0.0001,
-                    -0.02 + y as f32 * 0.0002,
-                    1.1 + x as f32 * 0.0003,
-                ]
-            })
-        })
-        .collect()
-}
-
-fn outside_bits_equal(a: &[Ap1], b: &[Ap1], mask: &[bool]) -> bool {
-    a.iter()
-        .zip(b)
-        .zip(mask)
-        .all(|((a, b), hidden)| *hidden || a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits()))
-}
-
-fn active(size: [u32; 2]) -> SourceRegion {
-    SourceRegion {
-        x: 0,
-        y: 0,
-        width: size[0],
-        height: size[1],
-    }
-}
-
-#[test]
-fn healing_extreme_signed_context_remains_finite_without_range_preflight() {
-    let repair = Repair {
-        id: RepairId(1),
-        enabled: true,
-        origin: RepairOrigin::Manual,
-        offset: [21, 0],
-        support: SupportMask::new([60, 60], [5, 5], vec![true; 25]).unwrap(),
-    };
-    let evaluated = evaluate(&repair, active([128, 128]), |point| {
-        let value = if point[0] < 64 { 8e37 } else { -8e37 };
-        Ok([value, -value, value])
-    })
-    .unwrap();
-    assert!(
-        evaluated
-            .pixels()
-            .all(|(_, rgb)| rgb.iter().all(|value| value.is_finite()))
-    );
-    assert!(
-        evaluated
-            .pixels()
-            .any(|(_, rgb)| rgb.iter().any(|value| value.abs() > 1.))
-    );
 }
 
 #[test]
@@ -186,57 +87,6 @@ fn offset_validation_rejects_outside_and_support_contact() {
     let offset = nearest_offset(&support, active).unwrap();
     assert_ne!(offset, [0, 0]);
     assert!(validate_offset(offset, &support, active).is_ok());
-}
-
-#[test]
-fn masked_values_never_affect_fixed_donor_and_known_bits_stay_exact() {
-    let size = [96, 96];
-    let mut a = gradient(size);
-    a[0] = [-0.0, 0.0, -0.0];
-    let mut b = a.clone();
-    let mask = circle(size, [48, 48], 6);
-    for (index, hidden) in mask.iter().enumerate() {
-        if *hidden {
-            a[index] = [-100.; 3];
-            b[index] = [100.; 3];
-        }
-    }
-    let offset = [-25, 0];
-    let (left, left_match) = heal_ranked(&a, size, &mask, offset).unwrap();
-    let (right, right_match) = heal_ranked(&b, size, &mask, offset).unwrap();
-    assert_eq!(
-        left, right,
-        "hidden source values must not leak into reconstructed pixels"
-    );
-    assert_eq!(left_match, right_match);
-    assert!(outside_bits_equal(&left, &a, &mask));
-    assert!(outside_bits_equal(&right, &b, &mask));
-}
-
-#[test]
-fn stored_donor_reconstructs_an_analytic_gradient_through_nearby_masks() {
-    let size = [96, 96];
-    let image = gradient(size);
-    let mut mask = vec![false; image.len()];
-    for y in 46..49 {
-        for x in 46..49 {
-            mask[y * 96 + x] = true;
-            mask[y * 96 + x + 4] = true;
-        }
-    }
-    let (result, donors) = heal_ranked(&image, size, &mask, [-25, 0]).unwrap();
-    assert_eq!(donors.len(), 1);
-    assert!(outside_bits_equal(&result, &image, &mask));
-    for (actual, expected) in result
-        .iter()
-        .zip(&image)
-        .zip(&mask)
-        .filter_map(|((actual, expected), hidden)| hidden.then_some((actual, expected)))
-    {
-        for channel in 0..3 {
-            assert!((actual[channel] - expected[channel]).abs() < 4e-7);
-        }
-    }
 }
 
 #[test]
@@ -530,67 +380,6 @@ fn quality_threshold_is_not_an_admission_threshold() {
         panic!("no acceptable score should still produce a candidate")
     };
     validate_offset(offset, &support, active(size)).unwrap();
-}
-
-#[test]
-fn healing_is_deterministic_for_a_stored_offset() {
-    let size = [96, 96];
-    let image = gradient(size);
-    let mask = circle(size, [48, 48], 6);
-    let offset = [-25, 0];
-    let first = heal_ranked(&image, size, &mask, offset).unwrap();
-    let second = heal_ranked(&image, size, &mask, offset).unwrap();
-    assert_eq!(first, second);
-}
-
-#[test]
-fn evaluate_uses_the_stored_offset_and_places_the_donor_once() {
-    let size = [128, 128];
-    let image = gradient(size);
-    let active = active(size);
-    let support = SupportMask::new([40, 40], [20, 20], vec![true; 400]).unwrap();
-    let offset = nearest_offset(&support, active).unwrap();
-    let repair = Repair {
-        id: RepairId(1),
-        enabled: true,
-        origin: RepairOrigin::Manual,
-        support: support.clone(),
-        offset,
-    };
-    let evaluated = evaluate(&repair, active, |[x, y]| {
-        Ok(image[y as usize * size[0] as usize + x as usize])
-    })
-    .unwrap();
-    assert_eq!(evaluated.donors.len(), 1);
-    let target = donor_target(&support, active).unwrap();
-    let donor = &evaluated.donors[0];
-    assert_eq!(donor.target[0], target.x);
-    assert_eq!(donor.target[1], target.y);
-    assert_eq!(
-        donor.source,
-        [
-            (target.x as i32 + offset[0]) as u32,
-            (target.y as i32 + offset[1]) as u32
-        ]
-    );
-    let again = evaluate(&repair, active, |[x, y]| {
-        Ok(image[y as usize * size[0] as usize + x as usize])
-    })
-    .unwrap();
-    assert_eq!(evaluated, again);
-}
-
-#[test]
-fn empty_is_identity_and_invalid_masks_or_offsets_reject() {
-    let size = [32, 32];
-    let image = gradient(size);
-    let empty = vec![false; image.len()];
-    let (same, donors) = heal_ranked(&image, size, &empty, [4, 0]).unwrap();
-    assert_eq!(same, image);
-    assert!(donors.is_empty());
-    assert!(heal_ranked(&image, size, &vec![true; image.len()], [4, 0]).is_err());
-    let mask = circle(size, [16, 16], 3);
-    assert!(heal_ranked(&image, size, &mask, [1_000, 0]).is_err());
 }
 
 #[test]

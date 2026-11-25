@@ -1,9 +1,7 @@
 use super::*;
 use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
-use crate::gpu::{
-    evaluation as e,
-    repairs::{definition, fixtures},
-};
+use crate::gpu::evaluation as e;
+use crate::photographic::stages::healing::{fixtures, operation as definition};
 use std::sync::Arc;
 
 #[test]

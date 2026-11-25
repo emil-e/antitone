@@ -4,7 +4,8 @@ mod normalization_tests;
 
 use crate::{
     Error,
-    dust_repair::{self, EvaluatedRepair, Execution, Repair},
+    dust_repair::{Execution, Repair},
+    photographic::stages::healing::{EvaluatedRepair, evaluate_with as heal},
     scan::ImageSource,
 };
 
@@ -22,7 +23,7 @@ pub(crate) fn evaluate_with(
     if (execution.cancelled)() {
         return Ok(None);
     }
-    dust_repair::evaluate_with(
+    heal(
         repair,
         source.area(),
         |point| {
