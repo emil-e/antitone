@@ -67,6 +67,7 @@ struct PendingView {
 pub(crate) struct Request {
     ready: Mutex<Option<Vec<Arc<ViewImage>>>>,
     pending: Mutex<Option<PendingView>>,
+    underlay: Option<Box<Request>>,
 }
 
 impl Request {
@@ -97,6 +98,7 @@ impl Request {
         Ok(Self {
             ready: Mutex::new(ready),
             pending: Mutex::new(pending),
+            underlay: None,
         })
     }
 
@@ -150,23 +152,16 @@ impl Request {
         ));
         let limits = context.device().limits();
         let request_view = |spec: SourceRequest| {
-            let underlay = SourceRequest::for_frame(underlay_frame(spec.frame())?)?
-                .with_identity(spec.identity.clone());
-            let images = [spec, underlay]
-                .into_iter()
-                .map(|spec| {
-                    photograph(
-                        &limits,
-                        scan,
-                        field.clone(),
-                        capture,
-                        spec,
-                        looks,
-                        transform,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Self::new(context.clone(), kernels.clone(), images)
+            let image = photograph(
+                &limits,
+                scan,
+                field.clone(),
+                capture,
+                spec,
+                looks,
+                transform,
+            )?;
+            Self::new(context.clone(), kernels.clone(), vec![image])
         };
         let mut request = request_view(spec.clone())?;
         if request.pending.get_mut().unwrap().is_some()
@@ -180,11 +175,41 @@ impl Request {
             let provisional = request_view(previous.clone())?;
             request.ready = provisional.ready;
         }
+        let underlay = underlay_frame(spec.frame())
+            .and_then(SourceRequest::for_frame)
+            .and_then(|underlay| request_view(underlay.with_identity(spec.identity.clone())));
+        match underlay {
+            Ok(underlay) => request.underlay = Some(Box::new(underlay)),
+            Err(error) => {
+                log::warn!(error = error.to_string().as_str(); "working_underlay_unavailable")
+            }
+        }
         Ok(request)
     }
 
     pub(crate) fn ready(&self) -> Option<Vec<Arc<ViewImage>>> {
-        self.ready.lock().unwrap().clone()
+        let mut images = self.ready.lock().unwrap().clone()?;
+        if let Some(underlay) = self.underlay.as_ref().and_then(|underlay| underlay.ready()) {
+            images.extend(underlay);
+        }
+        Some(images)
+    }
+
+    pub(crate) fn underlay_pending(&self) -> bool {
+        self.underlay
+            .as_ref()
+            .is_some_and(|underlay| underlay.pending.lock().unwrap().is_some())
+    }
+
+    pub(crate) async fn produce_underlay(
+        &self,
+        queue: &crate::gpu::submission::Queue,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<(), Error> {
+        if let Some(underlay) = &self.underlay {
+            underlay.produce(queue, cancelled).await?;
+        }
+        Ok(())
     }
 
     pub(crate) async fn produce(
@@ -207,8 +232,8 @@ impl Request {
             Err(Error::Cancelled) => return Ok(None),
             Err(error) => return Err(error),
         };
-        *self.ready.lock().unwrap() = Some(images.clone());
-        Ok(Some(images))
+        *self.ready.lock().unwrap() = Some(images);
+        Ok(self.ready())
     }
 }
 
