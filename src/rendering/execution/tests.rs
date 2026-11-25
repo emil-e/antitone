@@ -1,0 +1,541 @@
+use super::*;
+use crate::{
+    crop::Crop,
+    geometry::{PhotoOrientation, QuarterTurns, RollOrientation},
+};
+use glam::DVec3;
+
+fn composition(area: SourceRegion, angle: f64) -> Composition {
+    Composition::with_crop(
+        area,
+        RollOrientation {
+            turns: QuarterTurns::One,
+            ..Default::default()
+        },
+        PhotoOrientation::default(),
+        Some(Crop {
+            center: [
+                f64::from(area.x) + f64::from(area.width) / 2.,
+                f64::from(area.y) + f64::from(area.height) / 2.,
+            ],
+            size: [area.width - 180, area.height - 180],
+            angle,
+        }),
+    )
+    .unwrap()
+}
+
+pub(super) fn reconstructed(
+    device: &wgpu::Device,
+    queue: &crate::gpu::submission::Queue,
+    engine: &Reconstructor,
+    unit: &Unit,
+    pixel: impl Fn([u32; 2]) -> [f32; 4],
+    invalid_working: Option<[u32; 2]>,
+) -> Vec<[f32; 4]> {
+    let submission = submit_reconstruction(device, queue, engine, unit, pixel, invalid_working);
+    engine
+        .read(
+            device,
+            submission,
+            [unit.mapping.sizes[2], unit.mapping.sizes[3]],
+        )
+        .unwrap()
+}
+
+fn submit_reconstruction(
+    device: &wgpu::Device,
+    queue: &crate::gpu::submission::Queue,
+    engine: &Reconstructor,
+    unit: &Unit,
+    pixel: impl Fn([u32; 2]) -> [f32; 4],
+    invalid_working: Option<[u32; 2]>,
+) -> wgpu::SubmissionIndex {
+    let bounds = unit.bounds;
+    let pixels: Vec<_> = (bounds.y..bounds.y + bounds.height)
+        .flat_map(|y| (bounds.x..bounds.x + bounds.width).map(move |x| [x, y]))
+        .map(&pixel)
+        .collect();
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width: bounds.width,
+            height: bounds.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        texture.as_image_copy(),
+        bytemuck::cast_slice(&pixels),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(bounds.width * 16),
+            rows_per_image: Some(bounds.height),
+        },
+        texture.size(),
+    );
+    let mut working = pixels.clone();
+    if let Some([x, y]) = invalid_working {
+        working[((y - bounds.y) * bounds.width + x - bounds.x) as usize][0] = f32::NAN;
+    }
+    let working = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&working),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    engine
+        .encode(device, &mut encoder, unit, &texture, &working)
+        .unwrap();
+    queue.submit([encoder.finish()])
+}
+
+#[test]
+fn delivered_memory_blocks_reject_gpu_failures_before_any_codec_and_allow_reuse_after_errors() {
+    let (device, queue, _) = crate::photographic::test_support::render_context();
+    let composition =
+        Composition::new([0, 0, 8, 8].into(), Default::default(), Default::default()).unwrap();
+    for (space, target) in [(0, None), (1, None), (0, Some(OutputTarget::Srgb))] {
+        let engine = Reconstructor::new_test(&device, target).unwrap();
+        let mut unit = Unit::new(composition, [0; 2], [1; 2]).unwrap();
+        unit.mapping.space[0] = space;
+        for (pixel, invalid_working) in [
+            ([f32::NAN, 0.5, 0.75, 0.], None),
+            ([0.25, 0.5, 0.75, -1.], None),
+            ([0.25, 0.5, 0.75, 0.], Some([0, 0])),
+        ] {
+            let submission =
+                submit_reconstruction(&device, &queue, &engine, &unit, |_| pixel, invalid_working);
+            assert!(
+                matches!(
+                    engine.read_output(&device, submission, [1; 2]),
+                    Err(Error::Gpu(_))
+                ),
+                "failed contributing samples cannot become successful memory output: space={space}, target={target:?}"
+            );
+        }
+        let submission = submit_reconstruction(
+            &device,
+            &queue,
+            &engine,
+            &unit,
+            |_| [0.25, 0.5, 0.75, 0.],
+            None,
+        );
+        engine.read_output(&device, submission, [1; 2]).unwrap();
+    }
+}
+
+#[test]
+fn common_area_averages_signed_hdr_samples_without_clipping() {
+    let (device, queue, _) = crate::photographic::test_support::render_context();
+    let engine = Reconstructor::new(&device).unwrap();
+    let composition =
+        Composition::new([0, 0, 4, 4].into(), Default::default(), Default::default()).unwrap();
+    // Declared half-pixel footprint gives four exactly equal weights; this isolates
+    // signed accumulation from mapping/clipping error and export crop restrictions.
+    let mut unit = Unit {
+        bounds: [0, 0, 3, 3].into(),
+        support: None,
+        mapping: Mapping {
+            sizes: [3, 3, 1, 1],
+            origin: [0.5, 0.5, 0., 0.],
+            dx: [1., 0., 0., 0.],
+            dy: [0., 1., 0., 0.],
+            space: [0; 4],
+        },
+    };
+    let pixel = |p: [u32; 2]| {
+        let value = match p {
+            [0, 0] => 8.,
+            [1, 0] | [1, 1] => 1.,
+            [0, 1] => -8.,
+            _ => 0.,
+        };
+        [value, value, value, 0.]
+    };
+    let expected = crate::sampling::weighted_mean_iter(
+        FrameRaster::new(
+            composition,
+            FramePoint([0.5, 0.5]),
+            FramePoint([1.5, 1.5]),
+            [1, 1],
+        )
+        .unwrap()
+        .footprint([0, 0])
+        .unwrap()
+        .pixels(composition.area())
+        .unwrap()
+        .map(|(point, weight)| Ok((DVec3::splat(f64::from(pixel(point)[0])), weight))),
+    )
+    .unwrap();
+    assert_eq!(expected, DVec3::splat(0.5));
+    for space in [0, 1] {
+        unit.mapping.space[0] = space;
+        let actual = reconstructed(&device, &queue, &engine, &unit, pixel, None)[0];
+        assert_eq!(
+            actual,
+            [0.5, 0.5, 0.5, 1.],
+            "signed HDR reconstruction, linear space={space}"
+        );
+    }
+}
+
+#[test]
+fn straightened_sdr_block_keeps_a_nearly_zero_channel_encodable() {
+    struct Impulse(evaluation::Domain);
+
+    impl evaluation::Source for Impulse {
+        fn domain(&self) -> evaluation::Domain {
+            self.0
+        }
+
+        fn read(&self, region: evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+            Ok((region.y..region.bottom())
+                .flat_map(|y| (region.x..region.right()).map(move |x| [x, y]))
+                .map(|position| {
+                    let blue = if position == [5014, 809] { 1.6e-5 } else { 0. };
+                    [0.001, 0.002, blue, 0.]
+                })
+                .collect())
+        }
+    }
+
+    let (_, queue, renderer) = crate::photographic::test_support::render_context();
+    let area = SourceRegion::from([12, 12, 8640, 5760]);
+    let composition = Composition::with_crop(
+        area,
+        RollOrientation {
+            turns: QuarterTurns::One,
+            ..Default::default()
+        },
+        PhotoOrientation::default(),
+        Some(Crop {
+            center: [4332., 2892.],
+            size: [8128, 5248],
+            angle: 0.015,
+        }),
+    )
+    .unwrap();
+    let definition = evaluation::source(std::sync::Arc::new(Impulse(evaluation::Domain {
+        bounds: Some([12, 12, 8640, 5760].into()),
+        grid: evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
+    })));
+
+    execute(
+        renderer.evaluation(),
+        &queue,
+        Request {
+            definition,
+            composition,
+            encoding: SampleEncoding::Rgb16(OutputTarget::Srgb),
+        },
+        |render, complete| {
+            let OutputBlock::Rgb16 { words, .. } = render([4608; 2], TILE)? else {
+                panic!("expected RGB16 block");
+            };
+            let codes = rgb16::decode(&words)?;
+            // The footprint at (4715, 4715) only grazes the blue impulse, so its
+            // blue mean rounds to zero. Other footprints must still show the impulse.
+            assert_eq!(codes[107 * TILE[0] as usize + 107], [847, 1693, 0]);
+            assert!(codes.iter().any(|pixel| pixel[2] > 0));
+            complete()
+        },
+        || Ok(()),
+    )
+    .unwrap();
+}
+
+#[test]
+fn straightened_original_samples_are_independent_of_block_partition() {
+    fn sample([x, y]: [u32; 2]) -> [f32; 4] {
+        [
+            ((x ^ y) & 1) as f32,
+            ((x + 3 * y) % 7) as f32 / 4. - 0.5,
+            ((4 * x + 7 * y) % 13) as f32 / 16.,
+            0.,
+        ]
+    }
+
+    struct Pattern(evaluation::Domain);
+    impl evaluation::Source for Pattern {
+        fn domain(&self) -> evaluation::Domain {
+            self.0
+        }
+
+        fn read(&self, region: evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+            Ok((region.y..region.bottom())
+                .flat_map(|y| (region.x..region.right()).map(move |x| [x as u32, y as u32]))
+                .map(sample)
+                .collect())
+        }
+    }
+
+    let (_, queue, renderer) = crate::photographic::test_support::render_context();
+    let area = SourceRegion::from([101, 77, 592, 436]);
+    let definition = evaluation::source(std::sync::Arc::new(Pattern(evaluation::Domain {
+        bounds: Some([101, 77, 592, 436].into()),
+        grid: evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
+    })));
+    for angle in [0.015, -0.271, 0.389] {
+        let composition = composition(area, angle);
+        let [width, height] = composition.size();
+        let acquire = |[block_width, block_height]: [u32; 2]| {
+            let mut frame = vec![[f32::NAN; 4]; (width * height) as usize];
+            execute(
+                renderer.evaluation(),
+                &queue,
+                Request {
+                    definition: definition.clone(),
+                    composition,
+                    encoding: SampleEncoding::LinearFloat,
+                },
+                |render, complete| {
+                    for y in (0..height).step_by(block_height as usize) {
+                        for x in (0..width).step_by(block_width as usize) {
+                            let extent = [block_width.min(width - x), block_height.min(height - y)];
+                            let OutputBlock::Linear(block) = render([x, y], extent)? else {
+                                panic!("expected linear reconstruction");
+                            };
+                            for (row, samples) in block.chunks_exact(extent[0] as usize).enumerate()
+                            {
+                                let start = (y as usize + row) * width as usize + x as usize;
+                                frame[start..start + samples.len()].copy_from_slice(samples);
+                            }
+                        }
+                    }
+                    complete()
+                },
+                || Ok(()),
+            )
+            .unwrap();
+            frame
+        };
+        let standard = acquire(TILE);
+        let rectangular = acquire([67, 93]);
+        for (i, (a, b)) in standard.iter().zip(&rectangular).enumerate() {
+            assert_eq!(a, b, "angle {angle}, output cell {i}");
+        }
+
+        // Independently check the covered-cell average, including crop edges
+        // and both schedules' internal seams. Equality alone permits a shared error.
+        let raster = FrameRaster::full(composition).unwrap();
+        for y in [0, 92, 93, 127, 128, height - 1] {
+            for x in [0, 66, 67, 127, 128, width - 1] {
+                let expected =
+                    crate::sampling::weighted_mean_iter(
+                        raster.footprint([x, y]).unwrap().pixels(area).unwrap().map(
+                            |(p, weight)| {
+                                let [r, g, b, _] = sample(p);
+                                Ok((DVec3::new(r.into(), g.into(), b.into()), weight))
+                            },
+                        ),
+                    )
+                    .unwrap();
+                let pixel = standard[(y * width + x) as usize];
+                assert_eq!(pixel[3], 8., "empty or invalid footprint at {x},{y}");
+                let [r, g, b, _] = pixel;
+                let measured = DVec3::new(r.into(), g.into(), b.into());
+                assert!(
+                    (measured - expected).abs().max_element() <= 4e-6,
+                    "angle {angle}, output {x},{y}: {measured:?} versus {expected:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn local_area_preserves_constants_ranges_impulses_and_ramps_against_f64_at_origins_and_seams() {
+    let (device, queue, _) = crate::photographic::test_support::render_context();
+    let engine = Reconstructor::new(&device).unwrap();
+    let mut worst = 0_f64;
+    for base in [[13, 29], [(1 << 25) + 13, (1 << 25) + 29]] {
+        let area: SourceRegion = [base[0], base[1], 611, 557].into();
+        for angle in [0.015, -0.271, 0.389] {
+            let composition = composition(area, angle);
+            let raster = FrameRaster::full(composition).unwrap();
+            let [width, height] = composition.size();
+            for (origin, extent) in [
+                ([0, 0], [128, 128]),
+                ([128, 0], [128, 128]),
+                ([width - 17, height - 9], [17, 9]),
+            ] {
+                let unit = Unit::new(composition, origin, extent).unwrap();
+                for value in [0_f32, 1_f32] {
+                    let actual = reconstructed(
+                        &device,
+                        &queue,
+                        &engine,
+                        &unit,
+                        |_| [value, value, value, 0.],
+                        None,
+                    );
+                    assert!(
+                        actual
+                            .iter()
+                            .all(|p| p[..3] == [value; 3] && (p[3] - 1.).abs() < 0.0001),
+                        "base={base:?} angle={angle} origin={origin:?} value={value} first_bad={:?}",
+                        actual
+                            .iter()
+                            .enumerate()
+                            .find(|(_, p)| p[..3] != [value; 3] || (p[3] - 1.).abs() >= 0.0001)
+                    );
+                }
+                let impulse = raster
+                    .footprint([origin[0] + extent[0] / 2, origin[1] + extent[1] / 2])
+                    .unwrap()
+                    .pixels(area)
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .0;
+                let pixel = |p: [u32; 2]| {
+                    [
+                        if p == impulse { 1. } else { 0. },
+                        (p[0] - base[0]) as f32 / 611.,
+                        (p[1] - base[1]) as f32 / 557.,
+                        0.,
+                    ]
+                };
+                let actual = reconstructed(&device, &queue, &engine, &unit, pixel, None);
+                for (i, p) in actual.iter().enumerate() {
+                    assert!(
+                        p[..3].iter().all(|v| (0. ..=1.).contains(v)),
+                        "range must not rely on a clamp: {p:?}"
+                    );
+                    let point = [
+                        origin[0] + i as u32 % extent[0],
+                        origin[1] + i as u32 / extent[0],
+                    ];
+                    let reference = crate::sampling::weighted_mean_iter(
+                        raster.footprint(point).unwrap().pixels(area).unwrap().map(
+                            |(point, weight)| {
+                                let p = pixel(point);
+                                Ok((DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64), weight))
+                            },
+                        ),
+                    )
+                    .unwrap();
+                    for c in 0..3 {
+                        worst = worst.max((f64::from(p[c]) - reference[c]).abs());
+                    }
+                }
+            }
+        }
+    }
+    // A diagnostic spatial accuracy bound, not a rendered-photograph acceptance/JND gate.
+    println!("export_area authored_max_linear_difference={worst:.9}");
+    assert!(worst < 3e-5, "local f32 mapping/weights drifted: {worst}");
+}
+
+#[test]
+fn native_area_checks_only_contributing_samples_and_rejects_invalid_ap1_or_rejection_flags() {
+    let (device, queue, _) = crate::photographic::test_support::render_context();
+    let engine = Reconstructor::new(&device).unwrap();
+    let composition = composition([13, 29, 411, 357].into(), 0.015);
+    let unit = Unit::new(composition, [128, 128], [3, 3]).unwrap();
+    let required = FrameRaster::full(composition)
+        .unwrap()
+        .footprint([128, 128])
+        .unwrap()
+        .pixels(composition.area())
+        .unwrap()
+        .next()
+        .unwrap()
+        .0;
+    let unused = [unit.bounds.x, unit.bounds.y];
+    let valid = |_| [0.2, 0.5, 0.9, 0.];
+    let actual = reconstructed(&device, &queue, &engine, &unit, valid, Some(required));
+    assert!(actual.iter().any(|p| p[3] == -1.));
+    let actual = reconstructed(
+        &device,
+        &queue,
+        &engine,
+        &unit,
+        |p| {
+            if p == required {
+                [0., 0., 0., -2.]
+            } else {
+                valid(p)
+            }
+        },
+        None,
+    );
+    assert!(actual.iter().any(|p| p[3] == -2.));
+    let actual = reconstructed(&device, &queue, &engine, &unit, valid, Some(unused));
+    assert!(
+        actual.iter().all(|p| p[3] > 0.),
+        "conservative halo is not photographic demand"
+    );
+}
+
+#[test]
+fn bounded_source_support_covers_fractionally_placed_45_degree_units() {
+    let area = SourceRegion::from([13, 29, 800, 800]);
+    let mut maximum = 0;
+    for step in 0..100 {
+        let offset = f64::from(step) / 100.;
+        let composition = Composition::with_crop(
+            area,
+            Default::default(),
+            Default::default(),
+            Some(Crop {
+                center: [413. + offset, 429. + offset],
+                size: [512, 512],
+                angle: std::f64::consts::FRAC_PI_4,
+            }),
+        )
+        .unwrap();
+        let unit = Unit::new(composition, [128, 128], [128, 128]).unwrap();
+        maximum = maximum.max(unit.bounds.width).max(unit.bounds.height);
+    }
+    assert_eq!(
+        maximum, 185,
+        "ceil/floor cell coverage and both halo edges must fit"
+    );
+}
+
+#[test]
+fn integer_source_edges_are_real_cells_without_blank_or_replicated_borders() {
+    let (device, queue, _) = crate::photographic::test_support::render_context();
+    let engine = Reconstructor::new(&device).unwrap();
+    let area: SourceRegion = [19, 37, 131, 133].into();
+    let composition = Composition::new(area, Default::default(), Default::default()).unwrap();
+    for (origin, extent) in [([0, 0], [128, 128]), ([128, 128], [3, 5])] {
+        let unit = Unit::new(composition, origin, extent).unwrap();
+        let pixels = reconstructed(
+            &device,
+            &queue,
+            &engine,
+            &unit,
+            |p| {
+                [
+                    (p[0] - area.x) as f32 / 131.,
+                    (p[1] - area.y) as f32 / 133.,
+                    1.,
+                    0.,
+                ]
+            },
+            None,
+        );
+        for (i, p) in pixels.iter().enumerate() {
+            assert_eq!(
+                *p,
+                [
+                    (origin[0] + i as u32 % extent[0]) as f32 / 131.,
+                    (origin[1] + i as u32 / extent[0]) as f32 / 133.,
+                    1.,
+                    1.
+                ]
+            );
+        }
+    }
+    assert!(Unit::new(composition, [130, 0], [2, 1]).is_err());
+}

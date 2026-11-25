@@ -4,9 +4,6 @@
 //! reports a mismatch between them when a device creates it — in the editor that surfaces as a
 //! failed view or thumbnail rather than a failed build. Validating the same text here turns
 //! those into ordinary test failures.
-#[cfg(feature = "gpu")]
-use crate::gpu;
-
 fn validate(name: &str, source: &str, entry_points: &[&str]) {
     let module = naga::front::wgsl::parse_str(source)
         .unwrap_or_else(|error| panic!("{name} does not parse: {error}"));
@@ -32,8 +29,8 @@ fn photographic_functions_and_masked_composition_validate() {
         &crate::photographic::stages::shader::functions(),
         &[],
     );
+    use crate::evaluation::*;
     use crate::photographic::stages::healing::{fixtures, operation};
-    use gpu::evaluation::*;
     let region = CellRegion::new([0, 0], [4, 4]);
     let domain = Domain {
         bounds: Some(region),
@@ -76,7 +73,7 @@ fn composed_working_view_validates() {
     );
     validate(
         "acquisition copy",
-        include_str!("gpu/evaluation/copy_texture.wgsl"),
+        include_str!("evaluation/copy_texture.wgsl"),
         &["main"],
     );
     validate(

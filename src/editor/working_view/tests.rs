@@ -2,10 +2,10 @@ use super::*;
 
 mod retry;
 use crate::geometry::{Composition, FramePoint};
-use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::photographic::graph::request::PhotographRequest;
 use crate::photographic::graph::view_source::SourceRequest;
+use crate::photographic::parameters::ProcessingParameters;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 
 #[test]
 fn demand_revision_tracks_view_intent_and_idle_requires_presentation() {
@@ -84,7 +84,7 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
         };
         let first = SourceRequest::new(frame, cal, scan.camera_to_ap1, None)
             .unwrap()
-            .with_identity(crate::gpu::source::identity::Identity::camera(
+            .with_identity(crate::acquisition::camera::identity::Identity::camera(
                 input.source.identity(),
             ));
 
@@ -240,7 +240,7 @@ fn demand_coalesces_navigation_and_rejects_stale_products() {
         source: crate::editor::tests::developed_fixture(),
         correction: Default::default(),
     };
-    let identity = crate::gpu::source::identity::Identity::camera(input.source.identity());
+    let identity = crate::acquisition::camera::identity::Identity::camera(input.source.identity());
     let first = spec(0.).with_identity(identity.clone());
     working.request(Demand::fixture(first.clone(), input.clone()));
     for n in 1..40 {
@@ -299,7 +299,7 @@ fn the_same_captured_demand_does_not_give_a_departed_owner_continuation_rights()
         source: crate::editor::tests::developed_fixture(),
         correction: Default::default(),
     };
-    let captured = spec(0.).with_identity(crate::gpu::source::identity::Identity::camera(
+    let captured = spec(0.).with_identity(crate::acquisition::camera::identity::Identity::camera(
         pixels.source.identity(),
     ));
     let mut former = WorkingView::default();

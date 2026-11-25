@@ -52,7 +52,7 @@ fn variable_field(a: SourceRegion) -> Arc<crate::flat_field::FlatField> {
 
 #[test]
 fn cached_camera_sampling_preserves_original_correction_coordinates_and_omits_reference_exposure() {
-    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([6000, 12000, 9000]);
     let mut scan = Scan::open(file.path(), None).unwrap();
     let a = scan.area;
@@ -97,7 +97,7 @@ fn cached_camera_sampling_preserves_original_correction_coordinates_and_omits_re
 
 #[test]
 fn gathered_work_reads_only_selected_cached_centres_after_the_original_is_released() {
-    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([6000, 12000, 9000]);
     let scan = Scan::open(file.path(), None).unwrap();
     let weak = Arc::downgrade(scan.source());
@@ -139,7 +139,7 @@ fn gathered_work_reads_only_selected_cached_centres_after_the_original_is_releas
 
 #[test]
 fn numerical_admission_checks_the_original_and_corrected_sample_that_is_actually_used() {
-    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([2; 3]);
     let mut scan = Scan::open(file.path(), None).unwrap();
     let a = scan.area;
@@ -179,7 +179,7 @@ fn numerical_admission_checks_the_original_and_corrected_sample_that_is_actually
 
 #[test]
 fn one_cached_payload_supports_changed_regions_and_correction_without_original_pixels() {
-    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     for rgb in [[6000, 12000, 9000], [2; 3], [65535; 3]] {
         let file = crate::raw::fixture::bayer_dng_with_rgb(rgb);
         let scan = Scan::open(file.path(), None).unwrap();
@@ -228,7 +228,7 @@ fn one_cached_payload_supports_changed_regions_and_correction_without_original_p
 
 #[test]
 fn native_white_remains_usable_evidence() {
-    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([65535; 3]);
     let scan = Scan::open(file.path(), None).unwrap();
     let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();

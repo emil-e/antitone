@@ -2,10 +2,10 @@
 
 use super::Grading;
 use crate::Error;
-use crate::gpu::evaluation::*;
+use crate::evaluation::*;
 
 fn grading_context(
-    parameters: &crate::gpu::parameters::ProcessingParameters,
+    parameters: &crate::photographic::parameters::ProcessingParameters,
     coverage: u32,
 ) -> [[u32; 4]; 2] {
     // Match the filtered-view gain packing rather than changing CPU/GPU rounding.
@@ -63,12 +63,12 @@ enum GradeDefinition {
         layers: crate::adjustment_layers::AdjustmentLayerSnapshot,
         area: crate::geometry::SourceRegion,
         coverage: u32,
-        coordinates: Option<crate::gpu::source::SourceGeometry>,
+        coordinates: Option<crate::acquisition::camera::SourceGeometry>,
     },
 }
 
 impl Grade {
-    fn coordinates(&self) -> Option<crate::gpu::source::SourceGeometry> {
+    fn coordinates(&self) -> Option<crate::acquisition::camera::SourceGeometry> {
         match self.definition {
             GradeDefinition::Layers { coordinates, .. } => coordinates,
             GradeDefinition::Roll(..) => None,
@@ -81,21 +81,22 @@ impl Operation for Grade {
         Some(RetainedKey::new(self.definition.clone()))
     }
 
-    fn reads(&self, region: CellRegion) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
-        Ok(vec![crate::gpu::evaluation::Read::new(0, region)])
+    fn reads(&self, region: CellRegion) -> Result<Vec<crate::evaluation::Read>, Error> {
+        Ok(vec![crate::evaluation::Read::new(0, region)])
     }
 
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         let operation = if let Some(geometry) = self.coordinates() {
             let code = Grading::camera_shader(&self.function.code);
-            let function = crate::gpu::source::coordinates::bind(self.function.clone(), geometry);
+            let function =
+                crate::acquisition::camera::coordinates::bind(self.function.clone(), geometry);
             value::Operation::new(
                 "camera-coordinate grading v1",
                 self.definition.clone(),
@@ -131,7 +132,7 @@ impl Grading {
         let mut images = Vec::new();
         for coordinates in [
             None,
-            Some(crate::gpu::source::SourceGeometry::new(
+            Some(crate::acquisition::camera::SourceGeometry::new(
                 [0, 0, 1, 1],
                 [1, 1],
             )?),
@@ -153,7 +154,7 @@ impl Grading {
     pub(crate) fn camera_shader(grading: &str) -> String {
         [
             grading,
-            &crate::gpu::source::coordinates::shader(),
+            &crate::acquisition::camera::coordinates::shader(),
             include_str!("camera_adjustments.wgsl"),
         ]
         .join("\n")
@@ -176,7 +177,7 @@ impl Grading {
 
     pub(crate) fn with_camera_coordinates(
         mut self,
-        geometry: Option<crate::gpu::source::SourceGeometry>,
+        geometry: Option<crate::acquisition::camera::SourceGeometry>,
     ) -> Self {
         self.coordinates = geometry;
         self
@@ -199,7 +200,7 @@ impl Grading {
         roll: crate::processing::RollSettings,
         coverage: u32,
     ) -> Result<Value, Error> {
-        let parameters = crate::gpu::parameters::ProcessingParameters::photographic(roll)?;
+        let parameters = crate::photographic::parameters::ProcessingParameters::photographic(roll)?;
         let function = Function::new(Grading::shader(), "evaluation_roll")
             .with_uniform(2, &parameters)
             .with_uniform(8, &grading_context(&parameters, coverage));

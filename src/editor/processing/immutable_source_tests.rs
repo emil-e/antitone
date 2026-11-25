@@ -1,6 +1,6 @@
 use super::*;
-use crate::gpu::evaluation::{Region, Tiling, Value};
-use crate::gpu::parameters::ProcessingParameters;
+use crate::evaluation::{Region, Tiling, Value};
+use crate::photographic::parameters::ProcessingParameters;
 use std::sync::{Arc, Weak};
 
 fn resident_camera(image: &Value) -> Value {
@@ -62,8 +62,9 @@ fn project_corrections_share_fixed_camera_samples_and_retain_only_their_own_reso
         let source = project.source(id).unwrap().clone();
         let mut photographs = Vec::new();
         let mut inspections = Vec::new();
-        let mut fields: Vec<Weak<crate::gpu::flat::GpuFlatField>> = Vec::new();
-        let mut original: Option<crate::gpu::evaluation::Value> = None;
+        let mut fields: Vec<Weak<crate::photographic::stages::flat_field::GpuFlatField>> =
+            Vec::new();
+        let mut original: Option<crate::evaluation::Value> = None;
         for gain in [
             glam::DVec3::ONE,
             glam::DVec3::new(0.8, 1.1, 1.2),
@@ -85,7 +86,10 @@ fn project_corrections_share_fixed_camera_samples_and_retain_only_their_own_reso
                     source.path.clone(),
                     map.clone(),
                 )));
-                let gpu = Arc::new(crate::gpu::flat::GpuFlatField::new(&device, map).unwrap());
+                let gpu = Arc::new(
+                    crate::photographic::stages::flat_field::GpuFlatField::new(&device, map)
+                        .unwrap(),
+                );
                 fields.push(Arc::downgrade(&gpu));
                 Some(gpu)
             };

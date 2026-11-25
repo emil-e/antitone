@@ -2,9 +2,9 @@
 
 use super::{GpuFlatField, shader};
 use crate::Error;
-use crate::gpu::{
+use crate::{
+    acquisition::camera::{Mapping, SourceGeometry},
     evaluation::*,
-    source::{Mapping, SourceGeometry},
 };
 use std::{
     hash::{Hash, Hasher},
@@ -65,12 +65,12 @@ impl Operation for CameraCorrection {
     }
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         let code = [shader().as_str(), include_str!("apply.wgsl")].join("\n");
         let entry = match self.mapping {
             Mapping::Originals => "original_light",

@@ -275,7 +275,7 @@ fn gpu_constants_do_not_require_a_range_proof_for_above_base_continuation() {
         dmin: DVec3::splat(0.001),
         dmax: DVec3::splat(0.001 * (1. - 1.1e-6)),
     };
-    let result = antitone::gpu::parameters::ProcessingParameters::positive(
+    let result = antitone::photographic::parameters::ProcessingParameters::positive(
         negative(
             cal,
             Response {

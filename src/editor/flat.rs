@@ -1,7 +1,7 @@
 use super::*;
 use crate::{cancellation::Cancellation, viewport::CanvasLayout};
 #[cfg(test)]
-use crate::{gpu::flat::GpuFlatField, project::FlatFieldSettings};
+use crate::{photographic::stages::flat_field::GpuFlatField, project::FlatFieldSettings};
 use std::{cell::RefCell, rc::Rc};
 
 struct Change {

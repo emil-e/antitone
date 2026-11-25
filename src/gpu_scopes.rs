@@ -1,11 +1,11 @@
 use crate::Error;
+use crate::evaluation::Value;
 use crate::frame_raster::FrameRaster;
 use crate::geometry::TextureMapping;
-use crate::gpu::evaluation::Value;
-use crate::gpu::parameters::ProcessingParameters;
-#[cfg(test)]
-use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::looks::{LookId, LutChain};
+use crate::photographic::parameters::ProcessingParameters;
+#[cfg(test)]
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::scopes::BINS;
 use crate::scopes::Basis;
 use crate::scopes::Counts;
@@ -31,7 +31,7 @@ struct Key {
     #[cfg(feature = "editor")]
     rendered_source: Option<(crate::photographic::graph::view_source::SourceRequest, bool)>,
     image: Weak<GpuImage>,
-    calculation: Option<crate::gpu::evaluation::value::WeakValue>,
+    calculation: Option<crate::evaluation::value::WeakValue>,
     look: Option<LookId>,
     settings: Settings,
     frame: FrameRaster,
@@ -74,7 +74,7 @@ impl Key {
 
     #[cfg(feature = "editor")]
     fn rendered(
-        view: &crate::gpu::view::RenderedView,
+        view: &crate::viewer::view::RenderedView,
         frame: FrameRaster,
         mapping: TextureMapping,
         settings: Settings,
@@ -498,7 +498,7 @@ impl GpuScopes {
     #[cfg(all(test, feature = "editor"))]
     pub(crate) fn status_rendered(
         &self,
-        view: &crate::gpu::view::RenderedView,
+        view: &crate::viewer::view::RenderedView,
         frame: FrameRaster,
         settings: Settings,
     ) -> Option<Result<Counts, String>> {
@@ -508,7 +508,7 @@ impl GpuScopes {
     #[cfg(feature = "editor")]
     pub(crate) fn status_mapped_rendered(
         &self,
-        view: &crate::gpu::view::RenderedView,
+        view: &crate::viewer::view::RenderedView,
         frame: FrameRaster,
         mapping: TextureMapping,
         settings: Settings,
@@ -592,7 +592,7 @@ pub struct ScopePaint {
     luts: LutChain,
     #[cfg(feature = "editor")]
     rendered: Option<(
-        Arc<crate::gpu::view::RenderedView>,
+        Arc<crate::viewer::view::RenderedView>,
         crate::gpu::submission::Queue,
     )>,
     pub frame: FrameRaster,
@@ -606,7 +606,7 @@ impl ScopePaint {
     #[cfg(feature = "editor")]
     pub(crate) fn rendered(
         gpu: Arc<GpuScopes>,
-        view: Arc<crate::gpu::view::RenderedView>,
+        view: Arc<crate::viewer::view::RenderedView>,
         frame: FrameRaster,
         settings: Settings,
         queue: crate::gpu::submission::Queue,
@@ -629,7 +629,7 @@ impl ScopePaint {
     #[cfg(feature = "editor")]
     pub(crate) fn mapped_rendered(
         gpu: Arc<GpuScopes>,
-        view: Arc<crate::gpu::view::RenderedView>,
+        view: Arc<crate::viewer::view::RenderedView>,
         frame: FrameRaster,
         mapping: TextureMapping,
         settings: Settings,

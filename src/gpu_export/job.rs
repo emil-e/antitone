@@ -1,6 +1,6 @@
 //! Resolve captured photographic intent into a file export calculation.
 use super::*;
-use crate::gpu::flat::GpuFlatField;
+use crate::photographic::stages::flat_field::GpuFlatField;
 use crate::photographic::stages::{display_rendering as drt, look::Looks};
 use crate::{dust_repair::Execution, image_recipe::ImageRecipe, scan::Scan};
 
@@ -63,7 +63,7 @@ pub(crate) fn write(
     let (scan, recipe) = crate::photo_preparation::native_image(job.scan, job.recipe)?;
     let image = crate::photographic::graph::composition::processed_originals(
         &context.device().limits(),
-        crate::gpu::source::camera_source(&scan)?,
+        crate::acquisition::camera::camera_source(&scan)?,
         job.field,
         &recipe,
     )?;

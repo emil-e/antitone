@@ -1,7 +1,7 @@
 //! Original-sample tool reconstruction, independent of normal working-view acceptance.
 use super::*;
 #[cfg(test)]
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use std::sync::{Mutex, Weak};
 #[cfg(test)]
 mod tests;
@@ -139,7 +139,7 @@ pub(super) struct OriginalView {
     pub wanted: Option<Arc<Demand>>,
     progress: Arc<Mutex<Progress>>,
     pub task: Option<async_executor::Task<()>>,
-    rendered: Option<Arc<crate::gpu::view::RenderedView>>,
+    rendered: Option<Arc<crate::viewer::view::RenderedView>>,
     pub last_edit: std::time::Instant,
 }
 impl Default for OriginalView {
@@ -251,9 +251,9 @@ impl OriginalView {
     /// Present a completed original-sample reconstruction without another image calculation.
     pub(super) fn rendered(
         &mut self,
-    ) -> Result<Option<Arc<crate::gpu::view::RenderedView>>, Error> {
+    ) -> Result<Option<Arc<crate::viewer::view::RenderedView>>, Error> {
         use crate::frame_raster::FrameRaster;
-        use crate::gpu::view::RenderedView;
+        use crate::viewer::view::RenderedView;
         let owner = &*self;
         let Some((view, image)) = owner.settled() else {
             return Ok(None);
@@ -273,7 +273,7 @@ impl OriginalView {
             }
         };
         let identity =
-            crate::gpu::source::identity::Identity::camera(wanted.source.source.identity());
+            crate::acquisition::camera::identity::Identity::camera(wanted.source.source.identity());
         let spec = crate::photographic::graph::view_source::SourceRequest::for_frame(frame)?
             .with_identity(identity);
         if let Some(rendered) = &owner.rendered
@@ -293,7 +293,7 @@ impl OriginalView {
 impl Editor {
     pub(super) fn original_rendered(
         &mut self,
-    ) -> Result<Option<Arc<crate::gpu::view::RenderedView>>, Error> {
+    ) -> Result<Option<Arc<crate::viewer::view::RenderedView>>, Error> {
         self.active_canvas_mut().original.rendered()
     }
 

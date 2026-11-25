@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 #[test]
 fn large_asymmetric_picture_uses_a_strided_view_of_the_same_cached_source_grid() {
-    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::dng_fixture::Fixture {
         side: 1024,
         ramp: true,
@@ -38,7 +38,7 @@ fn large_asymmetric_picture_uses_a_strided_view_of_the_same_cached_source_grid()
 
 #[test]
 fn spatial_camera_sites_keep_physical_correction_support_and_omit_reference_exposure() {
-    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([6000, 12000, 9000]);
     let mut scan = Scan::open(file.path(), None).unwrap();
     let weak = Arc::downgrade(scan.source());
@@ -121,7 +121,7 @@ fn spatial_camera_sites_keep_physical_correction_support_and_omit_reference_expo
 
 #[test]
 fn corrected_site_admission_does_not_depend_on_unused_original_neighbours() {
-    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([2; 3]);
     let mut scan = Scan::open(file.path(), None).unwrap();
     let a = scan.area;
@@ -162,7 +162,7 @@ fn corrected_site_admission_does_not_depend_on_unused_original_neighbours() {
 
 #[test]
 fn uncorrected_spatial_capture_accepts_native_white_and_releases_the_original_lease() {
-    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([65535; 3]);
     let scan = Scan::open(file.path(), None).unwrap();
     let weak = Arc::downgrade(scan.source());

@@ -514,7 +514,7 @@ pub(crate) struct ImageKey {
 
 pub(crate) struct Product {
     pub(crate) image: Arc<GpuImage>,
-    pub(crate) positive: Option<Arc<crate::gpu::view::RenderedView>>,
+    pub(crate) positive: Option<Arc<crate::viewer::view::RenderedView>>,
 }
 
 impl std::ops::Deref for Product {
@@ -538,8 +538,8 @@ impl Product {
             + std::mem::size_of::<GpuImage>()
             + 1024
             + if positive {
-                std::mem::size_of::<crate::gpu::view::ViewImage>()
-                    + std::mem::size_of::<crate::gpu::view::RenderedView>()
+                std::mem::size_of::<crate::viewer::view::ViewImage>()
+                    + std::mem::size_of::<crate::viewer::view::RenderedView>()
                     + 2 * std::mem::size_of::<crate::photographic::graph::request::PhotographRequest>(
                     )
             } else {
@@ -628,7 +628,7 @@ pub(crate) use crate::scan::CameraPixels as Proxy;
 impl Proxy {
     pub(crate) async fn image(
         &self,
-        evaluation: crate::gpu::evaluation::Context,
+        evaluation: crate::evaluation::Context,
         looks: Arc<crate::photographic::stages::look::Looks>,
         transform: &crate::photographic::stages::display_rendering::Target,
         area: [u32; 4],
@@ -640,7 +640,7 @@ impl Proxy {
             [self.width, self.height],
             &self.pixels,
             self.matrix,
-            Some(crate::gpu::source::SourceGeometry::new(
+            Some(crate::acquisition::camera::SourceGeometry::new(
                 area,
                 [self.width, self.height],
             )?),

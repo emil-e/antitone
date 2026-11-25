@@ -1,5 +1,5 @@
 use super::*;
-use crate::{cancellation::Cancellation, gpu::flat::GpuFlatField};
+use crate::{cancellation::Cancellation, photographic::stages::flat_field::GpuFlatField};
 use std::future::Future;
 
 pub(super) mod query;
@@ -39,7 +39,7 @@ pub(super) fn capture_input(
     })
 }
 
-use crate::gpu::{evaluation::Context, submission::Queue};
+use crate::{evaluation::Context, gpu::submission::Queue};
 
 pub(super) type Gpu<'a> = (&'a Context, &'a Queue);
 pub(super) type GpuCapture = (Context, Queue);

@@ -2,12 +2,12 @@
 
 use super::HalationParameters;
 use crate::Error;
-use crate::gpu::{
+use crate::{
     evaluation::{
         CellRegion, Domain, Operation, Read, RetainedKey, Tiling, Value,
         value::{self, Access, Calculation},
     },
-    gaussian,
+    gaussian::operation as gaussian,
 };
 use std::sync::Arc;
 

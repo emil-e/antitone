@@ -19,7 +19,7 @@ fn negative() -> NegativeInput {
 
 #[test]
 fn response_batches_keep_sample_order_signed_hdr_values_and_reuse_parameterized_programs() {
-    let (device, queue, _renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _renderer) = crate::photographic::test_support::render_context();
     let context = evaluation::Context::new(&device, evaluation::CachePolicy { generated_bytes: 0 });
     let mut model = ResponseModel::new(&context, &queue);
     let negative = negative();
@@ -115,7 +115,7 @@ fn response_batches_keep_sample_order_signed_hdr_values_and_reuse_parameterized_
 #[test]
 fn roll_estimation_keeps_corrected_camera_headroom_and_statistical_inputs() {
     use crate::roll_analysis::{FrameSamples, estimate, estimate_with_model};
-    let (device, queue, _renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _renderer) = crate::photographic::test_support::render_context();
     let context = evaluation::Context::new(&device, evaluation::CachePolicy::default());
     let matrix = DMat3::from_diagonal(DVec3::new(1.3, 0.8, 1.1));
     for matrices in [[matrix; 2], [matrix, matrix * 2.]] {
@@ -245,7 +245,7 @@ fn roll_estimation_keeps_corrected_camera_headroom_and_statistical_inputs() {
 
 #[test]
 fn response_batches_stop_before_acquisition_or_during_delivery_and_can_be_reused() {
-    let (device, queue, _renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _renderer) = crate::photographic::test_support::render_context();
     let context = evaluation::Context::new(&device, evaluation::CachePolicy::default());
     let mut model = ResponseModel::new(&context, &queue);
     let points = vec![DVec3::splat(0.03); 10];

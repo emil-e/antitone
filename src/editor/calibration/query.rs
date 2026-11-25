@@ -1,7 +1,7 @@
 //! Calibration queries use corrected camera light on the original sample grid.
 
 use super::*;
-use crate::gpu::flat::GpuFlatField;
+use crate::photographic::stages::flat_field::GpuFlatField;
 use crate::{
     Error,
     coverage::Coverage,

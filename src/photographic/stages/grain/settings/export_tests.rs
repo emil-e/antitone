@@ -12,7 +12,7 @@ use crate::{
     scan::Scan,
 };
 #[cfg(feature = "editor")]
-use crate::{frame_raster::FrameRaster, gpu::test_inputs::AuthoredPhotograph};
+use crate::{frame_raster::FrameRaster, photographic::test_inputs::AuthoredPhotograph};
 use std::{path::Path, sync::Arc};
 
 #[test]
@@ -206,7 +206,7 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
         )
         .unwrap(),
     );
-    let input = crate::gpu::test_inputs::AuthoredPhotograph::from(grade);
+    let input = crate::photographic::test_inputs::AuthoredPhotograph::from(grade);
     let generation = AtomicU64::new(1);
     let directory = tempfile::tempdir().unwrap();
     for crop in [

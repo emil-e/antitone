@@ -7,7 +7,7 @@ fn changed_demand_retires_failure_but_repaints_do_not_restart_it() {
         source: crate::editor::tests::developed_fixture(),
         correction: Default::default(),
     };
-    let identity = crate::gpu::source::identity::Identity::camera(pixels.source.identity());
+    let identity = crate::acquisition::camera::identity::Identity::camera(pixels.source.identity());
     let mut working = WorkingView::default();
     working.request(Demand::fixture(
         spec(0.).with_identity(identity.clone()),

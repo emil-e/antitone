@@ -1,6 +1,6 @@
-use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::source::ProcessingSource;
-use crate::gpu::source::SourceGeometry;
+use crate::photographic::test_inputs::AuthoredPhotograph;
+use crate::acquisition::camera::ProcessingSource;
+use crate::acquisition::camera::SourceGeometry;
 use super::*;
 use crate::rendering::CpuRenderer;
 

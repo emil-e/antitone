@@ -174,7 +174,7 @@ fn pickers_paint_the_normal_source_and_positive_in_straightened_frames() {
                     [2, 2],
                     &[[0.; 4]; 4],
                     ready.proxy.matrix(),
-                    crate::gpu::source::SourceGeometry::new(
+                    crate::acquisition::camera::SourceGeometry::new(
                         ready.record.development.active_area,
                         [2, 2],
                     )

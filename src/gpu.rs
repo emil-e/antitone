@@ -1,41 +1,9 @@
-//! GPU device setup and the modules that own calculations, resources and presentation.
+//! Shared GPU device, allocation and submission infrastructure.
 
 pub(crate) mod allocation;
-#[cfg(feature = "editor")]
-pub(crate) mod display;
-pub mod evaluation;
-#[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]
-pub(crate) mod execution;
-pub mod gaussian;
-#[cfg(all(
-    feature = "raw",
-    feature = "render",
-    feature = "project",
-    any(feature = "editor", feature = "export")
-))]
-pub(crate) mod repair_source;
-#[cfg(all(feature = "raw", feature = "render"))]
-pub(crate) mod rgb16;
-#[cfg(all(test, feature = "render"))]
-pub(crate) mod test_support;
-
-pub(crate) mod raster;
-#[cfg(any(
-    feature = "editor",
-    all(feature = "ui", feature = "render"),
-    all(feature = "raw", feature = "render")
-))]
-pub(crate) mod recorded_image;
-
-pub mod parameters;
-pub mod source;
 pub mod submission;
-#[cfg(test)]
-pub(crate) mod test_inputs;
 #[cfg(all(test, target_os = "macos", feature = "raw", feature = "export"))]
 pub(crate) mod timestamp_ledger;
-#[cfg(feature = "editor")]
-pub(crate) mod view;
 
 /// The graphics API this platform presents and computes with, from the one `sys` selection.
 pub fn backends() -> wgpu::Backends {
@@ -106,15 +74,11 @@ pub(crate) fn fullscreen_pipeline(
     })
 }
 
-#[cfg(test)]
-mod input_grading_tests;
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod shader_layout_tests;
-
-// Preserve the original public paths for prepared photographic controls.
+// Compatibility paths; these features own their implementations.
+pub use crate::acquisition::camera as source;
+pub use crate::evaluation;
+pub use crate::gaussian::operation as gaussian;
+pub use crate::photographic::parameters;
 pub use crate::photographic::stages::flat_field as flat;
 pub use crate::photographic::stages::{grading, interpretation};
 

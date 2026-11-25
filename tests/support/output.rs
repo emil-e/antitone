@@ -3,11 +3,13 @@
 use antitone::photographic::graph::{display_output, original_image};
 use antitone::{
     Error,
+    acquisition::camera::camera_source,
     adjustment_layers::AdjustmentLayerSnapshot,
     dust_repair::Repair,
+    evaluation::Value,
     export::{FileFormat, FloatPrecision, Overwrite, Plan, RenderTarget},
     geometry::Composition,
-    gpu::{evaluation::Value, flat::GpuFlatField, source::camera_source},
+    photographic::stages::flat_field::GpuFlatField,
     photographic::stages::grading::Grading,
     processing::{InputSettings, RollSettings},
     rendering::OutputTarget,

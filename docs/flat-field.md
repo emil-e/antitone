@@ -42,6 +42,6 @@ Importing or removing the reference as a photo is independent of correction. Inp
 
 ## Working on this area
 
-[Scan](../src/scan.rs) gathers reference statistics. The [flat-field model](../src/flat_field.rs) owns estimation, scalar interpolation and precision; the [correction stage](../src/photographic/stages/flat_field.rs) owns the prepared gain map and its application to camera light. Correction and grading share [source-coordinate mapping](../src/gpu/source/coordinates.rs). [Editor correction](../src/editor/flat.rs) connects reference interaction to document acceptance; [project correction](../src/project/flat.rs) owns saved-map validation.
+[Scan](../src/scan.rs) gathers reference statistics. The [flat-field model](../src/flat_field.rs) owns estimation, scalar interpolation and precision; the [correction stage](../src/photographic/stages/flat_field.rs) owns the prepared gain map and its application to camera light. Correction and grading share [source-coordinate mapping](../src/acquisition/camera/coordinates.rs). [Editor correction](../src/editor/flat.rs) connects reference interaction to document acceptance; [project correction](../src/project/flat.rs) owns saved-map validation.
 
 Start with [project tests](../tests/flat_field_project.rs), [export tests](../tests/flat_field_export.rs) and [editor tests](../src/editor/flat/tests.rs). [Diagnostics](diagnostics.md#flat-field-correction) provides sample-dependent exercises.

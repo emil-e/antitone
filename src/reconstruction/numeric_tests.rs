@@ -33,7 +33,7 @@ impl Source for Chart {
 
 #[test]
 fn rotated_cell_areas_preserve_constant_mass_at_large_coordinates_and_true_source_edges() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let domain = Domain {
         bounds: Some([0, 0, 1, 1].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
@@ -66,7 +66,7 @@ fn area_control(p: vec4f, xy: vec2f) -> vec4f {{
             .run(&device, &queue, &plan, || false)
             .unwrap()
             .unwrap();
-        let actual = crate::gpu::evaluation::read_buffer(&device, &queue, &result.pixels)[0];
+        let actual = crate::evaluation::read_buffer(&device, &queue, &result.pixels)[0];
         // The area of the parallelogram is its determinant, independent of translation
         // or how source cells partition it. A sole source cell extends over the full plane.
         let area = 1.1654092_f64 * 0.7458619 - 0.4520193 * (-0.2892923);
@@ -82,7 +82,7 @@ fn area_control(p: vec4f, xy: vec2f) -> vec4f {{
 
 #[test]
 fn aligned_grid_reconstruction_preserves_signed_hdr_flags_and_failed_look_markers_across_tiles() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     for marker in [8., -1., -2.] {
         for angle in [0_f64, 0.37, std::f64::consts::FRAC_PI_2] {
             let domain = Domain {
@@ -116,7 +116,7 @@ fn aligned_grid_reconstruction_preserves_signed_hdr_flags_and_failed_look_marker
                     .run(&device, &queue, &plan, || false)
                     .unwrap()
                     .unwrap();
-                let pixels = crate::gpu::evaluation::read_buffer(&device, &queue, &result.pixels);
+                let pixels = crate::evaluation::read_buffer(&device, &queue, &result.pixels);
                 results.push(pixels);
             }
             assert_eq!(results[0], results[1]);

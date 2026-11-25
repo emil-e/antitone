@@ -1,23 +1,20 @@
 //! Capture resident camera calculations and record their result into an image's target storage.
 
 use super::*;
-use crate::gpu::{evaluation::Value, raster::Raster};
 use crate::looks::LutChain;
 use crate::photographic::graph::resident;
 use crate::photographic::stages::{
     grading::Grading,
     interpretation::{InputTransform, InspectionView},
 };
+use crate::{acquisition::raster::Raster, evaluation::Value};
 
 impl ImageProcessing {
     fn camera(&self, raster: Raster) -> Result<Value, Error> {
         let mut camera = self.camera.lock().unwrap();
-        let domain = crate::gpu::evaluation::Domain {
-            bounds: Some(crate::gpu::evaluation::CellRegion::new(
-                [0, 0],
-                raster.size(),
-            )),
-            grid: crate::gpu::evaluation::Grid::from_raster(raster),
+        let domain = crate::evaluation::Domain {
+            bounds: Some(crate::evaluation::CellRegion::new([0, 0], raster.size())),
+            grid: crate::evaluation::Grid::from_raster(raster),
         };
         if let Some(camera) = camera.as_ref().filter(|camera| camera.domain() == domain) {
             return Ok(camera.clone());
@@ -48,7 +45,7 @@ impl GpuImage {
         &self,
         program: InputTransform,
         grading: Grading,
-        field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
+        field: Option<Arc<crate::photographic::stages::flat_field::GpuFlatField>>,
     ) -> Result<Value, Error> {
         let processing = self
             .processing
@@ -69,7 +66,7 @@ impl GpuImage {
     pub fn inspection(
         &self,
         parameters: ProcessingParameters,
-        field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
+        field: Option<Arc<crate::photographic::stages::flat_field::GpuFlatField>>,
     ) -> Result<Value, Error> {
         let view = InspectionView::from_parameters(parameters)?;
         let processing = self
@@ -84,7 +81,7 @@ impl GpuImage {
     pub(crate) fn capture_calculation(
         &self,
         capture: &crate::photographic::graph::request::PhotographRequest,
-        field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
+        field: Option<Arc<crate::photographic::stages::flat_field::GpuFlatField>>,
     ) -> Result<Value, Error> {
         let processing = self
             .processing
@@ -104,7 +101,7 @@ impl GpuImage {
     pub(crate) fn processed_prefix(
         &self,
         recipe: &crate::image_recipe::ImageRecipe,
-        field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
+        field: Option<Arc<crate::photographic::stages::flat_field::GpuFlatField>>,
     ) -> Result<Value, Error> {
         let processing = self
             .processing
@@ -154,7 +151,7 @@ impl GpuImage {
         if self.processing.is_none() {
             return Err(Error::Gpu("rendered image has no source buffer".into()));
         }
-        if root.domain().finite()? != crate::gpu::evaluation::CellRegion::new([0, 0], self.size()) {
+        if root.domain().finite()? != crate::evaluation::CellRegion::new([0, 0], self.size()) {
             return Err(Error::InvalidParameter(
                 "calculation differs from working image storage",
             ));
@@ -213,17 +210,17 @@ impl GpuImage {
     ) -> Result<(), Error> {
         let processing = self.processing.as_ref().expect("admitted working image");
         let raster = root.domain().grid.raster(root.domain().finite()?);
-        let prepared = crate::gpu::recorded_image::Prepared::from_composition(
+        let prepared = crate::evaluation::recorded_image::Prepared::from_composition(
             device,
             raster,
             root.clone(),
             processing.evaluation.clone(),
         )?;
         prepared.encode_result(device, encoder, &processing.working)?;
-        let prepared_binding = crate::gpu::recorded_image::Texture::new(
+        let prepared_binding = crate::evaluation::recorded_image::Texture::new(
             &processing.evaluation,
             device,
-            crate::gpu::evaluation::SuppliedImage::from_buffer(
+            crate::evaluation::SuppliedImage::from_buffer(
                 root.clone(),
                 root.domain().finite()?,
                 processing.working.clone().into(),

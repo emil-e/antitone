@@ -18,7 +18,7 @@ impl Source for Background {
 
 #[test]
 fn packed_replacements_cover_bin_edges_collisions_and_overlapping_unselected_envelopes() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let points = [[63, 24], [65, 24], [256, 24], [512, 65], [768, 65]];
     let colors = [
@@ -90,11 +90,11 @@ impl Operation for HostValue {
     }
     fn calculation(
         self: Arc<Self>,
-        _inputs: &[crate::gpu::evaluation::value::Value],
+        _inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
         _: Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+    ) -> Result<Option<crate::evaluation::value::Calculation>, Error> {
         Ok(Some(value::Calculation::new(
             domain,
             output,
@@ -123,7 +123,7 @@ impl CpuKernel for HostValue {
 }
 #[test]
 fn standalone_host_materialization_submits_before_publishing_a_gpu_value() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let counter = Arc::new(AtomicUsize::new(0));
     let observed = counter.clone();

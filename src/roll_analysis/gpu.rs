@@ -1,7 +1,7 @@
 //! GPU sampling and photographic response for roll analysis.
 
 use super::ForwardModel;
-use crate::{Error, gpu::evaluation, processing::NegativeInput};
+use crate::{Error, evaluation, processing::NegativeInput};
 use glam::DVec3;
 use std::{
     cell::{Cell, RefCell},
@@ -84,10 +84,7 @@ impl ForwardModel for ResponseModel<'_> {
         // This is an index grid over captured camera vectors, not a reconstructed photograph.
         // Only pointwise interpretation runs here; physical source support was selected earlier.
         let domain = evaluation::Domain {
-            bounds: Some(crate::gpu::evaluation::CellRegion::new(
-                [0, 0],
-                [width, height],
-            )),
+            bounds: Some(crate::evaluation::CellRegion::new([0, 0], [width, height])),
             grid: evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
         };
         let camera = evaluation::source(Arc::new(CameraSamples {

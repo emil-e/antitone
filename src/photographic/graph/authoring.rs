@@ -5,9 +5,9 @@ use super::composition::{
     PresentationMapping, film_effects, interpret_camera, preferred_view_pitch, repair_neutral,
 };
 use super::*;
-use crate::gpu::test_inputs::AuthoredPhotograph;
 #[cfg(feature = "project")]
 use crate::image_recipe::ImageRecipe;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 
 /// Named calculation endpoints used by photographic fixtures.
 pub(crate) struct PhotographTaps {
@@ -185,7 +185,7 @@ pub(crate) fn original_chain(
     limits: &wgpu::Limits,
     scan: &crate::scan::Scan,
     field: Option<Arc<GpuFlatField>>,
-    input: &crate::gpu::test_inputs::AuthoredPhotograph,
+    input: &crate::photographic::test_inputs::AuthoredPhotograph,
     stages: &Assembly,
     looks: &crate::photographic::stages::look::Looks,
     target: &crate::photographic::stages::display_rendering::Target,
@@ -203,7 +203,7 @@ pub(crate) fn original_chain(
     } else {
         scan.camera_to_ap1
     };
-    let node = crate::gpu::source::camera_source(scan)?;
+    let node = crate::acquisition::camera::camera_source(scan)?;
     let photograph = PhotographTaps::authored(limits, node, field, input, matrix, stages)?;
     display_output(photograph.processed, input.luts(), looks, target)
 }
@@ -423,7 +423,7 @@ impl PhotographTaps {
         limits: &wgpu::Limits,
         source: &ProcessingSource,
         input: &AuthoredPhotograph,
-        raster: crate::gpu::raster::Raster,
+        raster: crate::acquisition::raster::Raster,
     ) -> Result<Self, Error> {
         input.require_source(source)?;
         if u64::from(raster.size()[0]) * u64::from(raster.size()[1])
@@ -441,10 +441,7 @@ impl PhotographTaps {
             ));
         }
         let domain = Domain {
-            bounds: Some(crate::gpu::evaluation::CellRegion::new(
-                [0, 0],
-                raster.size(),
-            )),
+            bounds: Some(crate::evaluation::CellRegion::new([0, 0], raster.size())),
             grid: Grid::from_raster(raster),
         };
         let camera = Value::from_operation(

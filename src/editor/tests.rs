@@ -5,8 +5,8 @@ pub(super) fn photograph(
     document: &Document,
     source: SourceId,
     limits: &wgpu::Limits,
-) -> Result<crate::gpu::test_inputs::AuthoredPhotograph, Error> {
-    crate::gpu::test_inputs::AuthoredPhotograph::from_recipe(
+) -> Result<crate::photographic::test_inputs::AuthoredPhotograph, Error> {
+    crate::photographic::test_inputs::AuthoredPhotograph::from_recipe(
         limits,
         &document.image_recipe(source)?,
     )
@@ -93,8 +93,8 @@ impl Editor {
     }
 }
 
-use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::parameters::ProcessingParameters;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::project::Development;
 mod viewer;
 mod workspace;
@@ -448,7 +448,8 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
             [16, 16],
             &[[1000, 1000, 1000, 0]; 256],
             glam::DMat3::IDENTITY,
-            crate::gpu::source::SourceGeometry::new([12, 12, 8640, 5760], [16, 16]).unwrap(),
+            crate::acquisition::camera::SourceGeometry::new([12, 12, 8640, 5760], [16, 16])
+                .unwrap(),
         )
         .unwrap();
         let area = Rect {
@@ -1150,7 +1151,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         [1, 1],
         &[[1000, 1000, 1000, 0]],
         glam::DMat3::IDENTITY,
-        crate::gpu::source::SourceGeometry::new([12, 7, 864, 576], [1, 1]).unwrap(),
+        crate::acquisition::camera::SourceGeometry::new([12, 7, 864, 576], [1, 1]).unwrap(),
     )
     .unwrap();
     let development = editor
@@ -2176,7 +2177,7 @@ fn export_captures_accepted_settings_while_photographic_construction_rejects_unr
             .grade_snapshot()
             .unwrap()
     );
-    let consumed = crate::gpu::test_inputs::AuthoredPhotograph::from_recipe(
+    let consumed = crate::photographic::test_inputs::AuthoredPhotograph::from_recipe(
         &Default::default(),
         &captured.recipe,
     )

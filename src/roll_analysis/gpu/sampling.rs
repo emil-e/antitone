@@ -1,7 +1,8 @@
 //! Original-coordinate camera samples from the shared, source-owned analysis raster.
 use super::*;
 use crate::{
-    gpu::{flat::GpuFlatField, source::ProcessingSource},
+    acquisition::camera::ProcessingSource,
+    photographic::stages::flat_field::GpuFlatField,
     scan::{AnalysisInput, AnalysisSamples},
 };
 

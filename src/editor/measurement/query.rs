@@ -2,13 +2,13 @@
 
 use crate::Error;
 use crate::coverage::Coverage;
-use crate::gpu::evaluation;
-use crate::gpu::evaluation::Grid;
-use crate::gpu::evaluation::Region;
-use crate::gpu::evaluation::Tiling;
-use crate::gpu::evaluation::Value;
-use crate::gpu::flat::GpuFlatField;
+use crate::evaluation;
+use crate::evaluation::Grid;
+use crate::evaluation::Region;
+use crate::evaluation::Tiling;
+use crate::evaluation::Value;
 use crate::photographic::graph::camera_light;
+use crate::photographic::stages::flat_field::GpuFlatField;
 use crate::scan::Scan;
 use glam::DVec3;
 use std::sync::Arc;
@@ -41,7 +41,7 @@ impl<'a> Samples<'a> {
 
         coverage.bounds(scan.area)?;
 
-        let source = crate::gpu::source::camera_source(scan)?;
+        let source = crate::acquisition::camera::camera_source(scan)?;
 
         Ok(Self {
             context,

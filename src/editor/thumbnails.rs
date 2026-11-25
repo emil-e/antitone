@@ -1,8 +1,7 @@
 use super::*;
-#[cfg(test)]
-use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::{evaluation, parameters::ProcessingParameters, submission::Queue};
 use crate::photographic::stages::look::Looks;
+#[cfg(test)]
+use crate::photographic::test_inputs::AuthoredPhotograph;
 #[cfg(test)]
 use crate::project::SourceDevelopment;
 pub(super) use crate::source::FileKey;
@@ -15,6 +14,7 @@ use crate::thumbnails::{
     Job, Product, REFRESH_QUIET_PERIOD, Stopped, Submission, ThumbnailMetrics, lru::Cache,
     shared_look_bytes,
 };
+use crate::{evaluation, gpu::submission::Queue, photographic::parameters::ProcessingParameters};
 mod embedded;
 #[cfg(test)]
 mod worker_tests;
@@ -192,12 +192,14 @@ impl Thumbnails {
                 [proxy.width, proxy.height],
                 &proxy.pixels,
                 proxy.matrix,
-                crate::gpu::source::SourceGeometry::new(
+                crate::acquisition::camera::SourceGeometry::new(
                     source.development.active_area,
                     [proxy.width, proxy.height],
                 )?,
             )?
-            .with_identity(crate::gpu::source::identity::Identity::proxy(&proxy))?,
+            .with_identity(crate::acquisition::camera::identity::Identity::proxy(
+                &proxy,
+            ))?,
         };
         if !preview.current_source(document, Some(id)) {
             return Ok(None);

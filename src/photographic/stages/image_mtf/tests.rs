@@ -1,7 +1,7 @@
-use crate::gpu::{
+use crate::{
+    acquisition::raster::{Raster, buffer, uniform},
     evaluation::read_buffer as read,
-    raster::{Raster, buffer, uniform},
-    test_support::render_context,
+    photographic::test_support::render_context,
 };
 use wgpu::util::DeviceExt;
 

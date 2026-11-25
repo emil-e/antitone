@@ -1,6 +1,6 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerPipeline;
-use crate::gpu::flat::GpuFlatField;
+use crate::photographic::stages::flat_field::GpuFlatField;
 use tiff::decoder::{Decoder, DecodingResult};
 
 #[test]

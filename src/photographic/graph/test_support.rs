@@ -1,6 +1,6 @@
 use super::*;
-use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::source::ProcessingSource;
+use crate::acquisition::camera::ProcessingSource;
+use crate::photographic::parameters::ProcessingParameters;
 use crate::{
     adjustment_layers::{
         AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
@@ -44,8 +44,8 @@ pub fn settings(area: CellRegion) -> (RollSettings, AdjustmentLayerSnapshot) {
     .unwrap();
     (roll, snapshot)
 }
-use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::photographic::graph::authoring::PhotographTaps;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 
 pub(crate) struct CameraFixture {
     context: Context,
@@ -63,11 +63,11 @@ impl CameraFixture {
         Self { context }
     }
 
-    fn raster(source: &ProcessingSource) -> crate::gpu::raster::Raster {
+    fn raster(source: &ProcessingSource) -> crate::acquisition::raster::Raster {
         if let Some(geometry) = source.geometry() {
-            crate::gpu::raster::Raster::region(geometry.region(), geometry.size())
+            crate::acquisition::raster::Raster::region(geometry.region(), geometry.size())
         } else {
-            crate::gpu::raster::Raster::native([0, 0, source.pixel_count(), 1].into())
+            crate::acquisition::raster::Raster::native([0, 0, source.pixel_count(), 1].into())
         }
     }
 
@@ -95,10 +95,7 @@ impl CameraFixture {
     ) {
         let raster = Self::raster(source);
         let domain = Domain {
-            bounds: Some(crate::gpu::evaluation::CellRegion::new(
-                [0, 0],
-                raster.size(),
-            )),
+            bounds: Some(crate::evaluation::CellRegion::new([0, 0], raster.size())),
             grid: Grid::from_raster(raster),
         };
         let camera = Value::from_operation(

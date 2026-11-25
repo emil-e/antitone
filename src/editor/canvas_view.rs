@@ -3,13 +3,11 @@ use crate::{
     Error,
     application::UiContext,
     frame_raster::FrameRaster,
-    gpu::{
-        flat::GpuFlatField,
-        view::{RenderedView, ViewImage, ViewKernels},
-    },
     photographic::graph::{request::PhotographRequest, view_source::SourceRequest},
+    photographic::stages::flat_field::GpuFlatField,
     rendering::OutputTarget,
     viewer::GpuProxy,
+    viewer::view::{RenderedView, ViewImage, ViewKernels},
 };
 use futures_util::FutureExt;
 use std::sync::Arc;
@@ -158,7 +156,7 @@ impl PreviewState {
 
 /// The photograph and sampling actually passed to this canvas's paint callback.
 pub(super) struct Displayed {
-    pub view: Arc<crate::gpu::view::RenderedView>,
+    pub view: Arc<crate::viewer::view::RenderedView>,
     pub mapping: crate::geometry::TextureMapping,
     pub size: [u32; 2],
 }

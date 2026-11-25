@@ -1,5 +1,5 @@
 //! Read-only photographic source-development diagnostic; outputs stay in .cache.
-use crate::gpu::evaluation::*;
+use crate::evaluation::*;
 use crate::photographic::graph::original_image;
 use crate::photographic::stages::grading::Grading;
 use crate::{
@@ -89,7 +89,7 @@ fn supplied_early_highlights_source_observation() {
     );
     let output = Path::new(".cache/raw-highlights/photographs");
     std::fs::create_dir_all(output).unwrap();
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     renderer
         .evaluation()
         .materializations()
@@ -158,7 +158,7 @@ fn supplied_early_highlights_source_observation() {
             .unwrap();
             let image = original_image(
                 &device.limits(),
-                crate::gpu::source::camera_source(&scan).unwrap(),
+                crate::acquisition::camera::camera_source(&scan).unwrap(),
                 None,
                 program,
                 grading,

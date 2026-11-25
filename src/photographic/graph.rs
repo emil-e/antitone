@@ -1,10 +1,10 @@
 //! Photographic image boundaries and their contracted camera-cell implementations.
 
 use crate::Error;
-use crate::gpu::evaluation::*;
+use crate::acquisition::camera::{Mapping, ProcessingSource};
+use crate::evaluation::*;
 #[cfg(any(test, feature = "editor"))]
-use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::source::{Mapping, ProcessingSource};
+use crate::photographic::parameters::ProcessingParameters;
 #[cfg(feature = "editor")]
 use crate::photographic::stages::flat_field::operation::CameraCorrection;
 use crate::photographic::stages::flat_field::{GpuFlatField, operation::apply as camera_image};
@@ -150,7 +150,7 @@ fn view_domain(frame: crate::frame_raster::FrameRaster, coverage: u32) -> Domain
 
 #[cfg(feature = "editor")]
 fn resident_camera_argument(image: &Value) -> Result<(&Value, Mapping, bool), Error> {
-    let mut argument: Option<(&crate::gpu::evaluation::value::Value, Mapping, bool)> = None;
+    let mut argument: Option<(&crate::evaluation::value::Value, Mapping, bool)> = None;
     for current in image.ancestors() {
         if let Some(camera) =
             (current.operation().as_ref() as &dyn std::any::Any).downcast_ref::<CameraCorrection>()

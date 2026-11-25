@@ -1,14 +1,14 @@
 //! Selected image demand, latest-request coalescing, and coherent presentation.
 use super::*;
+use crate::evaluation;
 use crate::frame_raster::FrameRaster;
-use crate::gpu::evaluation;
-#[cfg(test)]
-use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::RenderedView;
-use crate::gpu::view::ViewImage;
-use crate::gpu::view::ViewKernels;
 use crate::photographic::graph::view_source::SourceRequest;
 use crate::photographic::stages::{display_rendering as drt, look::Looks};
+#[cfg(test)]
+use crate::photographic::test_inputs::AuthoredPhotograph;
+use crate::viewer::view::RenderedView;
+use crate::viewer::view::ViewImage;
+use crate::viewer::view::ViewKernels;
 use std::sync::{Mutex, OnceLock};
 
 #[cfg(test)]
@@ -24,7 +24,7 @@ pub(super) struct Demand {
     pub pixels: source::Context,
     pub capture: PhotographRequest,
     pub target: OutputTarget,
-    rendering: OnceLock<Result<Arc<crate::gpu::view::rendering::Request>, Error>>,
+    rendering: OnceLock<Result<Arc<crate::viewer::view::rendering::Request>, Error>>,
 }
 impl Clone for Demand {
     fn clone(&self) -> Self {
@@ -46,15 +46,15 @@ impl Demand {
         transform: &drt::Target,
         kernels: Arc<ViewKernels>,
         previous: Option<&SourceRequest>,
-    ) -> Result<Arc<crate::gpu::view::rendering::Request>, Error> {
+    ) -> Result<Arc<crate::viewer::view::rendering::Request>, Error> {
         self.rendering
             .get_or_init(|| {
-                crate::gpu::view::rendering::Request::photograph(
+                crate::viewer::view::rendering::Request::photograph(
                     context,
                     kernels,
                     &self.pixels.scan()?,
                     self.pixels.correction.gpu()?,
-                    crate::gpu::view::rendering::Intent {
+                    crate::viewer::view::rendering::Intent {
                         capture: &self.capture,
                         frame: self.frame,
                         looks,
@@ -292,7 +292,7 @@ impl WorkingView {
                 .or_else(|| self.rendered.clone())
                 .filter(|rendered| {
                     rendered.spec.identity
-                        == crate::gpu::source::identity::Identity::camera(
+                        == crate::acquisition::camera::identity::Identity::camera(
                             wanted.pixels.source.identity(),
                         )
                         && rendered.target == target
@@ -672,8 +672,9 @@ impl WorkingView {
     ) -> Result<Option<Arc<RenderedView>>, Error> {
         let is_current_source = |rendered: &RenderedView| {
             self.wanted.as_ref().is_some_and(|wanted| {
-                crate::gpu::source::identity::Identity::camera(wanted.pixels.source.identity())
-                    == rendered.spec.identity
+                crate::acquisition::camera::identity::Identity::camera(
+                    wanted.pixels.source.identity(),
+                ) == rendered.spec.identity
                     && wanted.capture.is_inspection() == rendered.capture.is_inspection()
             })
         };
@@ -943,7 +944,7 @@ impl Acquisition {
                 pipelines.clone()
             } else {
                 let prepared =
-                    pollster::block_on(crate::gpu::view::ViewKernels::new(&services.device))?;
+                    pollster::block_on(crate::viewer::view::ViewKernels::new(&services.device))?;
                 kernels.get_or_init(|| prepared).clone()
             };
             Ok::<_, crate::Error>(Some((services, targets, pipelines)))

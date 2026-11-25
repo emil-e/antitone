@@ -1,7 +1,7 @@
 use super::*;
 use crate::gpu_export::authored::{Request, write};
 use crate::{
-    gpu::evaluation::{self, Value},
+    evaluation::{self, Value},
     photographic::graph::test_effects::NeighbourEffect,
 };
 

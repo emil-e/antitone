@@ -1,7 +1,7 @@
 use super::*;
 use crate::dust_repair::{RepairOrigin, SupportMask, nearest_offset};
-use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::parameters::ProcessingParameters;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 
 #[cfg(feature = "ocio-reference")]
 mod pixel_tests;

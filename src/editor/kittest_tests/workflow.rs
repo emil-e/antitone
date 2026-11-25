@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 mod source_working;
 mod underlay;
 

@@ -35,12 +35,12 @@ impl Operation for Damage {
     }
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, crate::Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         let function = Function::new(
             "fn damage(p:vec4f, at:vec2f)->vec4f {\n\
             if all(vec2i(floor(at)) == vec2i(32,32)) { return vec4f(bitcast<f32>(0x7fc00000u), p.yzw); }\n\
@@ -119,7 +119,7 @@ fn pixels_with_policy(
 
 #[test]
 fn healing_is_lazy_masks_unused_nan_cells_and_preserves_signed_hdr_and_metadata() {
-    let (device, queue, _renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _renderer) = crate::photographic::test_support::render_context();
     let context = Context::new(
         &device,
         CachePolicy {
@@ -175,7 +175,7 @@ fn healing_is_lazy_masks_unused_nan_cells_and_preserves_signed_hdr_and_metadata(
 
 #[test]
 fn separated_groups_in_one_repair_keep_their_target_and_donor_crops() {
-    let (device, queue, _renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _renderer) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let mut bits = vec![false; 18 * 3];
     bits[19] = true;
@@ -197,7 +197,7 @@ fn separated_groups_in_one_repair_keep_their_target_and_donor_crops() {
 
 #[test]
 fn a_failed_edge_repair_preserves_selected_unselected_and_distant_pixels() {
-    let (device, queue, _renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _renderer) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let mut bits = vec![false; 16 * 16];
     bits[0] = true;
@@ -239,7 +239,7 @@ fn failed_edge_repairs_fall_back_inside_rotated_and_exterior_footprints() {
         frame_raster::FrameRaster,
         geometry::{Composition, FramePoint},
     };
-    let (device, queue, _renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _renderer) = crate::photographic::test_support::render_context();
     for policy in [Policy::Materialized, Policy::Composed] {
         let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
         let plate = source(Arc::new(Plate(Default::default())));
@@ -346,7 +346,7 @@ fn failed_edge_repairs_fall_back_inside_rotated_and_exterior_footprints() {
 #[test]
 fn failed_donor_is_local_to_its_repair_even_when_an_enclosing_read_covers_it() {
     use crate::{crop::Crop, frame_raster::FrameRaster, geometry::Composition};
-    let (device, queue, _renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _renderer) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let repaired = repair([2, 12], [30, 20]);
     let input = base(Default::default());
@@ -458,7 +458,7 @@ fn a_required_natural_heal_can_be_hoisted_without_deferring_the_whole_reconstruc
 
 #[test]
 fn a_repair_donor_reads_unrepaired_neutral_not_an_earlier_healed_sibling() {
-    let (device, queue, _renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _renderer) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let mut second = repair([64, 32], [-32, 0]);
     second.id = RepairId(2);

@@ -7,8 +7,8 @@ mod render_fixture;
 use antitone::{
     frame_raster::FrameRaster,
     geometry::{Composition, SourceRegion},
-    gpu::parameters::ProcessingParameters,
     gpu_scopes::{GpuScopes, ScopePaint},
+    photographic::parameters::ProcessingParameters,
     rendering::OutputTarget,
     scopes::{self, PLANE_LEN, Plot, Settings},
     viewer::GpuImage,

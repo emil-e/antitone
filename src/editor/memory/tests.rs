@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    gpu::evaluation::{ImageValue, RetainedKey},
+    evaluation::{ImageValue, RetainedKey},
 };
 use std::{sync::Arc, time::Duration};
 

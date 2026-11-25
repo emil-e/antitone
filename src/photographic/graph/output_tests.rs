@@ -1,5 +1,5 @@
 use crate::{
-    Error, gpu::evaluation::*, photographic::graph::display_output, photographic::stages::look,
+    Error, evaluation::*, photographic::graph::display_output, photographic::stages::look,
 };
 use crate::{
     looks::{LookAsset, LookOrigin, Lut3D},
@@ -15,14 +15,14 @@ fn render_reference(
     target: OutputTarget,
     luts: &crate::looks::LutChain,
     destination: &wgpu::Texture,
-) -> Result<crate::gpu::recorded_image::Texture, Error> {
+) -> Result<crate::evaluation::recorded_image::Texture, Error> {
     let endpoint = display_output(
         source.definition().clone(),
         luts,
         &renderer.looks,
         renderer.drt.get(target),
     )?;
-    crate::gpu::recorded_image::Texture::new(
+    crate::evaluation::recorded_image::Texture::new(
         renderer.evaluation(),
         device,
         source,
@@ -54,7 +54,7 @@ fn frontier_baked_luts_compose_both_targets() {
             ]
         })
         .collect();
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let input = buffer(&device, &pixels);
     for negative in [
         None,
@@ -350,7 +350,7 @@ fn legacy(
 
 #[test]
 fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without_a_delivery_copy() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let pixels = [
         [-0.04, 0.18, 2., 8.],
         [0., 0., 0., 8.],
@@ -494,7 +494,7 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
 
 #[test]
 fn resident_recording_reads_updated_input_and_survives_owner_retirement() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let first = [[0.18f32, 0.2, 0.3, 8.]];
     let next = [[0.75f32, 0.9, 1.1, 8.]];
     let input = buffer(&device, &first);
@@ -564,7 +564,7 @@ fn look_assets() -> Vec<Arc<LookAsset>> {
 }
 
 fn compare_sample_flags(look: Arc<LookAsset>) {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let source = buffer(
         &device,
         &[
@@ -639,7 +639,7 @@ fn named_look_values_keep_logical_identity_and_reuse_cached_pixels() {
             Ok(vec![[0.18, 0.2, 0.3, 8.]])
         }
     }
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let other =
         pollster::block_on(crate::render_fixture::RenderFixture::new(&device, &queue)).unwrap();
     let domain = Domain {
@@ -655,17 +655,17 @@ fn named_look_values_keep_logical_identity_and_reuse_cached_pixels() {
         fn key(&self) -> Option<RetainedKey> {
             Some(RetainedKey::new(Self))
         }
-        fn reads(&self, region: CellRegion) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
-            Ok(vec![crate::gpu::evaluation::Read::new(0, region)])
+        fn reads(&self, region: CellRegion) -> Result<Vec<crate::evaluation::Read>, Error> {
+            Ok(vec![crate::evaluation::Read::new(0, region)])
         }
         fn calculation(
             self: std::sync::Arc<Self>,
-            inputs: &[crate::gpu::evaluation::value::Value],
+            inputs: &[crate::evaluation::value::Value],
             domain: Domain,
             output: CellRegion,
-            _budget: crate::gpu::evaluation::Tiling,
-        ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
-            let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+            _budget: crate::evaluation::Tiling,
+        ) -> Result<Option<crate::evaluation::value::Calculation>, Error> {
+            let inputs = crate::evaluation::value::Calculation::references(inputs);
             let function = Function::new(
                 "fn nonfinite(p: vec4f, xy: vec2f) -> vec4f { return vec4f(bitcast<f32>(0x7fc00000u), p.gba); }",
                 "nonfinite",
@@ -836,11 +836,11 @@ fn named_look_values_keep_logical_identity_and_reuse_cached_pixels() {
 
 #[test]
 fn float_attachment_preserves_scene_linear_rgb_and_converts_coverage_to_alpha() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let pixels = [[-0.125, 0.25, 3.5, 8.], [1.5, -0.25, 0.5, 9.]];
     let source = supplied(&buffer(&device, &pixels), [2, 1, 8, 0]);
     let output = texture(&device, [2, 1], wgpu::TextureFormat::Rgba32Float);
-    let recording = crate::gpu::recorded_image::Texture::new(
+    let recording = crate::evaluation::recorded_image::Texture::new(
         renderer.evaluation(),
         &device,
         source.clone(),
@@ -859,7 +859,7 @@ fn float_attachment_preserves_scene_linear_rgb_and_converts_coverage_to_alpha() 
 
 #[test]
 fn display_attachment_admission_checks_format_extent_and_complete_grid() {
-    let (device, _queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, _queue, renderer) = crate::photographic::test_support::render_context();
     let domain = Domain {
         bounds: Some([0, 0, 3, 2].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
@@ -933,7 +933,7 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
 fn two_lut_operations_apply_in_declared_order_with_independent_bypass_and_shared_resources() {
     use crate::looks::LutChain;
     use glam::DVec3;
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let make = |swap: bool| {
         let mut nodes = Vec::new();
         for b in [-0.5, 1.] {

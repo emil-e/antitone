@@ -13,10 +13,7 @@ fn verify(frame: FrameRaster, exterior: bool) {
     let mut grid = Grid::from_frame(frame);
     grid.coverage = 8;
     let output = Domain {
-        bounds: Some(crate::gpu::evaluation::CellRegion::new(
-            [0, 0],
-            frame.output,
-        )),
+        bounds: Some(crate::evaluation::CellRegion::new([0, 0], frame.output)),
         grid,
     };
     let node = reconstruct(borrowed_input(input), output).unwrap();

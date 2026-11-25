@@ -1,12 +1,12 @@
 use super::*;
 use crate::{
     dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
-    gpu::test_inputs::AuthoredPhotograph,
+    photographic::test_inputs::AuthoredPhotograph,
 };
 
 #[test]
 fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once() {
-    let (device, _, _) = crate::gpu::test_support::render_context();
+    let (device, _, _) = crate::photographic::test_support::render_context();
     let area: crate::geometry::SourceRegion = [0, 0, 64, 64].into();
     let values = vec![[20000., 25000., 30000., 0.]; 64 * 64];
     let source = || {
@@ -14,7 +14,7 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
             &device,
             &values,
             glam::DMat3::IDENTITY,
-            Some(crate::gpu::source::SourceGeometry::new([0, 0, 64, 64], [64; 2]).unwrap()),
+            Some(crate::acquisition::camera::SourceGeometry::new([0, 0, 64, 64], [64; 2]).unwrap()),
         )
         .unwrap()
     };
@@ -55,7 +55,7 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
             &device.limits(),
             camera,
             &input,
-            crate::gpu::raster::Raster::region(area, [64; 2]),
+            crate::acquisition::raster::Raster::region(area, [64; 2]),
         )
         .unwrap()
     };
@@ -142,7 +142,7 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
         &device.limits(),
         &camera,
         &different,
-        crate::gpu::raster::Raster::region(area, [64; 2]),
+        crate::acquisition::raster::Raster::region(area, [64; 2]),
     )
     .unwrap();
     let conflicting = crate::photographic::stages::healing::operation::compose_images(

@@ -3,13 +3,13 @@ use super::*;
 use crate::frame_raster::FrameRaster;
 use crate::geometry::Composition;
 use crate::geometry::FramePoint;
-use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::RenderedView;
-use crate::gpu::view::ViewKernels;
 use crate::photographic::graph::view_source::SourceRequest;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::processing::Calibration;
 use crate::processing::InputSettings;
 use crate::rendering::OutputTarget;
+use crate::viewer::view::RenderedView;
+use crate::viewer::view::ViewKernels;
 use glam::DVec3;
 
 #[path = "../../../../tests/support/sony_ycc_fixture.rs"]

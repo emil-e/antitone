@@ -1,8 +1,8 @@
 //! An independently supplied finite-neighbourhood component used by composition tests.
 
-use crate::gpu::evaluation::numeric_fixture::NumericKey;
-use crate::gpu::evaluation::{self, Domain, Operation, value};
-use crate::{Error, gpu::evaluation::CellRegion as Rect, processing_support::Support};
+use crate::evaluation::numeric_fixture::NumericKey;
+use crate::evaluation::{self, Domain, Operation, value};
+use crate::{Error, evaluation::CellRegion as Rect, processing_support::Support};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NeighbourEffect {
@@ -56,8 +56,8 @@ impl Operation for Neighbour {
         )))
     }
 
-    fn reads(&self, output: Rect) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
-        Ok(vec![crate::gpu::evaluation::Read::new(
+    fn reads(&self, output: Rect) -> Result<Vec<crate::evaluation::Read>, Error> {
+        Ok(vec![crate::evaluation::Read::new(
             0,
             output.expanded(self.margin.0, self.domain.bounds)?,
         )])
@@ -65,12 +65,12 @@ impl Operation for Neighbour {
 
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: Rect,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         let read = output.expanded(self.margin.0, self.domain.bounds)?;
         let bounds = self.domain.bounds.unwrap_or(read);
         value::Calculation::new(

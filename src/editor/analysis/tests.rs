@@ -1,6 +1,6 @@
 use super::*;
-use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::parameters::ProcessingParameters;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::project::Development;
 use crate::project::SourceDevelopment;
 use glam::DMat3;

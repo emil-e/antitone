@@ -4,8 +4,8 @@ use crate::editor::OutputTarget;
 use crate::editor::ViewRequest;
 use crate::editor::source_loading;
 use crate::editor::tests::fixture;
-use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::parameters::ProcessingParameters;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use std::time::{Duration, Instant};
 
 fn editor() -> (Editor, source_loading::SourceLoader) {

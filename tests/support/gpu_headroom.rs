@@ -1,9 +1,10 @@
 use super::*;
-use antitone::gpu::parameters::ProcessingParameters;
-use antitone::gpu::source::ProcessingSource;
+use antitone::acquisition::camera::ProcessingSource;
+use antitone::photographic::parameters::ProcessingParameters;
 use antitone::{
+    acquisition::camera::SourceGeometry,
     flat_field::FlatField,
-    gpu::{flat::GpuFlatField, source::SourceGeometry},
+    photographic::stages::flat_field::GpuFlatField,
     processing::{DEFAULT_GAMMA, InputSettings, MAX_CAMERA_SOURCE_CODE, Response, RollSettings},
 };
 use std::sync::Arc;
@@ -82,7 +83,7 @@ fn headroom_survives_gpu_inspection_inversion_and_residual_gains_without_lut_ind
                 let photo = AdjustmentLayerSettings::default();
                 let parameters =
                     ProcessingParameters::interpret(input, roll, DMat3::IDENTITY).unwrap();
-                let grade = antitone::gpu::test_inputs::AuthoredPhotograph::new(
+                let grade = antitone::photographic::test_inputs::AuthoredPhotograph::new(
                     &device.limits(),
                     input,
                     roll,

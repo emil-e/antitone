@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::evaluation::numeric_fixture::NumericKey;
+use crate::evaluation::numeric_fixture::NumericKey;
 mod assembly;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -52,12 +52,12 @@ impl Operation for Normalize {
     }
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, crate::Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         let function = Function::new(
             "fn normalize(p:vec4f,at:vec2f)->vec4f {return vec4f(p.rgb / 10000.,p.w);}",
             "normalize",
@@ -113,7 +113,7 @@ fn read_frame(
 
 #[test]
 fn repairing_a_reduced_rotated_view_does_not_materialize_a_source_sized_intermediate() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     for angle in [0., 0.2] {
         let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
         let gate = queue.clone();
@@ -243,12 +243,12 @@ impl Operation for WideBase {
     }
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, crate::Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         let mut code = String::new();
         let mut body = String::from("var pixel = p;\n");
         for slot in 0..self.0 {
@@ -281,7 +281,7 @@ impl Operation for WideBase {
 
 #[test]
 fn a_wide_base_retains_the_repair_grade_and_window_binding_fallbacks() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     // Base sampling fits alone; adding packed repair arguments exceeds device capacity.
     let auxiliary = device.limits().max_storage_buffers_per_shader_stage - 2;
     assert!(auxiliary + 4 > device.limits().max_storage_buffers_per_shader_stage);
@@ -406,12 +406,12 @@ impl Operation for Tint {
     }
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, crate::Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         let function=Function::new(
             "@group(0) @binding(6) var<uniform> private_color:vec4f;\n fn private_tint(p:vec4f,at:vec2f)->vec4f {return vec4f(private_color.rgb,p.w);}",
             "private_tint"
@@ -427,7 +427,7 @@ impl Operation for Tint {
 }
 #[test]
 fn replacement_arguments_keep_private_captures_masks_and_original_metadata_separate() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let base = source(Arc::new(Plate(Arc::new(Mutex::new(Vec::new())))));
     let values = [[-2., 3., 0.125, 0.], [4., -0.25, 0.5, 0.]];

@@ -263,7 +263,7 @@ pub(super) fn recipe_grading(
     }
     // Preserve admission of the combined input/Roll constants used by photographic controls.
     let program = InputTransform::from_recipe(&recipe.neutral)?;
-    crate::gpu::parameters::ProcessingParameters::interpret(
+    crate::photographic::parameters::ProcessingParameters::interpret(
         program.input(),
         recipe.roll,
         program.matrix(),
@@ -351,7 +351,7 @@ pub(crate) fn preview(
             "physical-view source authority differs from originals".into(),
         ));
     }
-    let source = crate::gpu::source::camera_source(scan)?;
+    let source = crate::acquisition::camera::camera_source(scan)?;
     if frame.composition.area() != source.domain().finite()?.source()? {
         return Err(Error::InvalidParameter(
             "frame belongs to a different source grid",
@@ -365,7 +365,7 @@ fn sampled_raster(
     source: &ProcessingSource,
     recipe: &ImageRecipe,
     layout: [u32; 2],
-) -> Result<crate::gpu::raster::Raster, Error> {
+) -> Result<crate::acquisition::raster::Raster, Error> {
     if source.geometry().is_none()
         && (recipe
             .grain

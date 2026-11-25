@@ -1,7 +1,7 @@
 use super::*;
 use crate::editor::tests::UiFixture;
-use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::parameters::ProcessingParameters;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 
 fn source_input() -> source::Context {
     source::Context {

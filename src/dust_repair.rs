@@ -32,6 +32,14 @@ pub(crate) const AUTOMATIC_PADDING: u32 = 128 + 4;
 
 mod base_image;
 pub(crate) mod context;
+#[cfg(all(
+    feature = "gpu",
+    feature = "raw",
+    feature = "render",
+    feature = "project",
+    any(feature = "editor", feature = "export")
+))]
+pub(crate) mod image_source;
 mod matching;
 mod support;
 pub use crate::photographic::stages::healing::{EvaluatedRepair, evaluate, heal_ranked};

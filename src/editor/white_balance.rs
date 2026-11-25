@@ -6,8 +6,8 @@ use super::{
     ui,
 };
 use crate::{
-    Error, adjustment_layers::AdjustmentLayerSnapshot, coverage::Coverage, gpu::flat::GpuFlatField,
-    scan::Scan,
+    Error, adjustment_layers::AdjustmentLayerSnapshot, coverage::Coverage,
+    photographic::stages::flat_field::GpuFlatField, scan::Scan,
 };
 #[cfg(test)]
 use crate::{

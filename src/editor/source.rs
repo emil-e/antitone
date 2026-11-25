@@ -142,7 +142,7 @@ pub(super) struct Developed {
 #[derive(Clone)]
 pub(super) struct Services {
     pub developments: source_loading::SourceLoader,
-    pub evaluation: crate::gpu::evaluation::Context,
+    pub evaluation: crate::evaluation::Context,
     pub looks: Arc<crate::photographic::stages::look::Looks>,
     pub display: Arc<super::display::Warmup>,
     pub device: wgpu::Device,
@@ -366,7 +366,7 @@ impl Request {
 impl Developed {
     pub fn prepare_gpu(
         self,
-        evaluation: crate::gpu::evaluation::Context,
+        evaluation: crate::evaluation::Context,
         looks: Arc<crate::photographic::stages::look::Looks>,
         display: &super::display::Warmup,
         cancelled: &dyn Fn() -> bool,
@@ -394,12 +394,12 @@ impl Developed {
             [width, height],
             &pixels,
             scan.camera_to_ap1,
-            crate::gpu::source::SourceGeometry::new(
+            crate::acquisition::camera::SourceGeometry::new(
                 [a.x, a.y, a.width, a.height],
                 [width, height],
             )?,
         )?
-        .with_identity(crate::gpu::source::identity::Identity::camera(
+        .with_identity(crate::acquisition::camera::identity::Identity::camera(
             scan.source().identity(),
         ))?;
         let images_seconds = tick.elapsed().as_secs_f64();

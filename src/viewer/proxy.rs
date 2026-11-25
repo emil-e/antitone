@@ -1,9 +1,9 @@
 //! Immutable camera-proxy input; presentation products own their complete endpoints.
 use super::*;
-use crate::gpu::source::ProcessingSource;
-use crate::gpu::source::SourceGeometry;
+use crate::acquisition::camera::ProcessingSource;
+use crate::acquisition::camera::SourceGeometry;
 #[cfg(test)]
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 #[cfg(test)]
 mod tests;
 
@@ -16,7 +16,7 @@ struct ProxyState {
     targets: Arc<drt::Targets>,
     source: Arc<ProcessingSource>,
     #[cfg(feature = "editor")]
-    identity: Option<crate::gpu::source::identity::Identity>,
+    identity: Option<crate::acquisition::camera::identity::Identity>,
     size: [u32; 2],
 }
 
@@ -80,7 +80,7 @@ impl GpuProxy {
     #[cfg(feature = "editor")]
     pub(crate) fn with_identity(
         mut self,
-        identity: crate::gpu::source::identity::Identity,
+        identity: crate::acquisition::camera::identity::Identity,
     ) -> Result<Self, Error> {
         let state = Arc::get_mut(&mut self.0).ok_or(Error::InvalidParameter(
             "proxy identity must be captured before sharing",
@@ -107,11 +107,11 @@ impl GpuProxy {
     pub(crate) fn view_source(
         &self,
         queue: &crate::gpu::submission::Queue,
-        kernels: Arc<crate::gpu::view::ViewKernels>,
+        kernels: Arc<crate::viewer::view::ViewKernels>,
         input: &AuthoredPhotograph,
         spec: crate::photographic::graph::view_source::SourceRequest,
-    ) -> Result<Arc<crate::gpu::view::ViewImage>, Error> {
-        crate::gpu::view::ViewImage::from_processing_with_display(
+    ) -> Result<Arc<crate::viewer::view::ViewImage>, Error> {
+        crate::viewer::view::ViewImage::from_processing_with_display(
             self.0.evaluation.clone(),
             (self.0.looks.clone(), self.0.targets.clone()),
             queue,
@@ -119,7 +119,9 @@ impl GpuProxy {
             self.0.source.clone(),
             input,
             spec.with_identity(self.0.identity.clone().unwrap_or_else(|| {
-                crate::gpu::source::identity::Identity::Resident(Arc::downgrade(&self.0.source))
+                crate::acquisition::camera::identity::Identity::Resident(Arc::downgrade(
+                    &self.0.source,
+                ))
             })),
         )
     }
@@ -127,13 +129,13 @@ impl GpuProxy {
     #[cfg(feature = "editor")]
     pub(crate) fn preview(
         &self,
-        kernels: Arc<crate::gpu::view::ViewKernels>,
+        kernels: Arc<crate::viewer::view::ViewKernels>,
         request: &crate::photographic::graph::request::PhotographRequest,
-        field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
+        field: Option<Arc<crate::photographic::stages::flat_field::GpuFlatField>>,
         spec: crate::photographic::graph::view_source::SourceRequest,
         target: OutputTarget,
-    ) -> Result<crate::gpu::view::rendering::Request, Error> {
-        crate::gpu::view::rendering::Request::camera_proxy(
+    ) -> Result<crate::viewer::view::rendering::Request, Error> {
+        crate::viewer::view::rendering::Request::camera_proxy(
             self.0.evaluation.clone(),
             &self.0.looks,
             self.0.targets.get(target),
@@ -142,7 +144,9 @@ impl GpuProxy {
             field,
             request,
             spec.capture(self.0.identity.clone().unwrap_or_else(|| {
-                crate::gpu::source::identity::Identity::Resident(Arc::downgrade(&self.0.source))
+                crate::acquisition::camera::identity::Identity::Resident(Arc::downgrade(
+                    &self.0.source,
+                ))
             }))?,
         )
     }

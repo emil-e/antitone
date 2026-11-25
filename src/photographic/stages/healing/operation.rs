@@ -1,5 +1,5 @@
 //! Authored healing is a nonlocal CPU image calculation over unrepaired neutral pixels.
-use crate::gpu::evaluation::*;
+use crate::evaluation::*;
 use crate::{
     Error,
     dust_repair::{Ap1, BaseImage, Execution, REPAIR_CONTRACT, Repair, SupportMask},
@@ -270,7 +270,7 @@ impl Operation for Compose {
     fn describe(
         &self,
         output: Output,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         requested: &[CellRegion],
     ) -> Result<Output, Error> {
         let selected: Vec<_> = self
@@ -315,12 +315,12 @@ impl Operation for Compose {
     }
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         self.express(&inputs, domain, output).map(Some)
     }
 }

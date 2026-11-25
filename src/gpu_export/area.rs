@@ -2,7 +2,7 @@
 #[cfg(test)]
 pub(super) use super::authored_area as write;
 use super::*;
-use crate::gpu::execution::{self, SampleEncoding};
+use crate::rendering::execution::{self, SampleEncoding};
 
 pub(super) fn sample_encoding(plan: Plan) -> SampleEncoding {
     match (plan.target(), plan.format().layout()) {

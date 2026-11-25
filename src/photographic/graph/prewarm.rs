@@ -1,9 +1,9 @@
 use super::*;
-use crate::gpu::evaluation;
-#[cfg(feature = "editor")]
-use crate::gpu::parameters::ProcessingParameters;
 #[cfg(feature = "ui")]
-use crate::gpu::source::ProcessingSource;
+use crate::acquisition::camera::ProcessingSource;
+use crate::evaluation;
+#[cfg(feature = "editor")]
+use crate::photographic::parameters::ProcessingParameters;
 #[cfg(any(feature = "ui", feature = "editor"))]
 use crate::photographic::stages::grading::Grading;
 #[cfg(feature = "ui")]
@@ -35,7 +35,7 @@ pub(crate) fn prewarm_resident(
     let source = ProcessingSource::new(device, &[[0u16; 4]], glam::DMat3::IDENTITY, None)?;
     let camera = resident::codes(
         &source,
-        crate::gpu::raster::Raster::native([0, 0, 1, 1].into()),
+        crate::acquisition::raster::Raster::native([0, 0, 1, 1].into()),
     )?;
     let inspection = resident::inspection(
         camera.clone(),

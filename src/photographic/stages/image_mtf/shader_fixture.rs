@@ -1,7 +1,7 @@
 //! Standalone shader fixture for image-response numerical checks.
 #[cfg(all(test, feature = "editor"))]
 use crate::Error;
-use crate::gpu::raster::Raster;
+use crate::acquisition::raster::Raster;
 
 pub(crate) fn shader() -> String {
     [sample_shader(), include_str!("kernels.wgsl").to_owned()].join("\n")
@@ -9,7 +9,7 @@ pub(crate) fn shader() -> String {
 
 pub(crate) fn sample_shader() -> String {
     [
-        include_str!("../../../gpu/raster.wgsl"),
+        include_str!("../../../acquisition/raster.wgsl"),
         include_str!("bindings.wgsl"),
         include_str!("sampling.wgsl"),
     ]

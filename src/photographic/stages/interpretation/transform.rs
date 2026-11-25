@@ -1,9 +1,11 @@
 //! Captured photographic input transforms and source-inspection interpretation.
 
 #[cfg(feature = "editor")]
-use crate::gpu::evaluation::{Function, Value, value};
-use crate::gpu::{parameters::ProcessingParameters, source::ProcessingSource};
+use crate::evaluation::{Function, Value, value};
 use crate::{Error, processing::InputSettings};
+use crate::{
+    acquisition::camera::ProcessingSource, photographic::parameters::ProcessingParameters,
+};
 use glam::DMat3;
 
 /// The source viewer's transform over ungraded working light.
@@ -139,13 +141,13 @@ impl InputTransform {
         &self,
         device: &wgpu::Device,
         pixels: &[[f32; 4]],
-        geometry: Option<crate::gpu::source::SourceGeometry>,
+        geometry: Option<crate::acquisition::camera::SourceGeometry>,
     ) -> Result<ProcessingSource, Error> {
         ProcessingSource::new_continuous(device, pixels, self.matrix, geometry)
     }
 
     pub(crate) fn neutral_parameters(&self) -> Result<ProcessingParameters, Error> {
-        crate::gpu::parameters::input_parameters(self.input, self.matrix)
+        crate::photographic::parameters::input_parameters(self.input, self.matrix)
     }
 
     #[cfg(feature = "raw")]

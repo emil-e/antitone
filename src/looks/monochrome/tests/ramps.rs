@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    gpu::evaluation::{self, CellRegion, Domain, Grid, Region, Source, Tiling},
+    evaluation::{self, CellRegion, Domain, Grid, Region, Source, Tiling},
     looks::LutChain,
     rendering::OutputTarget,
 };
@@ -24,7 +24,7 @@ impl Source for Ramp {
 
 #[test]
 fn all_materials_keep_neutral_exposure_order_through_both_delivered_targets() {
-    let (_device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let pixels = Arc::new(
         (0..WIDTH)
             .map(|i| {

@@ -114,12 +114,12 @@ impl Operation for Signed {
     }
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, crate::Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         let function = Function::new(
             "fn normalized(p:vec4f,at:vec2f)->vec4f {return vec4f(p.rgb / 10000. * vec3f(1.,-1.,1.),p.w);}",
             "normalized",
@@ -297,7 +297,7 @@ fn exercise(
 
 #[test]
 fn many_tiny_repairs_keep_incremental_work_bounded_and_restore_every_dust() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     exercise(
         &device,
         &queue,
@@ -313,7 +313,7 @@ fn many_tiny_repairs_keep_incremental_work_bounded_and_restore_every_dust() {
 #[test]
 #[ignore = "1024 incremental heals and rapid-burst captures on a 4096-square source"]
 fn thousand_tiny_repairs_incremental_and_burst_stress() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let photo = DustyPhoto {
         side: 4096,
         across: 32,

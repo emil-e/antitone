@@ -1,7 +1,7 @@
 //! Resident camera-code reads and joint correction/conversion admission.
 
 use crate::Error;
-use crate::gpu::evaluation::*;
+use crate::evaluation::*;
 use crate::photographic::stages::flat_field::GpuFlatField;
 use std::hash::{Hash, Hasher};
 
@@ -15,11 +15,11 @@ pub(super) fn validate_camera_range(
     } else {
         1.
     };
-    crate::gpu::parameters::CameraMatrix::new(matrix * source_gain)?;
+    crate::photographic::parameters::CameraMatrix::new(matrix * source_gain)?;
     if let Some(field) = field {
         field.validate_matrix(matrix, source_gain)?;
     }
-    crate::gpu::parameters::CameraMatrix::new(matrix)?;
+    crate::photographic::parameters::CameraMatrix::new(matrix)?;
     Ok(())
 }
 
@@ -57,11 +57,11 @@ impl Operation for ResidentCamera {
     }
     fn calculation(
         self: std::sync::Arc<Self>,
-        _: &[crate::gpu::evaluation::value::Value],
+        _: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, Error> {
         let (element, value) = if self.continuous {
             ("vec4f", "return resident_codes[index];")
         } else {

@@ -53,7 +53,7 @@ fn native_and_working_identity_use_captured_values_not_uniform_packing() {
 #[test]
 fn repair_dag_provenance_is_described_without_pixels_and_rejects_mixed_interpretations() {
     use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
-    use crate::{gpu::evaluation as e, photographic::stages::healing::operation as definition};
+    use crate::{evaluation as e, photographic::stages::healing::operation as definition};
     struct Unread;
     impl e::Source for Unread {
         fn domain(&self) -> e::Domain {
@@ -231,7 +231,7 @@ fn close(actual: DVec3, expected: DVec3) {
 
 #[test]
 fn original_endpoints_preserve_interpretation_and_order_post_grade_operations() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let context = renderer.evaluation();
     let area = crate::geometry::SourceRegion::from([21, 17, 4, 1]);
     let domain = Domain {
@@ -345,7 +345,7 @@ fn original_endpoints_preserve_interpretation_and_order_post_grade_operations() 
 
 #[test]
 fn filtered_output_keeps_upstream_nodes_and_explicit_reconstruction_order() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let domain = Domain {
         bounds: Some([0, 0, 4, 1].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
@@ -414,7 +414,7 @@ fn filtered_output_keeps_upstream_nodes_and_explicit_reconstruction_order() {
 
 #[test]
 fn recipe_operations_preserve_original_order_and_explicit_view_reconstruction_before_grain() {
-    let input = crate::gpu::evaluation::borrowed_input(Domain {
+    let input = crate::evaluation::borrowed_input(Domain {
         bounds: Some(CellRegion::new([0; 2], [80, 64])),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
     });
@@ -431,7 +431,7 @@ fn recipe_operations_preserve_original_order_and_explicit_view_reconstruction_be
         seed: 17,
         ..Default::default()
     };
-    let mtf = crate::gpu::gaussian::blur(input.clone(), response.image_mtf_sigma).unwrap();
+    let mtf = crate::gaussian::operation::blur(input.clone(), response.image_mtf_sigma).unwrap();
     let halated = halo.compose(mtf).unwrap();
     let original = response.grain().compose(halated.clone(), 17);
     assert!(

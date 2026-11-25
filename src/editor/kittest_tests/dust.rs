@@ -2,17 +2,15 @@ use super::*;
 mod history_tests;
 mod latency;
 
-fn camera_images(
-    editor: &Editor,
-) -> Vec<crate::gpu::evaluation::Image<crate::gpu::evaluation::ImageLayout>> {
+fn camera_images(editor: &Editor) -> Vec<crate::evaluation::Image<crate::evaluation::ImageLayout>> {
     let scan = editor.source_context().unwrap().scan().unwrap();
-    let camera = crate::gpu::source::camera_source(&scan).unwrap();
+    let camera = crate::acquisition::camera::camera_source(&scan).unwrap();
     let services = editor.source_services.as_ref().unwrap();
     let renderer = services.render_fixture().unwrap();
     renderer
         .evaluation()
         .materializations()
-        .ready::<crate::gpu::evaluation::ImageLayout>(camera.identity().unwrap())
+        .ready::<crate::evaluation::ImageLayout>(camera.identity().unwrap())
 }
 use crate::{dust_repair::RepairId, editor::history::Direction};
 

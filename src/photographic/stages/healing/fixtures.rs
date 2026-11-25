@@ -2,7 +2,7 @@
 use crate::{
     Error,
     dust_repair::{EvaluatedRepair, SupportMask},
-    gpu::evaluation::*,
+    evaluation::*,
 };
 use std::sync::Arc;
 

@@ -4,6 +4,8 @@ use crate::{
     Error, frame_raster::FrameRaster, geometry::SourceRegion, processing_support::Support,
 };
 
+#[cfg(feature = "gpu")]
+pub mod camera;
 mod footprints;
 #[cfg(feature = "gpu")]
 mod graph;
@@ -12,6 +14,8 @@ mod layout;
 
 #[cfg(all(test, feature = "gpu"))]
 mod originals;
+#[cfg(feature = "gpu")]
+pub(crate) mod raster;
 pub(crate) mod windows;
 
 pub use footprints::WindowBudget;

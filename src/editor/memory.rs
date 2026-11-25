@@ -41,7 +41,7 @@ pub(super) fn apply_budgets(
     budgets: CacheBudgets,
     sources: &crate::source::SourceCache,
     thumbnails: &mut super::Thumbnails,
-    evaluation: Option<&crate::gpu::evaluation::Context>,
+    evaluation: Option<&crate::evaluation::Context>,
 ) {
     sources.set_budget(budgets.sources as u64);
     let presentation_bytes = thumbnails.apply_budgets(budgets);

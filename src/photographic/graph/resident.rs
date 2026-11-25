@@ -3,10 +3,10 @@
 use super::*;
 use crate::photographic::stages::interpretation::{InputTransform, InspectionView};
 use crate::{
+    acquisition::raster::Raster,
     acquisition::{Plan, Request, Sampling},
     frame_raster::FrameRaster,
     geometry::Composition,
-    gpu::raster::Raster,
 };
 
 pub(crate) fn raster(source: &ProcessingSource, layout: [u32; 2]) -> Result<Raster, Error> {

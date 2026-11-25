@@ -1,5 +1,8 @@
 //! Raster support for the shared four-sigma Gaussian kernel.
 
+#[cfg(feature = "gpu")]
+pub mod operation;
+
 pub(crate) const RADIUS_SIGMAS: f32 = 4.;
 
 pub(crate) fn support(sigma: f64, pitch: [f64; 2]) -> [u32; 2] {

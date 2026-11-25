@@ -1,7 +1,7 @@
-use crate::gpu::{
+use crate::{
+    acquisition::raster::{Raster, buffer, uniform},
     evaluation::read_buffer as read,
-    raster::{Raster, buffer, uniform},
-    test_support::render_context,
+    photographic::test_support::render_context,
 };
 use wgpu::util::DeviceExt;
 
@@ -173,7 +173,8 @@ fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_rang
             Ok(image)
         })
     };
-    let prepared = crate::gpu::recorded_image::Prepared::new(&device, &plan, raster).unwrap();
+    let prepared =
+        crate::evaluation::recorded_image::Prepared::new(&device, &plan, raster).unwrap();
     for value in [1e-30_f32, 0.18, 2_f32.powi(80)] {
         let values = vec![[value, -value, 0., 0.]; 256];
         let pixels = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

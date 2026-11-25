@@ -1,19 +1,19 @@
 use super::*;
-use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::source::SourceGeometry;
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::acquisition::camera::SourceGeometry;
 use crate::photographic::graph::view_source::SourceRequest;
+use crate::photographic::parameters::ProcessingParameters;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 #[cfg(feature = "editor")]
 use crate::render_fixture::RenderFixture;
 
 #[cfg(feature = "editor")]
 #[test]
 fn proxy_products_share_immutable_input_without_retaining_each_other_or_the_proxy() {
-    use crate::gpu::view::{RenderedView, ViewKernels};
     use crate::photographic::graph::{
         authoring::shares_resident_camera, request::PhotographRequest,
     };
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    use crate::viewer::view::{RenderedView, ViewKernels};
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
     let size = [32, 16];
     let proxy = GpuProxy::new(
@@ -94,8 +94,8 @@ fn proxy_products_share_immutable_input_without_retaining_each_other_or_the_prox
 #[test]
 fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    let kernels = pollster::block_on(crate::gpu::view::ViewKernels::new(&device)).unwrap();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
+    let kernels = pollster::block_on(crate::viewer::view::ViewKernels::new(&device)).unwrap();
     let proxy = GpuProxy::new(
         renderer.evaluation().clone(),
         renderer.looks().clone(),
@@ -155,7 +155,7 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
     assert!(
         crate::photographic::stages::interpretation::has_filtered_inspection(&source.definition)
     );
-    let rendered = crate::gpu::view::RenderedView::from_image(
+    let rendered = crate::viewer::view::RenderedView::from_image(
         &device,
         source,
         crate::photographic::graph::request::PhotographRequest::Fixture(valid),
@@ -184,7 +184,9 @@ fn proxy_view_source_accepts_a_cropped_frame_output() {
             .await
             .unwrap();
         let renderer = RenderFixture::new(&device, &queue).await.unwrap();
-        let kernels = crate::gpu::view::ViewKernels::new(&device).await.unwrap();
+        let kernels = crate::viewer::view::ViewKernels::new(&device)
+            .await
+            .unwrap();
         let size = [32, 16];
         let proxy = GpuProxy::new_continuous(
             renderer.evaluation().clone(),

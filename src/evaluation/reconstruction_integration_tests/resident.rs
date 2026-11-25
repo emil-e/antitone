@@ -1,0 +1,162 @@
+use super::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[test]
+fn a_long_resident_reduction_stays_phased_instead_of_building_a_large_recording() {
+    let size = [512, 2560];
+    let (input, reads) = fixture(size, vec![[-2., 3., 10_000., 8.]; 512 * 2560]);
+    let (device, queue, _) = crate::photographic::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let scope = context.materializations();
+    scope.set_retention_enabled(false);
+    let source_region = input.domain().finite().unwrap();
+    let resident = pollster::block_on(
+        context
+            .materialize(
+                &queue,
+                &scope,
+                context
+                    .request(
+                        input.clone(),
+                        Region {
+                            bounds: source_region,
+                            grid: input.domain().grid,
+                        },
+                        Tiling { tile: size },
+                    )
+                    .unwrap(),
+                ImageFormat::Rgba32Float,
+                ImageBacking::Buffer,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    reads.lock().unwrap().clear();
+    let mapping = Mapping {
+        start: [0.; 2],
+        axes: [[512., 0.], [0., 2560.]],
+    };
+    let region = Rect::new([0, 0], [1, 1]);
+    let root = reconstruct_mapped(input, output(mapping, region), mapping).unwrap();
+    let request = context
+        .request(
+            root.clone(),
+            Region {
+                bounds: region,
+                grid: root.domain().grid,
+            },
+            Tiling { tile: [1, 1] },
+        )
+        .unwrap()
+        .with_materializations(scope);
+    let plan = request.plans().next().unwrap().unwrap();
+    assert!(
+        plan.requires_production(&root).unwrap(),
+        "resident storage must not turn a long phased unit into an unbounded recording"
+    );
+    assert!(reads.lock().unwrap().is_empty());
+    let work = context.prepare_image(request).unwrap();
+    assert!(!work.can_record());
+    let image = context.produce_prepared(&queue, work, || false).unwrap();
+    assert_eq!(
+        crate::evaluation::read_buffer(&device, &queue, image.as_buffer().unwrap()),
+        vec![[-2., 3., 10_000., 8.]]
+    );
+    assert!(
+        reads.lock().unwrap().is_empty(),
+        "phased execution still reuses the resident source"
+    );
+    drop(resident);
+}
+
+#[test]
+fn related_small_reconstructions_keep_resident_callable_execution() {
+    let (input, reads) = fixture(
+        [128, 64],
+        (0..128 * 64)
+            .map(|i| [(i % 128) as f32, (i / 128) as f32 - 10., -4., 1.])
+            .collect(),
+    );
+    let (device, queue, _) = crate::photographic::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let scope = context.test_materializations(false);
+    let budget = Tiling { tile: [128, 64] };
+    let resident = pollster::block_on(
+        context
+            .materialize(
+                &queue,
+                &scope,
+                context
+                    .request(
+                        input.clone(),
+                        Region {
+                            bounds: input.domain().finite().unwrap(),
+                            grid: input.domain().grid,
+                        },
+                        budget,
+                    )
+                    .unwrap(),
+                ImageFormat::Rgba32Float,
+                ImageBacking::Buffer,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    reads.lock().unwrap().clear();
+    let mapping = Mapping {
+        start: [0.; 2],
+        axes: [[2., 0.], [0., 2.]],
+    };
+    let evaluations = [[2, 2], [3, 1]]
+        .map(|size| {
+            let region = Rect::new([0, 0], size);
+            let root = reconstruct_mapped(input.clone(), output(mapping, region), mapping).unwrap();
+            context
+                .request(
+                    root.clone(),
+                    Region {
+                        bounds: region,
+                        grid: root.domain().grid,
+                    },
+                    budget,
+                )
+                .unwrap()
+        })
+        .to_vec();
+    let count = Arc::new(AtomicUsize::new(0));
+    let observed = count.clone();
+    let gate = queue.clone();
+    gate.observe_submissions(Arc::new(move || {
+        observed.fetch_add(1, Ordering::Relaxed);
+    }));
+    let images = pollster::block_on(futures_util::future::try_join_all(
+        context
+            .materialize_many(&queue, &scope, evaluations)
+            .unwrap(),
+    ))
+    .unwrap();
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        2,
+        "one fused output submission per root; resident inputs need no separate transfer or accumulation submissions"
+    );
+    assert!(reads.lock().unwrap().is_empty());
+    for (image, width) in images.iter().zip([2, 3]) {
+        for (i, pixel) in
+            crate::evaluation::read_buffer(&device, &queue, image.as_buffer().unwrap())
+                .iter()
+                .enumerate()
+        {
+            assert_eq!(
+                *pixel,
+                [
+                    2. * (i % width) as f32 + 0.5,
+                    2. * (i / width) as f32 - 9.5,
+                    -4.,
+                    9.
+                ]
+            );
+        }
+    }
+    drop(resident);
+}

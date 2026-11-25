@@ -1,18 +1,20 @@
 use crate::Error;
+use crate::acquisition::camera::ProcessingSource;
+use crate::acquisition::camera::SourceGeometry;
 use crate::geometry::TextureMapping;
 use crate::gpu::allocation::DeviceAllocationExt;
-use crate::gpu::source::ProcessingSource;
-use crate::gpu::source::SourceGeometry;
-#[cfg(test)]
-use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::{evaluation, parameters::ProcessingParameters};
 use crate::photographic::stages::{display_rendering as drt, look::Looks};
+#[cfg(test)]
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::rendering::OutputTarget;
+use crate::{evaluation, photographic::parameters::ProcessingParameters};
 use glam::DMat3;
 use std::sync::Arc;
 mod calculation;
 mod presentation;
 mod proxy;
+#[cfg(feature = "editor")]
+pub(crate) mod view;
 pub use presentation::{Draw, Presentation};
 pub(crate) use proxy::GpuProxy;
 #[cfg(test)]
@@ -26,9 +28,9 @@ struct ImageProcessing {
     transform: drt::Target,
     source: Arc<ProcessingSource>,
     working: wgpu::Buffer,
-    recording: std::sync::Mutex<Option<crate::gpu::recorded_image::Texture>>,
-    camera: std::sync::Mutex<Option<crate::gpu::evaluation::Value>>,
-    last_calculation: std::sync::Mutex<Option<crate::gpu::evaluation::Value>>,
+    recording: std::sync::Mutex<Option<crate::evaluation::recorded_image::Texture>>,
+    camera: std::sync::Mutex<Option<crate::evaluation::Value>>,
+    last_calculation: std::sync::Mutex<Option<crate::evaluation::Value>>,
 }
 
 pub struct GpuImage {
@@ -227,7 +229,7 @@ impl GpuImage {
                 asset.lut(),
             )?;
         }
-        crate::gpu::execution::raster::resident_plan(&processing.source, input)?;
+        crate::rendering::execution::raster::resident_plan(&processing.source, input)?;
         Ok(())
     }
 
@@ -287,12 +289,12 @@ impl GpuImage {
 pub struct ImagePaint {
     #[cfg(feature = "editor")]
     rendered: Option<(
-        Arc<crate::gpu::view::RenderedView>,
+        Arc<crate::viewer::view::RenderedView>,
         crate::gpu::submission::Queue,
         egui::Context,
     )>,
     image: Arc<GpuImage>,
-    calculation: Option<crate::gpu::evaluation::Value>,
+    calculation: Option<crate::evaluation::Value>,
     luts: crate::looks::LutChain,
     draw: Draw,
 }
@@ -301,7 +303,7 @@ impl ImagePaint {
     #[cfg(feature = "editor")]
     pub(crate) fn rendered(
         presentation: &Presentation,
-        view: Arc<crate::gpu::view::RenderedView>,
+        view: Arc<crate::viewer::view::RenderedView>,
         uv: TextureMapping,
         queue: crate::gpu::submission::Queue,
         context: egui::Context,
@@ -313,7 +315,7 @@ impl ImagePaint {
     #[cfg(feature = "editor")]
     pub(crate) fn retained(
         presentation: &Presentation,
-        view: Arc<crate::gpu::view::RenderedView>,
+        view: Arc<crate::viewer::view::RenderedView>,
         queue: crate::gpu::submission::Queue,
         context: egui::Context,
     ) -> Result<Self, Error> {
@@ -329,7 +331,7 @@ impl ImagePaint {
 
     #[cfg(feature = "editor")]
     fn from_rendered(
-        view: Arc<crate::gpu::view::RenderedView>,
+        view: Arc<crate::viewer::view::RenderedView>,
         draw: Draw,
         queue: crate::gpu::submission::Queue,
         context: egui::Context,
@@ -346,7 +348,7 @@ impl ImagePaint {
     pub fn with_calculation(
         presentation: &Presentation,
         image: Arc<GpuImage>,
-        calculation: Option<crate::gpu::evaluation::Value>,
+        calculation: Option<crate::evaluation::Value>,
         luts: crate::looks::LutChain,
         uv: impl Into<TextureMapping>,
     ) -> Result<Self, Error> {
@@ -400,7 +402,7 @@ impl ImagePaint {
     #[cfg(feature = "editor")]
     pub(crate) fn displayed(
         &self,
-    ) -> Option<(Arc<crate::gpu::view::RenderedView>, TextureMapping)> {
+    ) -> Option<(Arc<crate::viewer::view::RenderedView>, TextureMapping)> {
         self.rendered
             .as_ref()
             .map(|(view, _, _)| (view.clone(), self.draw.mapping()))

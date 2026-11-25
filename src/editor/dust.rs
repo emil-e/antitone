@@ -2049,7 +2049,7 @@ fn search_pixels(
         .gpu
         .as_ref()
         .ok_or_else(|| crate::Error::Gpu("repair image-query services unavailable".into()))?;
-    let mut source = crate::gpu::repair_source::Source::from_recipe(
+    let mut source = crate::dust_repair::image_source::Source::from_recipe(
         input.context.correction.gpu()?,
         evaluation,
         queue,

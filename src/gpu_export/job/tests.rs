@@ -8,7 +8,7 @@ fn fixture_render(format: Format, renderer: &crate::render_fixture::RenderFixtur
 }
 use crate::{
     dust_repair::{RepairOrigin, SupportMask},
-    gpu::test_inputs::AuthoredPhotograph,
+    photographic::test_inputs::AuthoredPhotograph,
     project::{Development, Project, Source, SourceDevelopment, SourceId},
 };
 mod cancellation;
@@ -118,11 +118,10 @@ fn calibrated_neutral_readout_matches_an_ordinary_finite_source_sample() {
         "this local sample exercises ordinary HDR, not arithmetic saturation"
     );
 
-    let field = scan
-        .flat_field()
-        .cloned()
-        .map(|map| Arc::new(crate::gpu::flat::GpuFlatField::new(&device, map).unwrap()));
-    let mut local_source = crate::gpu::repair_source::Source::from_recipe(
+    let field = scan.flat_field().cloned().map(|map| {
+        Arc::new(crate::photographic::stages::flat_field::GpuFlatField::new(&device, map).unwrap())
+    });
+    let mut local_source = crate::dust_repair::image_source::Source::from_recipe(
         field,
         renderer.evaluation(),
         &queue,
@@ -148,11 +147,11 @@ fn repair_demand(
     recipe: &crate::image_recipe::ImageRecipe,
     device: &wgpu::Device,
     index: usize,
-) -> Vec<crate::gpu::evaluation::CellRegion> {
-    use crate::gpu::evaluation::{CellRegion, Domain, Grid, Tiling};
+) -> Vec<crate::evaluation::CellRegion> {
+    use crate::evaluation::{CellRegion, Domain, Grid, Tiling};
     let photo = crate::photographic::graph::authoring::PhotographTaps::from_recipe(
         &device.limits(),
-        crate::gpu::source::camera_source(scan).unwrap(),
+        crate::acquisition::camera::camera_source(scan).unwrap(),
         None,
         recipe,
     )

@@ -1,10 +1,10 @@
 use super::*;
-use crate::gpu::evaluation::numeric_fixture::NumericKey;
+use crate::evaluation::numeric_fixture::NumericKey;
 use crate::{
-    geometry::{Composition, FramePoint},
-    gpu::evaluation::{
+    evaluation::{
         CellRegion, CpuImage, CpuKernel, Domain, Operation, Read, Tiling, Value, WorkUnits, value,
     },
+    geometry::{Composition, FramePoint},
 };
 use std::sync::Arc;
 
@@ -51,11 +51,11 @@ impl Operation for DeclaredOperation {
     }
     fn calculation(
         self: Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
         _: Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+    ) -> Result<Option<crate::evaluation::value::Calculation>, Error> {
         let mut low = [
             i64::from(output.x) - i64::from(self.definition.before[0]),
             i64::from(output.y) - i64::from(self.definition.before[1]),
@@ -262,11 +262,11 @@ struct Merge;
 impl Operation for Merge {
     fn calculation(
         self: Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
         _: Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
+    ) -> Result<Option<crate::evaluation::value::Calculation>, Error> {
         Ok(Some(value::Calculation::new(
             domain,
             output,
@@ -346,7 +346,7 @@ fn quality_refinement_counts_graph_declared_inputs_not_just_visible_cells() {
 
 #[test]
 fn acquisition_follows_interleaved_neighbourhoods_and_changes_of_sample_meaning() {
-    use crate::gpu::evaluation::{Function, pointwise};
+    use crate::evaluation::{Function, pointwise};
     let plan = Plan::for_graph(
         Request { output: frame(), sampling: Sampling::NeutralFootprints },
         |input| {
