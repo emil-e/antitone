@@ -25,6 +25,34 @@ fn project_save_names_use_antitone_without_duplicating_legacy_suffixes() {
 }
 
 #[test]
+fn save_dialog_directory_uses_first_roll_member_then_saved_project() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut editor = super::super::tests::fixture();
+    super::super::tests::with_registered_photo(&mut editor);
+    let mut document = Document::default();
+    assert_eq!(project_save_directory(&document), None);
+    for folder in ["first", "second"] {
+        let mut source = editor.document.project.sources[0].clone();
+        source.path = directory.path().join(folder).join("photo.ARW");
+        document.register(source).unwrap();
+    }
+    assert_eq!(
+        project_save_directory(&document),
+        Some(directory.path().join("first"))
+    );
+    document.project.order.reverse();
+    assert_eq!(
+        project_save_directory(&document),
+        Some(directory.path().join("second"))
+    );
+    document.path = Some(directory.path().join("projects/roll.antitone"));
+    assert_eq!(
+        project_save_directory(&document),
+        Some(directory.path().join("projects"))
+    );
+}
+
+#[test]
 fn raw_picker_offers_common_camera_formats_not_only_arw() {
     for extension in [
         "arw", "cr2", "cr3", "dng", "nef", "orf", "pef", "raf", "rw2", "srw",

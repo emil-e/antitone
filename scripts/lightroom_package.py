@@ -16,6 +16,8 @@ FILES = (
     "Metadata.lua",
     "PluginInfo.lua",
     "Projects.lua",
+    "Launch.ps1",
+    "OpenSavedProject.lua",
     "Protocol.lua",
     "Run.lua",
     "json.lua",

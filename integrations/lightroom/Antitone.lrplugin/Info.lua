@@ -7,6 +7,7 @@ return {
     LrMetadataProvider = "Metadata.lua",
     LrLibraryMenuItems = {
         { title = "Edit in Antitone", file = "Edit.lua" },
+        { title = "Open Saved Antitone Project…", file = "OpenSavedProject.lua" },
     },
     VERSION = { major = 0, minor = 1, revision = 0 },
 }

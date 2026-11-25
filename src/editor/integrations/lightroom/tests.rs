@@ -5,7 +5,7 @@ fn wire(project: &Path, existing: bool, paths: &[PathBuf]) -> Value {
     json!({
         "version": PROTOCOL_VERSION,
         "mode": if existing { "open" } else { "new" },
-        "project": project,
+        "project": existing.then_some(project),
         "photos": paths.iter().enumerate().map(|(index, path)| json!({
             "uuid": format!("photo-{index}"), "path": path,
         })).collect::<Vec<_>>(),
@@ -31,17 +31,22 @@ fn json_preserves_unicode_spaces_and_control_characters_in_locators() {
         true,
         std::slice::from_ref(&source),
     );
-    assert_eq!(parsed.project, project);
+    assert_eq!(parsed.project.as_deref(), Some(project.as_path()));
     assert_eq!(parsed.photos[0].path, source);
     assert_eq!(parsed.photos[0].uuid, "photo-0");
     assert_eq!(parsed.mode, Mode::Open);
 
     // The Lua writer is independently compared with this fixture by its runner.
-    let fixture = Request::parse(
-        include_str!("../../../../tests/lightroom/request.json"),
-        directory.path().join("result.json"),
-    )
-    .unwrap();
+    let mut fixture: Value =
+        serde_json::from_str(include_str!("../../../../tests/lightroom/request.json")).unwrap();
+    if cfg!(windows) {
+        for photo in fixture["photos"].as_array_mut().unwrap() {
+            let relative = photo["path"].as_str().unwrap().strip_prefix('/').unwrap();
+            photo["path"] = json!(directory.path().join(relative));
+        }
+    }
+    let fixture =
+        Request::parse(&fixture.to_string(), directory.path().join("result.json")).unwrap();
     assert_eq!(fixture.mode, Mode::New);
     assert_eq!(fixture.photos[0].uuid, "b");
     assert!(
@@ -97,6 +102,7 @@ fn json_rejects_ambiguous_identity_unknown_fields_and_relative_paths() {
             ]),
         ),
         ("mode", json!("unknown")),
+        ("mode", json!("open")),
         ("version", json!(999)),
         ("version", json!("2")),
         ("relocated_from", json!("relative.antitone")),
@@ -106,6 +112,7 @@ fn json_rejects_ambiguous_identity_unknown_fields_and_relative_paths() {
         ),
         ("project", json!("relative.antitone")),
         ("project", json!(directory.path().join("image.tif"))),
+        ("project", json!(directory.path().join("roll.antitone"))),
     ];
     for (key, value) in changes {
         let mut invalid = valid.clone();
@@ -118,7 +125,7 @@ fn json_rejects_ambiguous_identity_unknown_fields_and_relative_paths() {
     for invalid in [
         valid
             .to_string()
-            .replace("\"version\":3", "\"version\":3,\"version\":3"),
+            .replace("\"version\":4", "\"version\":4,\"version\":4"),
         valid.to_string() + " true",
         "{}".into(),
     ] {
@@ -131,7 +138,80 @@ fn json_rejects_ambiguous_identity_unknown_fields_and_relative_paths() {
 }
 
 #[test]
-fn opening_a_saved_roll_rejects_any_requested_source_outside_that_roll() {
+fn ordinary_save_links_a_new_lightroom_project_without_rendering_and_save_as_keeps_the_link() {
+    use crate::application::test_support::TestApplication;
+    use crate::editor::Editor;
+    use std::{cell::RefCell, time::Duration};
+
+    fn assert_header(editor: &Editor, expected: &str) {
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            editor.workspace_header(ui);
+        });
+        output.textures_delta.clear();
+        let nodes = output.platform_output.accesskit_update.unwrap().nodes;
+        assert!(nodes.iter().any(|(_, node)| node.value() == Some(expected)));
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("Lightroom roll.antitone");
+    let copy = directory.path().join("project copy.antitone");
+    let association = directory.path().join("saved.json");
+    let returned = directory.path().join("result.json");
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+    let input = external_edit::Request::new(request(
+        &project,
+        &returned,
+        false,
+        std::slice::from_ref(&source),
+    ));
+    let owner = RefCell::new(Some(Editor::state()));
+    let mut app = TestApplication::new(&owner, || {});
+    app.read(|editor| assert_header(editor, "Untitled"));
+    app.enter(|editor, cx| editor.open_external(input, cx));
+    app.run_until(Duration::from_secs(10), |editor| {
+        editor.document.external_edit.session.is_some() || editor.dialogs.is_open()
+    });
+    app.read(|editor| {
+        assert!(
+            editor.document.external_edit.session.is_some(),
+            "{}",
+            editor.status
+        );
+        assert!(editor.document.path.is_none());
+        assert_header(editor, "Untitled • Modified");
+    });
+
+    assert!(!association.exists());
+    app.enter(|editor, cx| {
+        editor.save_project(project.clone(), crate::project::Save::New, None, cx);
+    });
+    app.run_until(Duration::from_secs(10), |editor| {
+        !editor.document.files.pending()
+    });
+    let saved: Value = serde_json::from_slice(&std::fs::read(&association).unwrap()).unwrap();
+    assert_eq!(saved["project"], json!(project));
+    assert_eq!(saved["sources"], json!([{"id": "1", "path": source}]));
+    assert!(saved.get("renders").is_none());
+    app.read(|editor| assert_header(editor, "Lightroom roll.antitone"));
+
+    app.enter(|editor, cx| {
+        editor.save_project(copy.clone(), crate::project::Save::New, None, cx);
+    });
+    app.run_until(Duration::from_secs(10), |editor| {
+        !editor.document.files.pending()
+    });
+    app.read(|editor| assert_header(editor, "project copy.antitone"));
+    let association_after: Value =
+        serde_json::from_slice(&std::fs::read(association).unwrap()).unwrap();
+    assert_eq!(saved, association_after);
+    assert!(!returned.exists());
+    app.close_execution();
+}
+
+#[test]
+fn opening_a_saved_project_rejects_requested_sources_outside_its_roll() {
     use external_edit::Input as _;
     let directory = tempfile::tempdir().unwrap();
     let project = directory.path().join("roll.antitone");
@@ -165,7 +245,7 @@ fn opening_a_saved_roll_rejects_any_requested_source_outside_that_roll() {
     assert!(
         error
             .to_string()
-            .contains("photo is not in this saved roll"),
+            .contains("photo is not in this saved project"),
         "{error}"
     );
     assert_eq!(std::fs::read(&project).unwrap(), before);
@@ -244,6 +324,22 @@ fn locating_a_moved_project_preserves_relative_originals_and_saved_grading() {
     );
 }
 
+fn save_for_session(
+    destination: &Destination,
+    document: &Document,
+    path: &Path,
+    policy: crate::project::Save,
+) -> Result<Document, Error> {
+    let (saved, notification) = crate::editor::save::Write {
+        document: document.clone(),
+        path: path.to_owned(),
+        policy,
+    }
+    .execute(Some(destination))?;
+    notification?;
+    Ok(saved)
+}
+
 #[test]
 fn save_creates_and_updates_the_canonical_project_without_retargeting_a_save_as_copy() {
     use external_edit::Destination as _;
@@ -256,7 +352,13 @@ fn save_creates_and_updates_the_canonical_project_without_retargeting_a_save_as_
         false,
         &[directory.path().join("source.ARW")],
     ));
-    let document = destination.save(&Document::default()).unwrap();
+    let document = save_for_session(
+        &destination,
+        &Document::default(),
+        &project,
+        crate::project::Save::New,
+    )
+    .unwrap();
     assert_eq!(document.path.as_ref(), Some(&project));
     assert!(!document.dirty());
     assert!(project.is_file());
@@ -264,7 +366,15 @@ fn save_creates_and_updates_the_canonical_project_without_retargeting_a_save_as_
     document.project.roll.exposure = 0.5;
     let mut document = document.save(&copy, crate::project::Save::New).unwrap();
     document.project.roll.exposure = 0.75;
-    let saved = destination.save(&document).unwrap();
+    let canonical = destination.project_destination().unwrap();
+    assert_eq!(canonical, project);
+    let saved = save_for_session(
+        &destination,
+        &document,
+        canonical,
+        crate::project::Save::Replace,
+    )
+    .unwrap();
     assert_eq!(saved.path.as_ref(), Some(&project));
     assert!(!saved.dirty());
     assert_eq!(
@@ -292,7 +402,10 @@ fn a_new_canonical_destination_is_never_replaced_before_this_invocation_saves_it
         &[directory.path().join("source.ARW")],
     ));
     std::fs::write(&project, "unrelated file created while editing").unwrap();
-    assert!(destination.save(&Document::default()).is_err());
+    use crate::project::Save;
+    assert!(save_for_session(&destination, &Document::default(), &project, Save::New).is_err());
+    assert!(destination.project_destination().is_none());
+    assert!(!directory.path().join("saved.json").exists());
     assert_eq!(
         std::fs::read_to_string(&project).unwrap(),
         "unrelated file created while editing"
@@ -301,7 +414,7 @@ fn a_new_canonical_destination_is_never_replaced_before_this_invocation_saves_it
     let saved = Document::default()
         .save(&project, crate::project::Save::New)
         .unwrap();
-    destination.saved(saved.path.as_ref().unwrap());
+    destination.saved(&saved).unwrap();
     let mut copy = saved
         .save(
             &directory.path().join("copy.antitone"),
@@ -310,7 +423,13 @@ fn a_new_canonical_destination_is_never_replaced_before_this_invocation_saves_it
         .unwrap();
     copy.project.roll.exposure = 0.5;
     assert!(
-        destination.save(&copy).is_ok(),
+        save_for_session(
+            &destination,
+            &copy,
+            destination.project_destination().unwrap(),
+            Save::Replace
+        )
+        .is_ok(),
         "ordinary canonical Save grants replacement even after Save As"
     );
 }
@@ -347,7 +466,7 @@ fn receipt_is_published_once_and_contains_whole_roll_and_lossless_string_ids() {
         path: directory.path().join("positive.tif"),
     };
     request
-        .receipt(&document, std::slice::from_ref(&rendered))
+        .receipt(&document, Some(std::slice::from_ref(&rendered)))
         .unwrap();
     let text = std::fs::read_to_string(&request.receipt).unwrap();
     let receipt: Value = serde_json::from_str(&text).unwrap();
@@ -366,10 +485,10 @@ fn receipt_is_published_once_and_contains_whole_roll_and_lossless_string_ids() {
         request
             .receipt(
                 &document,
-                &[external_edit::Rendered {
+                Some(&[external_edit::Rendered {
                     source: b,
                     path: directory.path().join("different.tif")
-                }]
+                }])
             )
             .is_err()
     );

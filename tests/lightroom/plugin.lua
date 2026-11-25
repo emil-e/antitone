@@ -31,11 +31,12 @@ local function test(name, work)
     print("PASS " .. name)
 end
 
-test("Extras exposes only editing; catalogue identifiers and installed application settings remain compatible", function()
+test("Extras exposes editing and explicit saved-project recovery without changing catalogue identifiers", function()
     local info = dofile(root .. "/Info.lua")
     assert(info.LrToolkitIdentifier == "com.antitone.lightroom.experiment")
     assert(info.LrPluginInfoProvider == "PluginInfo.lua")
-    assert(#info.LrLibraryMenuItems == 1 and info.LrLibraryMenuItems[1].file == "Edit.lua")
+    assert(#info.LrLibraryMenuItems == 2 and info.LrLibraryMenuItems[1].file == "Edit.lua")
+    assert(info.LrLibraryMenuItems[2].file == "OpenSavedProject.lua")
     assert(dofile(root .. "/Metadata.lua").schemaVersion == 1)
     local config = dofile(root .. "/Config.lua")
     assert(config.read() == "/Applications/Antitone.app/Contents/MacOS/antitone")
@@ -58,16 +59,31 @@ test("Windows can choose its executable and launch both checks and editing with 
     e.a.path, e.b.path = value.sources[1].path, value.sources[2].path
     e.fs[e.a.path], e.fs[e.b.path] = "raw-a", "raw-b"
     value.renders[1].path = "D:/Raw Photos/two-Antitone.tif"
-    e.savePaths = {value.project}
     return_on_exit(value); bridge().edit()
     assert(e.prefs.executable == executable and e.addCalls == 1)
-    assert(request().project == value.project and request().photos[1].path == e.b.path)
+    assert(request().project == nil and request().photos[1].path == e.b.path)
     assert(#e.commands == 2)
     for _, command in ipairs(e.commands) do
-        assert(command:sub(1, 2) == '""' and command:sub(-1) == '"')
-        assert(command:find('"' .. executable .. '"', 1, true))
-        assert(command:find('> "' .. e.directory, 1, true))
+        assert(command:find(' -Executable "' .. executable .. '"', 1, true))
+        assert(command:find(' -Log "' .. e.directory, 1, true))
     end
+    assert(not e.commands[1]:find(' -Request ', 1, true))
+    assert(e.commands[2]:find(' -Request "' .. e.directory .. '/request.json"', 1, true))
+end)
+
+test("a blank protocol reply is diagnosed as a launch failure rather than an incompatible version", function()
+    e.protocol = ""
+    local ok, err = pcall(function() bridge().edit() end)
+    assert(not ok and not e.launched)
+    assert(tostring(err):find("did not report its Lightroom protocol version", 1, true))
+    assert(not tostring(err):find("not compatible", 1, true))
+end)
+
+test("a numeric protocol mismatch still reports incompatible versions", function()
+    e.protocol = "3\n"
+    local ok, err = pcall(function() bridge().edit() end)
+    assert(not ok and not e.launched)
+    assert(tostring(err):find("not compatible", 1, true))
 end)
 
 test("existing development executable overrides remain usable without changing preferences", function()
@@ -99,7 +115,7 @@ test("JSON request is active-first; no receipt imports nothing and creates no pe
     bridge().edit()
     assert(validateRequestJson(e.fs[e.directory .. "/request.json"]))
     assert(request().photos[1].uuid == "b" and request().photos[2].uuid == "a")
-    assert(request().output == nil and e.addCalls == 0 and e.launched)
+    assert(request().output == nil and e.addCalls == 0 and e.launched and not e.confirmCount)
     assert(e.directory:find("/tmp/Antitone-Lightroom", 1, true) == 1)
     assert(e.prefs.lastSession == nil and e.prefs.lastCatalog == nil)
     assert(e.fs[e.directory .. "/session.json"] == nil and e.fs[e.directory .. "/imported.txt"] == nil)
@@ -123,7 +139,7 @@ test("completed invocation automatically links the whole roll, preserves string 
     assert(e.addCalls == 1)
 end)
 
-test("selecting original and returned TIFF deduplicates to its original and saved roll", function()
+test("selecting original and returned TIFF deduplicates to its original and saved project", function()
     return_on_exit(); bridge().edit()
     local returned = e.catalog:findPhotoByPath(fixture.renders[1].path)
     e.catalog.selected, e.catalog.active = {e.b, returned}, returned
@@ -132,16 +148,16 @@ test("selecting original and returned TIFF deduplicates to its original and save
     assert(#request().photos == 1 and request().photos[1].uuid == "b" and request().photos[1].path == e.b.path)
 end)
 
-test("busy catalogue keeps saved files; retry opens the saved roll and renders a fresh return", function()
+test("busy catalogue keeps saved files; retry opens the saved project and renders a fresh return", function()
     return_on_exit(); e.writeStatus = "aborted"
     local ok, err = pcall(function() bridge().edit() end)
     assert(not ok and tostring(err):find("catalogue is busy", 1, true))
     assert(e.addCalls == 0 and e.fs[fixture.project] == "project")
     local first = e.directory
     e.writeStatus = "executed"
-    e.confirms, e.projectPaths = {"other"}, {fixture.project}
+    e.projectPaths = {fixture.project}
     local fresh = json.decode(RECEIPT_FIXTURE); fresh.renders[1].path = "/photos/second/return-2.tif"
-    return_on_exit(fresh); bridge().edit()
+    return_on_exit(fresh); bridge().openSavedProject()
     assert(e.directory ~= first and request().mode == "open" and e.addCalls == 1)
     assert(e.fs[fixture.renders[1].path] == "render" and e.fs[fresh.renders[1].path] == "render")
 end)
@@ -175,7 +191,7 @@ test("conflicting association is not silently reassigned during automatic import
     e.a.fields.project = "/another/roll.antitone"
     return_on_exit()
     local ok, err = pcall(function() bridge().edit() end)
-    assert(not ok and tostring(err):find("another Antitone roll", 1, true))
+    assert(not ok and tostring(err):find("another Antitone project", 1, true))
     assert(e.addCalls == 0 and e.a.fields.project == "/another/roll.antitone")
 end)
 
@@ -207,8 +223,7 @@ test("invalid JSON, versions, source ID types and empty returns fail before cata
     local invalid, numeric = json.decode(RECEIPT_FIXTURE), json.decode(RECEIPT_FIXTURE)
     invalid.version, numeric.sources[1].id = 2, 1
     for _, text in ipairs({"not JSON", json.encode(invalid), json.encode(numeric),
-        '{"version":3,"project":"/photos/roll.antitone","sources":[],"renders":[]}'}) do
-        e.savePaths = {fixture.project}
+        '{"version":4,"project":"/photos/roll.antitone","sources":[],"renders":[]}'}) do
         e.onExit = function(directory) e.fs[directory .. "/result.json"] = text end
         assert(not pcall(function() bridge().edit() end))
         assert(e.addCalls == 0)
@@ -224,20 +239,54 @@ test("a missing configured application reopens the chooser without clearing the 
     assert(config.read() == "/Applications/Antitone.app/Contents/MacOS/antitone")
 end)
 
-test("existing project filename retries the chooser without changing the existing file", function()
-    e.fs[fixture.project] = "keep-existing"
-    local fresh = "/projects/fresh.antitone"
-    e.savePaths = {fixture.project, fresh}
+local function publish_save(directory)
+    local value = json.decode(RECEIPT_FIXTURE)
+    value.renders = nil
+    e.fs[value.project] = "saved edits"
+    e.fs[directory .. "/saved.json"] = json.encode(value)
+end
+
+test("ordinary save links the whole roll without importing or selecting TIFFs; Edit reopens it", function()
+    e.onExit = function(directory)
+        assert(request().mode == "new" and request().project == nil)
+        publish_save(directory)
+    end
     bridge().edit()
-    assert(request().project == fresh and request().mode == "new")
-    assert(e.fs[fixture.project] == "keep-existing" and #e.messages >= 1)
+    assert(e.a.fields.project == fixture.project and e.b.fields.project == fixture.project)
+    assert(e.a.fields.source == "1" and e.b.fields.source == "18446744073709551615")
+    assert(e.addCalls == 0 and e.catalog.active == e.b and not e.catalog.activeSources)
+    e.onExit = nil
+    bridge().edit()
+    assert(request().mode == "open" and request().project == fixture.project)
+    assert(e.confirmCount == 1 and e.addCalls == 0)
 end)
 
-test("cancel after filename conflict leaves links and existing file alone", function()
-    e.fs[fixture.project] = "keep-existing"
+test("a completed save-back both links the saved project and imports its render", function()
+    e.onExit = function(directory)
+        publish_save(directory)
+        publish(nil, directory)
+    end
     bridge().edit()
-    assert(not e.launched and e.directory == nil and e.a.fields.project == nil)
-    assert(e.fs[fixture.project] == "keep-existing")
+    assert(e.a.fields.project == fixture.project and e.b.fields.project == fixture.project)
+    assert(e.addCalls == 1 and e.catalog.active.path == fixture.renders[1].path)
+end)
+
+test("a failed render or nonzero exit does not lose the saved project association", function()
+    e.onExit = function(directory)
+        publish_save(directory)
+        e.fs[directory .. "/result.json"] = "invalid return"
+    end
+    e.appStatus = 1
+    assert(not pcall(function() bridge().edit() end))
+    assert(e.a.fields.project == fixture.project and e.b.fields.project == fixture.project)
+    assert(e.addCalls == 0)
+end)
+
+test("an existing linked project can be declined without a chooser or launch", function()
+    e.fs[fixture.project] = "saved edits"
+    linked(fixture.project); e.confirms = {"cancel"}
+    bridge().edit()
+    assert(not e.launched and not e.directory and e.confirmCount == 1)
 end)
 
 test("missing linked project can be cancelled without clearing metadata", function()
@@ -261,22 +310,22 @@ test("locating a missing project changes associations only on return; older TIFF
     e.catalog.selected, e.catalog.active = {oldReturn}, oldReturn
     local prompts = e.confirmCount
     e.onExit = nil; bridge().edit()
-    assert(request().project == moved and e.confirmCount == prompts)
+    assert(request().project == moved and e.confirmCount == prompts + 1)
 end)
 
 test("explicit replacement creates a fresh selected roll and defers relinking until return", function()
     local missing, fresh = "/missing/roll.antitone", "/projects/replacement.antitone"
-    linked(missing); e.confirms = {"other"}; e.savePaths = {fresh}
+    linked(missing); e.confirms = {"other"}
     local value = json.decode(RECEIPT_FIXTURE); value.project = fresh
     e.onExit = function(directory)
-        assert(request().mode == "new" and request().project == fresh and e.a.fields.project == missing)
+        assert(request().mode == "new" and request().project == nil and e.a.fields.project == missing)
         publish(value, directory)
     end
     bridge().edit()
     assert(e.a.fields.project == fresh and e.b.fields.project == fresh)
 end)
 
-test("protocol incompatibility offers the current diagnostic log before launching an editor", function()
+test("protocol probe failure offers the current diagnostic log before launching an editor", function()
     e.protocolStatus, e.protocol = 2, "unsupported option\n"
     dofile(root .. "/Run.lua")("edit")
     assert(not e.launched and e.revealed and e.fs[e.revealed] == "unsupported option\n")
@@ -288,13 +337,13 @@ test("failed imports offer their log and rerender instructions without Lua sourc
     dofile(root .. "/Run.lua")("edit")
     assert(e.revealed == e.directory .. "/session.log")
     local failure = e.confirmations[#e.confirmations]
-    assert(failure[2]:find("Use Saved Roll", 1, true) and failure[3] == "Show Log")
+    assert(failure[2]:find("Open Saved Antitone Project", 1, true) and failure[3] == "Show Log")
     assert(e.fs[e.revealed] == "application diagnostic" and e.fs[fixture.project] == "project")
     e.catalog.active = nil
     dofile(root .. "/Run.lua")("edit")
     local message = e.messages[#e.messages]
     assert(message[3] == "critical" and message[2]:find("Select one or more photos", 1, true))
-    assert(message[2]:find("Use Saved Roll", 1, true) and not message[2]:find("Bridge.lua", 1, true))
+    assert(message[2]:find("Open Saved Antitone Project", 1, true) and not message[2]:find("Bridge.lua", 1, true))
 end)
 
 test("SDK metadata can yield during active-first multi-photo opening", function()

@@ -24,6 +24,17 @@ pub(super) struct Write {
     pub policy: crate::project::Save,
 }
 
+impl Write {
+    pub fn execute(
+        self,
+        destination: Option<&dyn super::external_edit::Destination>,
+    ) -> Result<(Document, Result<(), crate::Error>), crate::Error> {
+        let saved = self.document.save(&self.path, self.policy)?;
+        let notification = destination.map_or(Ok(()), |host| host.saved(&saved));
+        Ok((saved, notification))
+    }
+}
+
 impl Editor {
     pub(super) fn start_save(
         &mut self,
@@ -39,20 +50,25 @@ impl Editor {
         let activity = self
             .activities
             .start(ActivityOptions::new("Saving project…").modal());
+        let destination = self.document.external_edit.destination();
         self.document.write.task = cx.spawn(move |cx| async move {
-            let result =
-                crate::background::run(move |_| write.document.save(&write.path, write.policy))
-                    .await
-                    .map_err(|_| "Document write worker panicked".to_owned())
-                    .and_then(|result| result.map_err(|error| error.to_string()));
+            let result = crate::background::run(move |_| write.execute(destination.as_deref()))
+                .await
+                .map_err(|_| "Document write worker panicked".to_owned())
+                .and_then(|result| result.map_err(|error| error.to_string()));
             drop(activity);
             let succeeded = result.is_ok();
             cx.update(|editor| {
                 editor.document.write = State::default();
                 match result {
-                    Ok(document) => {
+                    Ok((document, notification)) => {
                         editor.document.accept_save(document);
                         editor.status = "Project saved".into();
+                        if let Err(error) = notification {
+                            editor.external_failed(format!(
+                                "The project was saved, but could not be linked: {error}"
+                            ));
+                        }
                     }
                     Err(error) => {
                         editor.status = format!("Save failed: {error}");

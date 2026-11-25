@@ -13,8 +13,8 @@ return function(action, completed)
         end)
         if not ok then
             local message = tostring(err):gsub("^.-:%d+:%s*", "")
-            if action == "edit" then
-                message = message .. "\n\nIf Antitone saved a roll, choose Edit in Antitone again to reopen it and render again. If the originals are not linked yet, choose Use Saved Roll. Earlier TIFFs may remain on disk."
+            if action ~= "configure" then
+                message = message .. "\n\nIf Antitone saved a project, reopen it with Edit in Antitone. If the originals are not linked yet, choose Open Saved Antitone Project. Earlier TIFFs may remain on disk."
                 if bridge and bridge.project then message = message .. "\nProject: " .. bridge.project end
             end
             local log = bridge and bridge.log

@@ -53,16 +53,6 @@ impl external::Destination for HostDestination {
         ))
     }
 
-    fn save(&self, document: &Document) -> Result<Document, Error> {
-        let path = self.folder.join("host.antitone");
-        let policy = if path.exists() {
-            crate::project::Save::Replace
-        } else {
-            crate::project::Save::New
-        };
-        document.save(&path, policy)
-    }
-
     fn publish(&self, document: &Document, renders: &[external::Rendered]) -> Result<(), Error> {
         let path = document
             .path
@@ -98,9 +88,6 @@ impl external::Destination for PausedHost {
     }
     fn output(&self, document: &Document, target: OutputTarget) -> Result<output::Options, Error> {
         self.destination.output(document, target)
-    }
-    fn save(&self, document: &Document) -> Result<Document, Error> {
-        self.destination.save(document)
     }
     fn publish(&self, document: &Document, renders: &[external::Rendered]) -> Result<(), Error> {
         self.entered
@@ -158,7 +145,10 @@ fn external_completion_keeps_newer_accepted_edits_instead_of_closing_over_them()
                 angle: 0.,
             });
         });
-        h.enter(|editor, cx| editor.return_external(cx));
+        h.enter(|editor, cx| {
+            editor.document.files.chooser_path = Some(directory.path().join("host.antitone"));
+            editor.return_external(cx);
+        });
         wait_for(&mut h, |_| entered.load(Ordering::Acquire));
         h.update(|editor| {
             assert!(editor.workspace_input.is_blocked());
@@ -238,6 +228,7 @@ fn external_edit_saves_the_project_before_rendering_and_publication() {
                     size: [16, 12],
                     angle: 0.,
                 });
+                editor.document.files.chooser_path = Some(path.clone());
             });
             h.step();
             let button =

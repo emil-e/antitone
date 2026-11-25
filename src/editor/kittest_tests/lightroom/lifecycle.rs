@@ -62,7 +62,7 @@ fn lightroom_return_uses_accepted_state_and_normal_departure_with_crop_or_look_w
                 assert!(editor.external_return_available());
             });
             h.step();
-            button(&mut h);
+            button_with_save_path(&mut h, &project);
             wait_for(&mut h, |editor| !editor.document.external_edit.pending());
             h.read(|editor| {
                 assert!(!editor.dialogs.is_open(), "{}", editor.status);
@@ -173,7 +173,7 @@ fn lightroom_project_save_failure_keeps_edits_without_rendering_or_publishing() 
         calibrated(&mut h);
         let expected = h.read(|editor| editor.document.project.clone());
         std::fs::remove_dir(&parent).unwrap();
-        button(&mut h);
+        button_with_save_path(&mut h, &project);
         wait_for(&mut h, |editor| editor.dialogs.is_open());
         h.read(|editor| {
             assert!(!editor.allow_close);
@@ -207,7 +207,7 @@ fn lightroom_retirement_signals_a_return_waiting_on_cold_source_before_publicati
     let project = directory.path().join("roll.antitone");
     let session = directory.path().join("session");
     let paths = originals(directory.path(), &["patches.dng", "roll-0.dng"]);
-    // Make a saved roll, then request just one member in the external session.
+    // Save the project, then request just one photograph in the external session.
     editor_harness(|mut h, _| {
         h.enter(|editor, cx| editor.add_raws(paths.clone(), cx));
         calibrated(&mut h);
@@ -379,7 +379,7 @@ fn lightroom_return_captures_accepted_gamma_pair_without_waiting_for_its_proposa
             assert_ne!(editor.document.project.input.gamma(), 0.9);
             editor.document.project.clone()
         });
-        button(&mut h);
+        button_with_save_path(&mut h, &project);
         wait_for(&mut h, |editor| {
             editor.allow_close || editor.dialogs.is_open()
         });

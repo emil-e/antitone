@@ -20,9 +20,9 @@ function sdk.reset(fixture)
     MAC_ENV, WIN_ENV = true, false
     local e = {
         fs = {}, prefs = {}, messages = {}, commands = {}, stackCalls = {}, addCalls = 0,
-        writeStatus = "executed", confirms = {}, confirmations = {}, savePaths = {fixture.project},
+        writeStatus = "executed", confirms = {}, confirmations = {},
         appPaths = {"/Applications/Antitone.app"}, catalogPath = "/catalog/test.lrcat",
-        protocol = "3\n", protocolStatus = 0, appStatus = 0,
+        protocol = "4\n", protocolStatus = 0, appStatus = 0,
     }
     active = e
     e.a, e.b = photo("a", fixture.sources[1].path), photo("b", fixture.sources[2].path)
@@ -87,7 +87,7 @@ function sdk.reset(fixture)
                 e.confirmations[#e.confirmations + 1] = {...}
                 return table.remove(e.confirms, 1) or "ok"
             end,
-            runSavePanel = function() return table.remove(e.savePaths, 1) end,
+            runSavePanel = function() error("New rolls choose a save path in Antitone") end,
             runOpenPanel = function(args)
                 if args.title == "Choose Antitone application" then return e.appPaths end
                 return e.projectPaths
@@ -99,20 +99,23 @@ function sdk.reset(fixture)
             startAsyncTask = function(work) work() end,
             execute = function(command)
                 e.commands[#e.commands + 1] = command
+                local log, request
                 if WIN_ENV then
-                    assert(command:sub(1, 2) == '""' and command:sub(-1) == '"', "Windows command needs outer quotes")
-                    command = command:sub(2, -2)
+                    assert(command:match('^powershell%.exe .+ %-File ".-/Launch%.ps1"'))
+                    log = assert(command:match(' %-Log "(.-)"'))
+                    request = command:match(' %-Request "(.-)"$')
+                else
+                    log = assert(command:match(" > '(.-)' 2>&1$"))
+                    request = command:match(" %-%-lightroom '(.-)' > ")
+                    assert(request or command:find(" --lightroom-protocol-version ", 1, true))
                 end
-                if command:find(" --lightroom-protocol-version ", 1, true) then
-                    local path = assert(command:match(WIN_ENV and ' > "(.-)" 2>&1$' or " > '(.-)' 2>&1$"))
-                    e.fs[path] = e.protocol
+                if not request then
+                    e.fs[log] = e.protocol
                     return e.protocolStatus
                 end
-                assert(command:find(" --lightroom ", 1, true))
                 e.launched = command
-                local path = assert(command:match(WIN_ENV and ' %-%-lightroom "(.-)" > ' or " %-%-lightroom '(.-)' > "))
-                e.directory = assert(path:match("^(.*)/[^/]+$"))
-                e.fs[e.directory .. "/session.log"] = "application diagnostic"
+                e.directory = assert(request:match("^(.*)/[^/]+$"))
+                e.fs[log] = "application diagnostic"
                 if e.onExit then e.onExit(e.directory) end
                 return e.appStatus
             end,

@@ -31,10 +31,14 @@ pub(super) struct Presentation {
 /// Host output planning, persistence and publication; shared output executes pixels.
 pub(super) trait Destination: Send + Sync {
     fn presentation(&self) -> Presentation;
+    fn project_destination(&self) -> Option<&std::path::Path> {
+        None
+    }
     fn output(&self, document: &Document, target: OutputTarget) -> Result<output::Options, Error>;
-    fn save(&self, document: &Document) -> Result<Document, Error>;
-    /// Observe a successful ordinary or return save; this performs no persistence.
-    fn saved(&self, _path: &std::path::Path) {}
+    /// Publish host metadata after the project file has been written.
+    fn saved(&self, _document: &Document) -> Result<(), Error> {
+        Ok(())
+    }
     fn publish(&self, document: &Document, renders: &[Rendered]) -> Result<(), Error>;
 }
 
@@ -99,10 +103,10 @@ impl State {
     pub fn pending(&self) -> bool {
         self.task.is_some()
     }
-    pub fn saved(&self, path: &std::path::Path) {
-        if let Some(session) = &self.session {
-            session.destination.saved(path);
-        }
+    pub fn destination(&self) -> Option<Arc<dyn Destination>> {
+        self.session
+            .as_ref()
+            .map(|session| session.destination.clone())
     }
     fn owns(&self, session: &Arc<Session>) -> bool {
         self.session
@@ -165,6 +169,7 @@ impl Editor {
     pub(super) fn external_return_available(&self) -> bool {
         self.document.external_edit.session.is_some()
             && !self.document.external_edit.pending()
+            && !self.document.write.pending()
             && !self.document.external_edit.returned
             && !self.workspace_input.is_blocked()
             && !self.editing()
@@ -213,22 +218,50 @@ impl Editor {
             self.external_failed("Output services unavailable".into());
             return;
         };
-        let activity = self
-            .activities
-            .start(ActivityOptions::new(presentation.working).modal());
+        let destination = if let Some(path) = session.destination.project_destination() {
+            files::Destination {
+                path: path.to_owned(),
+                policy: crate::project::Save::Replace,
+                confirm_replace: false,
+            }
+        } else {
+            let Some(destination) = self.save_destination(false) else {
+                return;
+            };
+            destination
+        };
         let cancelled = Cancellation::default();
         self.document.external_edit.cancelled = cancelled.clone();
         let retire = cancelled.cancel_on_drop();
         self.document.external_edit.task = cx.spawn(move |cx| async move {
             let _retire = retire;
+            if files::confirm_destination(&cx, &destination)
+                .await
+                .is_none()
+            {
+                cx.update(|editor| editor.document.external_edit.task = None);
+                return;
+            }
+            let Some(activity) = cx.update(|editor| {
+                editor
+                    .activities
+                    .start(ActivityOptions::new(presentation.working).modal())
+            }) else {
+                return;
+            };
             let result = async {
                 let host = session.destination.clone();
                 let stop = cancelled.clone();
-                let document = crate::background::run(move |retired| {
+                let (document, notification) = crate::background::run(move |retired| {
                     if retired.is_cancelled() || stop.is_cancelled() {
                         return Err(Error::Cancelled);
                     }
-                    host.save(&document)
+                    save::Write {
+                        document,
+                        path: destination.path,
+                        policy: destination.policy,
+                    }
+                    .execute(Some(host.as_ref()))
                 })
                 .await
                 .map_err(|_| "Project save worker panicked".to_owned())?
@@ -238,6 +271,9 @@ impl Editor {
                         editor.document.accept_save(document.clone());
                     }
                 });
+                notification.map_err(|error| {
+                    format!("The project was saved, but could not be linked: {error}")
+                })?;
                 let summary = services
                     .export_batch(output, cancelled.clone(), |done, total| {
                         activity.progress(done, total)
@@ -257,7 +293,7 @@ impl Editor {
                         .collect::<Vec<_>>()
                         .join("; ");
                     return Err(format!(
-                        "The roll was saved, but return failed: {}. {errors}",
+                        "The project was saved, but return failed: {}. {errors}",
                         summary.text()
                     ));
                 }
@@ -303,7 +339,7 @@ impl Editor {
         });
     }
 
-    fn external_failed(&mut self, details: String) {
+    pub(super) fn external_failed(&mut self, details: String) {
         log::error!(error = details.as_str(); "external_edit_failed");
         self.status = details.clone();
         drop(self.dialogs.report(dialogs::Message {

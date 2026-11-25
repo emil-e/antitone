@@ -1,6 +1,6 @@
 # Lightroom round trip
 
-The [Antitone plug-in](Antitone.lrplugin/) opens camera RAW originals in a separate Antitone process, saves an ordinary editable roll project and imports returned TIFFs. Lightroom development settings are not translated. The plug-in is available on macOS and Windows. Windows launching has not yet been verified in Lightroom.
+The [Antitone plug-in](Antitone.lrplugin/) opens camera RAW originals in a separate Antitone process, saves an editable project and imports returned TIFFs. Lightroom development settings are not translated. The plug-in is available on macOS and Windows. Windows launching has not yet been verified in Lightroom.
 
 ## Install and choose Antitone
 
@@ -14,29 +14,29 @@ For a source checkout, follow [native setup and build](../../docs/build-and-run.
 
 ## Edit and return
 
-Select originals and choose **Library → Plug-in Extras → Edit in Antitone**. Create a new `.antitone` roll or choose **Use Saved Roll**. Existing filenames are preserved; choose another name or open the saved roll. An existing roll must already contain every selected original.
+Select originals and choose **Library → Plug-in Extras → Edit in Antitone**. If Lightroom knows about a saved project, it offers to reopen it. Otherwise Antitone opens a new project without asking where to save. To open a project Lightroom doesn't know about, choose **Open Saved Antitone Project…** instead. An existing project must already contain every selected original.
 
 The project can live anywhere. Each returned TIFF is written beside its original RAW, allowing Lightroom to stack it with that original. Selections spanning several folders activate all returned folders and select all returned images.
 
-Edit normally, then choose **Save Back to Lightroom** in Antitone's header. It captures accepted edits, saves the whole roll and renders only the requested photographs. Apply drafts and finish pending calculations first if you want their results included. Return never accepts unfinished proposals automatically; newer accepted edits keep the document open. Lightroom imports after the Antitone process exits.
+Use **File → Save** to keep working later. For a new project, Antitone suggests the first RAW's folder and asks where to put the `.antitone` file. Lightroom remembers the association when Antitone exits, without importing TIFFs. **Save As** makes a copy without changing an established association or the return destination.
 
-Choosing one linked original or returned TIFF later opens the whole saved roll at that photograph. Subsequent browsing does not change the photographs returned. Returns create new `*-Antitone.tif` versions without modifying originals or earlier TIFFs.
+Choose **Save Back to Lightroom** in Antitone's header when you want TIFFs. It asks for a project path if you haven't saved yet, then saves the project and renders only the requested photographs. Apply drafts and finish pending calculations first if you want their results included. Newer accepted edits keep the document open. Lightroom imports after Antitone exits.
 
-Ordinary Save writes only the project. Save As creates a copy without changing the canonical return project or TIFF folders. Opening a project outside Lightroom creates an ordinary editor window; saving it does not update existing Lightroom TIFFs.
+Choosing one linked original or returned TIFF later reopens the project and selects that photograph. Subsequent browsing does not change the photographs returned. Returns create new `*-Antitone.tif` versions without modifying originals or earlier TIFFs.
 
 ## Missing projects and failed returns
 
-If a recorded project is missing or unavailable, choose **Locate Saved Roll**, **Create Replacement Roll**, or Cancel. Locating preserves the saved roll's edits. A replacement is a fresh roll from the selected originals: it cannot recover the missing project's edits. Choosing a path does not clear catalogue metadata; completed returns apply the explicit new association. Older returned TIFFs follow their original's current association when reopened.
+If a recorded project is missing or unavailable, choose **Locate Saved Project**, **Create Replacement Project**, or Cancel. Locating preserves the saved project's edits. A replacement starts from the selected originals and cannot recover those edits. Lightroom changes the association after the project is saved. Older returned TIFFs follow their original's current association when reopened.
 
-Save Back saves the project before rendering, so a later render or import failure does not lose the saved edits. Choose **Edit in Antitone** again to reopen the roll and render again. If the originals are not linked yet, choose **Use Saved Roll** and select the saved project. Earlier TIFFs remain on disk; another attempt creates new versions.
+Save Back saves the project before rendering. If rendering or import fails, reopen the project with **Edit in Antitone** and retry. If the catalogue couldn't record the association, use **Open Saved Antitone Project…** and select the saved project. Earlier TIFFs remain on disk.
 
-Failures offer **Show Log** to reveal the current diagnostic file in Finder or Explorer. Each invocation uses a separate temporary folder for `request.json`, completed `result.json`, process output in `session.log` and the compatibility check's `protocol.txt`. Copy a needed log before OS temporary-file cleanup. Projects and TIFFs live outside this folder.
+Failures offer **Show Log** to reveal the current diagnostic file in Finder or Explorer. Each invocation uses a separate temporary folder for `request.json`, `saved.json` after a project write, `result.json` after rendering, process output in `session.log` and the compatibility check's `protocol.txt`. Copy a needed log before OS temporary-file cleanup. Projects and TIFFs live outside this folder.
 
-Avoid simultaneous editing of one project: saves have ordinary Antitone file semantics, without multi-writer coordination. Requested RAWs must be online. Relinking RAWs, virtual-copy variants, multiple roll associations and replacing previous TIFFs are not implemented. Project compatibility follows the editor's [saved format](../../docs/projects.md#source-interpretation-and-identity); development formats have no migrations.
+Avoid simultaneous editing of one project: saves have ordinary Antitone file semantics, without multi-writer coordination. Requested RAWs must be online. Relinking RAWs, virtual-copy variants, multiple project associations and replacing previous TIFFs are not implemented. Project compatibility follows the editor's [saved format](../../docs/projects.md#source-interpretation-and-identity); development formats have no migrations.
 
 ## Transport and catalogue identity
 
-Transport version 3 uses JSON: see the shared [request](../../tests/lightroom/request.json) and [receipt](../../tests/lightroom/result.json) fixtures. Requests carry new/open mode, the canonical project path and requested original UUID/path pairs. Locating a moved roll also carries its old project path so relative RAW locators can be rebased when needed. Receipts carry whole-roll source/path mappings and requested UUID/source/rendered-path mappings. UUIDs remain opaque catalogue context, outside the project; source IDs are strings to preserve their integer range in Lua.
+Transport version 4 uses JSON: see the shared [request](../../tests/lightroom/request.json) and [return receipt](../../tests/lightroom/result.json) fixtures. Requests carry new/open mode and original UUID/path pairs; only open mode carries a project path. A request to open a moved project also carries its old path to rebase relative RAW locators. The save receipt identifies the project and maps all roll sources to paths. The return receipt adds the rendered paths and requested UUID/source pairs. UUIDs stay outside the project; source IDs are strings to preserve their integer range in Lua.
 
 Rust uses `serde_json`; the bundle vendors [rxi/json.lua v0.1.2](https://github.com/rxi/json.lua/tree/v0.1.2), compatible with Lua 5.1, with its MIT licence retained in [json.lua](Antitone.lrplugin/json.lua). Keep the toolkit identifier and metadata field IDs stable: existing catalogue associations use them independently of display names or bundle location.
 
