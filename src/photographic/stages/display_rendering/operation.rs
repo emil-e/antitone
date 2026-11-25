@@ -1,8 +1,9 @@
 //! The pinned ACES display rendering transform and its immutable device resources.
 
+use super::aces;
+use crate::gpu::evaluation::*;
 #[cfg(test)]
-use super::{FULLSCREEN_VERTEX, fullscreen_pipeline};
-use super::{aces, evaluation::*};
+use crate::gpu::{FULLSCREEN_VERTEX, fullscreen_pipeline};
 use crate::{Error, rendering::OutputTarget};
 #[cfg(test)]
 use std::borrow::Cow;
@@ -160,17 +161,17 @@ fn callable_library(target: OutputTarget, generated: &str) -> Result<Arc<str>, E
 fn target_assets(target: OutputTarget) -> (&'static str, [&'static [u8]; 2]) {
     match target {
         OutputTarget::Srgb => (
-            include_str!("../../assets/ocio/srgb-ap1.glsl"),
+            include_str!("../../../../assets/ocio/srgb-ap1.glsl"),
             [
-                include_bytes!("../../assets/ocio/srgb-ap1-lut-0.f32").as_slice(),
-                include_bytes!("../../assets/ocio/srgb-ap1-lut-1.f32").as_slice(),
+                include_bytes!("../../../../assets/ocio/srgb-ap1-lut-0.f32").as_slice(),
+                include_bytes!("../../../../assets/ocio/srgb-ap1-lut-1.f32").as_slice(),
             ],
         ),
         OutputTarget::DisplayP3 => (
-            include_str!("../../assets/ocio/display-p3-ap1.glsl"),
+            include_str!("../../../../assets/ocio/display-p3-ap1.glsl"),
             [
-                include_bytes!("../../assets/ocio/display-p3-ap1-lut-0.f32").as_slice(),
-                include_bytes!("../../assets/ocio/display-p3-ap1-lut-1.f32").as_slice(),
+                include_bytes!("../../../../assets/ocio/display-p3-ap1-lut-0.f32").as_slice(),
+                include_bytes!("../../../../assets/ocio/display-p3-ap1-lut-1.f32").as_slice(),
             ],
         ),
     }

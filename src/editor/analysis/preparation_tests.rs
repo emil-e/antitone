@@ -108,7 +108,7 @@ fn region_acquisition_and_review_do_not_require_unrelated_look_device_admission(
     ));
     serde_json::to_value(&request.document.project).unwrap();
     assert!(
-        crate::gpu::lut3d::Lut::require_limits(
+        crate::photographic::stages::look::Lut::require_limits(
             &device.limits(),
             request.document.project.output.lut.as_ref().unwrap().lut()
         )

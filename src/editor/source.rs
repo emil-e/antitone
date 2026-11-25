@@ -143,7 +143,7 @@ pub(super) struct Developed {
 pub(super) struct Services {
     pub developments: source_loading::SourceLoader,
     pub evaluation: crate::gpu::evaluation::Context,
-    pub looks: Arc<crate::gpu::lut3d::Looks>,
+    pub looks: Arc<crate::photographic::stages::look::Looks>,
     pub display: Arc<super::display::Warmup>,
     pub device: wgpu::Device,
     pub queue: crate::gpu::submission::Queue,
@@ -367,7 +367,7 @@ impl Developed {
     pub fn prepare_gpu(
         self,
         evaluation: crate::gpu::evaluation::Context,
-        looks: Arc<crate::gpu::lut3d::Looks>,
+        looks: Arc<crate::photographic::stages::look::Looks>,
         display: &super::display::Warmup,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Ready, Error> {

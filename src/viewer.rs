@@ -5,7 +5,8 @@ use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::{drt, evaluation, lut3d::Looks, parameters::ProcessingParameters};
+use crate::gpu::{evaluation, parameters::ProcessingParameters};
+use crate::photographic::stages::{display_rendering as drt, look::Looks};
 use crate::rendering::OutputTarget;
 use glam::DMat3;
 use std::sync::Arc;
@@ -189,7 +190,7 @@ impl GpuImage {
                 p.working.size()
                     + p.recording.lock().unwrap().as_ref().map_or(0, |binding| {
                         binding.byte_len()
-                            + crate::gpu::lut3d::applied_luts(binding.endpoint())
+                            + crate::photographic::stages::look::applied_luts(binding.endpoint())
                                 .iter()
                                 .map(|lut| lut.byte_len())
                                 .sum::<u64>()
@@ -199,7 +200,7 @@ impl GpuImage {
     }
 
     #[cfg(feature = "editor")]
-    pub(crate) fn look_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
+    pub(crate) fn look_resources(&self) -> Vec<Arc<crate::photographic::stages::look::Lut>> {
         self.processing
             .as_ref()
             .map_or_else(Vec::new, |processing| {
@@ -209,7 +210,7 @@ impl GpuImage {
                     .unwrap()
                     .as_ref()
                     .map_or_else(Vec::new, |binding| {
-                        crate::gpu::lut3d::applied_luts(binding.endpoint())
+                        crate::photographic::stages::look::applied_luts(binding.endpoint())
                     })
             })
     }
@@ -221,7 +222,10 @@ impl GpuImage {
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
         for asset in input.luts().assets() {
-            crate::gpu::lut3d::Lut::require_limits(&self.device_limits, asset.lut())?;
+            crate::photographic::stages::look::Lut::require_limits(
+                &self.device_limits,
+                asset.lut(),
+            )?;
         }
         crate::gpu::execution::raster::resident_plan(&processing.source, input)?;
         Ok(())

@@ -5,7 +5,10 @@ use crate::gpu::evaluation as e;
 
 mod authoring;
 
-pub(crate) type FixtureDisplay = (Arc<crate::gpu::lut3d::Looks>, Arc<crate::gpu::drt::Targets>);
+pub(crate) type FixtureDisplay = (
+    Arc<crate::photographic::stages::look::Looks>,
+    Arc<crate::photographic::stages::display_rendering::Targets>,
+);
 
 impl SourceRequest {
     pub fn underlay(&self) -> Result<Self, Error> {

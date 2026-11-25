@@ -227,7 +227,7 @@ pub(super) fn prepare_asset(
     if cancel.load(Ordering::Relaxed) {
         Ok(None)
     } else {
-        crate::gpu::lut3d::Lut::require_limits(limits, asset.lut())?;
+        crate::photographic::stages::look::Lut::require_limits(limits, asset.lut())?;
         Ok(Some(Arc::new(asset)))
     }
 }

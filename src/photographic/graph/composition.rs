@@ -195,8 +195,8 @@ impl<'a> RecipeGraph<'a> {
     pub(crate) fn display(
         &self,
         limits: &wgpu::Limits,
-        looks: &crate::gpu::lut3d::Looks,
-        drt: &crate::gpu::drt::Target,
+        looks: &crate::photographic::stages::look::Looks,
+        drt: &crate::photographic::stages::display_rendering::Target,
     ) -> Result<Value, Error> {
         display_output(self.processed(limits)?, &self.recipe.luts, looks, drt)
     }
@@ -802,8 +802,8 @@ impl PhotographGraph {
 pub fn display_output(
     image: Value,
     luts: &crate::looks::LutChain,
-    looks: &crate::gpu::lut3d::Looks,
-    drt: &crate::gpu::drt::Target,
+    looks: &crate::photographic::stages::look::Looks,
+    drt: &crate::photographic::stages::display_rendering::Target,
 ) -> Result<Value, Error> {
     drt.apply(looks.apply(image, luts)?)
 }
@@ -811,7 +811,7 @@ pub fn display_output(
 #[cfg(feature = "render")]
 pub(crate) fn prewarm_output(
     context: &Context,
-    drt: &crate::gpu::drt::Targets,
+    drt: &crate::photographic::stages::display_rendering::Targets,
 ) -> Result<(), Error> {
     use crate::rendering::OutputTarget;
 
@@ -819,7 +819,7 @@ pub(crate) fn prewarm_output(
         bounds: Some(CellRegion::new([0, 0], [1, 1])),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
     });
-    let looked = crate::gpu::lut3d::prewarm_value(input.clone())?;
+    let looked = crate::photographic::stages::look::prewarm_value(input.clone())?;
     context.prewarm_image(looked.clone())?;
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let display = drt.get(target);

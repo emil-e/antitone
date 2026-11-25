@@ -104,8 +104,8 @@ mod tests {
     use super::*;
 
     const PINNED: [&str; 2] = [
-        include_str!("../../assets/ocio/srgb-ap1.glsl"),
-        include_str!("../../assets/ocio/display-p3-ap1.glsl"),
+        include_str!("../../../../assets/ocio/srgb-ap1.glsl"),
+        include_str!("../../../../assets/ocio/display-p3-ap1.glsl"),
     ];
 
     #[test]

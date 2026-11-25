@@ -1,7 +1,8 @@
 //! Roll fitting uses shared original-camera evidence, independent of optional RAW retention.
 use crate::{
-    gpu::{drt, evaluation},
+    gpu::evaluation,
     photographic::graph::camera_response,
+    photographic::stages::display_rendering as drt,
     rendering::OutputTarget,
     roll_analysis::gpu::{CameraSampler, ResponseModel},
 };

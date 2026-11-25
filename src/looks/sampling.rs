@@ -1,6 +1,7 @@
 //! Shared final-cube sampling; providers own the material response and provenance.
 use super::{Lut3D, authoring, failure, require};
-use crate::{Error, photographic};
+use crate::Error;
+use crate::photographic::stages::look;
 use glam::DVec3;
 use std::sync::{
     Arc,
@@ -37,7 +38,7 @@ pub(super) fn bake(
                             }
                             for r in 0..n {
                                 let rgb = DVec3::new(r as f64, g as f64, b as f64)
-                                    .map(|v| photographic::decode(lo + v * step));
+                                    .map(|v| look::decode(lo + v * step));
                                 values.push(sample(rgb)?.to_array().map(|v| v as f32));
                             }
                         }
@@ -82,10 +83,9 @@ pub(super) fn assert_material_vertices(
     for b in [0, n / 3, n - 1] {
         for g in [0, n / 2, n - 1] {
             for r in [0, n / 4, n - 1] {
-                let input =
-                    DVec3::from_array([r, g, b].map(|v| {
-                        photographic::decode(authoring::DOMAIN_MIN + f64::from(v) * step)
-                    }));
+                let input = DVec3::from_array(
+                    [r, g, b].map(|v| look::decode(authoring::DOMAIN_MIN + f64::from(v) * step)),
+                );
                 let expected = response(input).unwrap().to_array().map(|v| v as f32);
                 assert_eq!(lut.nodes()[((b * n + g) * n + r) as usize], expected);
             }

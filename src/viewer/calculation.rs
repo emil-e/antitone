@@ -167,7 +167,10 @@ impl GpuImage {
             ));
         }
         for asset in luts.assets() {
-            crate::gpu::lut3d::Lut::require_limits(&self.device_limits, asset.lut())?;
+            crate::photographic::stages::look::Lut::require_limits(
+                &self.device_limits,
+                asset.lut(),
+            )?;
         }
         Ok(())
     }

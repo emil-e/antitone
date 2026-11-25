@@ -3,7 +3,7 @@
 use super::*;
 use crate::photographic::graph::PhotographGraph;
 use crate::{
-    gpu::drt,
+    photographic::stages::display_rendering as drt,
     photographic::stages::interpretation::InputTransform,
     processing::{Inversion, NegativeInput},
     rendering::OutputTarget,

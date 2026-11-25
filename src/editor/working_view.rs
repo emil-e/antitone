@@ -1,13 +1,14 @@
 //! Selected image demand, latest-request coalescing, and coherent presentation.
 use super::*;
 use crate::frame_raster::FrameRaster;
+use crate::gpu::evaluation;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::RenderedView;
 use crate::gpu::view::ViewImage;
 use crate::gpu::view::ViewKernels;
-use crate::gpu::{drt, evaluation, lut3d::Looks};
 use crate::photographic::graph::view_source::SourceRequest;
+use crate::photographic::stages::{display_rendering as drt, look::Looks};
 use std::sync::{Mutex, OnceLock};
 
 #[cfg(test)]

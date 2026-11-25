@@ -1,18 +1,13 @@
 //! GPU device setup and the modules that own calculations, resources and presentation.
 
-#[cfg(any(feature = "render", feature = "project"))]
-pub(crate) mod aces;
 pub(crate) mod allocation;
 #[cfg(feature = "editor")]
 pub(crate) mod display;
-#[cfg(feature = "render")]
-pub mod drt;
 pub mod evaluation;
 #[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]
 pub(crate) mod execution;
 pub mod flat;
 pub mod gaussian;
-pub mod lut3d;
 #[cfg(all(
     feature = "raw",
     feature = "render",
@@ -125,3 +120,8 @@ mod shader_layout_tests;
 
 // Preserve the original public paths for prepared photographic controls.
 pub use crate::photographic::stages::{grading, interpretation};
+
+// Preserve public paths for device-scoped Look and display resources.
+#[cfg(feature = "render")]
+pub use crate::photographic::stages::display_rendering as drt;
+pub use crate::photographic::stages::look as lut3d;

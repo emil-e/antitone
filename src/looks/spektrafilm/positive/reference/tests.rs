@@ -1,4 +1,5 @@
 use super::*;
+use crate::photographic::stages::look;
 
 fn diagonal() -> (Reference, data::Pair) {
     static DEFINITION: OnceLock<Definition> = OnceLock::new();
@@ -111,8 +112,8 @@ fn calibrated_filter_is_passive_over_the_complete_authored_input_cube() {
             visited < 100_000,
             "passive-domain interval verification did not finish"
         );
-        let low = lo.map(crate::photographic::decode);
-        let high = hi.map(crate::photographic::decode);
+        let low = lo.map(look::decode);
+        let high = hi.map(look::decode);
         let emin = DVec3::from_array(std::array::from_fn(|c| {
             (0..3)
                 .map(|k| rows[c][k] * if rows[c][k] >= 0. { low[k] } else { high[k] })
@@ -139,7 +140,7 @@ fn calibrated_filter_is_passive_over_the_complete_authored_input_cube() {
         if bound >= 1e-8 {
             continue;
         }
-        let midpoint = ((lo + hi) * 0.5).map(crate::photographic::decode);
+        let midpoint = ((lo + hi) * 0.5).map(look::decode);
         let a = r.amounts(midpoint);
         for s in &r.samples {
             assert!(s.base + s.dyes.dot(a) >= bound - 1e-10);

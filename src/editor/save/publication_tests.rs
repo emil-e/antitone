@@ -213,7 +213,7 @@ fn a_real_devices_lut_capacity_does_not_limit_saved_json() {
     );
     assert!(125 * 16 > device.limits().max_storage_buffer_binding_size);
     assert!(
-        crate::gpu::lut3d::Lut::new(&device, asset.lut()).is_err(),
+        crate::photographic::stages::look::Lut::new(&device, asset.lut()).is_err(),
         "the consuming device must actually reject this resource"
     );
     let mut editor = crate::editor::tests::fixture();

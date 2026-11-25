@@ -1,6 +1,7 @@
 //! Resolve captured photographic intent into a file export calculation.
 use super::*;
-use crate::gpu::{drt, flat::GpuFlatField, lut3d::Looks};
+use crate::gpu::flat::GpuFlatField;
+use crate::photographic::stages::{display_rendering as drt, look::Looks};
 use crate::{dust_repair::Execution, image_recipe::ImageRecipe, scan::Scan};
 
 pub(crate) struct Job<'a> {

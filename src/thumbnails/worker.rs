@@ -5,7 +5,8 @@ use crate::project::SourceId;
 use crate::{
     Error,
     geometry::Composition,
-    gpu::{evaluation, lut3d::Looks, submission::Queue},
+    gpu::{evaluation, submission::Queue},
+    photographic::stages::look::Looks,
     source as source_loading,
 };
 use std::sync::Arc;

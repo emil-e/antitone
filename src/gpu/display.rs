@@ -1,7 +1,8 @@
 //! Display resources and the editor's one-time foreground warm-up.
 
 use crate::Error;
-use crate::gpu::{drt::Targets, evaluation::Context, submission::Queue};
+use crate::gpu::{evaluation::Context, submission::Queue};
+use crate::photographic::stages::display_rendering::Targets;
 use std::sync::{Arc, LazyLock};
 
 type LoadTargets = Box<dyn FnOnce() -> Result<Arc<Targets>, Error> + Send>;
@@ -65,7 +66,7 @@ impl Warmup {
 #[cfg(test)]
 pub(crate) struct DisplayFixture {
     evaluation: Context,
-    looks: Arc<crate::gpu::lut3d::Looks>,
+    looks: Arc<crate::photographic::stages::look::Looks>,
     warmup: std::sync::OnceLock<Arc<Warmup>>,
 }
 
@@ -74,7 +75,7 @@ impl DisplayFixture {
     pub(crate) fn for_device(device: &wgpu::Device) -> Self {
         Self {
             evaluation: Context::new(device, Default::default()),
-            looks: Arc::new(crate::gpu::lut3d::Looks::new(device)),
+            looks: Arc::new(crate::photographic::stages::look::Looks::new(device)),
             warmup: std::sync::OnceLock::new(),
         }
     }
@@ -83,7 +84,7 @@ impl DisplayFixture {
         &self.evaluation
     }
 
-    pub(crate) fn looks(&self) -> &Arc<crate::gpu::lut3d::Looks> {
+    pub(crate) fn looks(&self) -> &Arc<crate::photographic::stages::look::Looks> {
         &self.looks
     }
 

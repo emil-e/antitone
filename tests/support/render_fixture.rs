@@ -1,20 +1,17 @@
 //! Device-scoped test fixtures, not part of the application API.
 #![allow(dead_code)] // Integration crates exercise different fixture operations.
 
+use antitone::photographic::stages::{display_rendering as drt, look};
 use antitone::{
     Error,
-    gpu::{
-        drt,
-        evaluation::{CachePolicy, Context},
-        lut3d,
-    },
+    gpu::evaluation::{CachePolicy, Context},
 };
 use std::sync::Arc;
 
 /// Explicit GPU resources for tests that build and record display graphs.
 pub struct RenderFixture {
     pub(crate) drt: Arc<drt::Targets>,
-    pub(crate) looks: Arc<lut3d::Looks>,
+    pub(crate) looks: Arc<look::Looks>,
     pub(crate) evaluation: antitone::gpu::evaluation::Context,
 }
 
@@ -24,7 +21,7 @@ impl RenderFixture {
         &self.evaluation
     }
 
-    pub fn looks(&self) -> &Arc<lut3d::Looks> {
+    pub fn looks(&self) -> &Arc<look::Looks> {
         &self.looks
     }
 
@@ -52,7 +49,7 @@ impl RenderFixture {
         queue: &antitone::gpu::submission::Queue,
     ) -> Result<Arc<Self>, Error> {
         let device = evaluation.device().clone();
-        let looks = Arc::new(lut3d::Looks::new(&device));
+        let looks = Arc::new(look::Looks::new(&device));
         let drt = Arc::new(drt::Targets::new(&device, queue).await?);
         let renderer = Arc::new(Self {
             drt,

@@ -195,7 +195,10 @@ fn actual_fit_and_acceptance_ignore_unrelated_look_capacity_and_replace_old_grad
         )
         .unwrap(),
     );
-    assert!(crate::gpu::lut3d::Lut::require_limits(&device.limits(), look.lut()).is_err());
+    assert!(
+        crate::photographic::stages::look::Lut::require_limits(&device.limits(), look.lut())
+            .is_err()
+    );
     document.project.output.lut = Some(look.clone());
     for source in document.project.sources.iter_mut() {
         let mut layers = crate::project::AdjustmentLayers::default();

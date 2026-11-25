@@ -1,5 +1,5 @@
 //! Pinned authoring-reference transforms for GPU conformance checks.
-use crate::{Error, gpu::aces};
+use crate::{Error, photographic::stages::display_rendering::aces};
 use std::{borrow::Cow, sync::mpsc, time::Duration};
 use wgpu::util::DeviceExt;
 

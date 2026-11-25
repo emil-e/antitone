@@ -1,7 +1,5 @@
 use crate::{
-    Error,
-    gpu::{evaluation::*, lut3d},
-    photographic::graph::display_output,
+    Error, gpu::evaluation::*, photographic::graph::display_output, photographic::stages::look,
 };
 use crate::{
     looks::{LookAsset, LookOrigin, Lut3D},
@@ -275,7 +273,8 @@ fn legacy(
 ) {
     let looked = look.map(|asset| {
         let lut = renderer.looks.resource(asset.lut()).unwrap();
-        let kernel = pollster::block_on(crate::gpu::lut3d::Kernel::new(device)).unwrap();
+        let kernel =
+            pollster::block_on(crate::photographic::stages::look::Kernel::new(device)).unwrap();
         let pixels = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: source.size(),
@@ -722,7 +721,7 @@ fn named_look_values_keep_logical_identity_and_reuse_cached_pixels() {
         );
         let looked = renderer.looks.apply(input.clone(), &selected).unwrap();
         let independent = other.looks.apply(input.clone(), &chain(&renamed)).unwrap();
-        let resources = lut3d::applied_luts(&looked);
+        let resources = look::applied_luts(&looked);
         assert_eq!(
             crate::looks::LutChain::ordered_id(resources.iter().map(|lut| lut.id())),
             selected.id()
@@ -932,7 +931,7 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
 #[cfg(feature = "ocio-reference")]
 #[test]
 fn two_lut_operations_apply_in_declared_order_with_independent_bypass_and_shared_resources() {
-    use crate::{looks::LutChain, photographic};
+    use crate::looks::LutChain;
     use glam::DVec3;
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let make = |swap: bool| {
@@ -959,7 +958,7 @@ fn two_lut_operations_apply_in_declared_order_with_independent_bypass_and_shared
     let pixels: Vec<_> = encoded
         .iter()
         .map(|v| {
-            let rgb = v.map(photographic::decode);
+            let rgb = v.map(look::decode);
             [rgb.x as f32, rgb.y as f32, rgb.z as f32, 8.]
         })
         .collect();
@@ -996,7 +995,7 @@ fn two_lut_operations_apply_in_declared_order_with_independent_bypass_and_shared
                         v
                     }
                 };
-                out.map(photographic::decode)
+                out.map(look::decode)
             })
             .collect();
         let expected = cpu.render(&expected).unwrap();

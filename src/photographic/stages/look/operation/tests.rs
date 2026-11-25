@@ -1,7 +1,5 @@
-use crate::{
-    gpu::lut3d::{Kernel, Lut},
-    looks::Lut3D,
-};
+use super::{Kernel, Lut};
+use crate::looks::Lut3D;
 use glam::DVec3;
 use std::{
     sync::{Arc, mpsc},

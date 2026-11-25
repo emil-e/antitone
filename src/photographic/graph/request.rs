@@ -7,11 +7,11 @@ use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::source::camera_source;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::{drt, lut3d::Looks};
 use crate::image_recipe::{ImageRecipe, quality::Quality};
 use crate::looks::LutChain;
 use crate::photographic::stages::interpretation::InputTransform;
 use crate::photographic::stages::interpretation::InspectionView;
+use crate::photographic::stages::{display_rendering as drt, look::Looks};
 
 static NO_LUTS: LutChain = LutChain {
     lut: None,

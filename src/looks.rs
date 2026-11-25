@@ -1,5 +1,6 @@
 //! Immutable numeric colour treatments; provenance is separate from execution.
-use crate::{Error, photographic};
+use crate::{Error, photographic::stages::look::decode};
+#[cfg(test)]
 use glam::DVec3;
 use std::sync::Arc;
 mod chain;
@@ -43,7 +44,7 @@ pub(crate) fn failure(message: impl std::fmt::Display) -> Error {
     Error::Rendering(format!("Creative look: {message}"))
 }
 
-fn require(condition: bool, message: &str) -> Result<(), Error> {
+pub(crate) fn require(condition: bool, message: &str) -> Result<(), Error> {
     if condition {
         Ok(())
     } else {
@@ -115,7 +116,7 @@ impl Lut3D {
             nodes
                 .iter()
                 .flatten()
-                .all(|v| v.is_finite() && (photographic::decode(f64::from(*v)) as f32).is_finite()),
+                .all(|v| v.is_finite() && (decode(f64::from(*v)) as f32).is_finite()),
             "LUT output cannot be decoded to finite scene-linear float32",
         )?;
         let mut hash = blake3::Hasher::new();
@@ -152,49 +153,6 @@ impl Lut3D {
 
     pub fn byte_len(&self) -> usize {
         self.nodes.len() * 12
-    }
-
-    /// Double-precision tetrahedral reference with component-wise input clipping.
-    pub fn sample_encoded(&self, input: DVec3) -> Result<DVec3, Error> {
-        let input = input.to_array();
-        let mut cell = [0; 3];
-        let mut fraction = [0.; 3];
-        for c in 0..3 {
-            let lo = f64::from(self.min[c]);
-            let hi = f64::from(self.max[c]);
-            require(input[c].is_finite(), "nonfinite ACEScct look input")?;
-            let position = (input[c].clamp(lo, hi) - lo) / (hi - lo) * f64::from(self.size - 1);
-            cell[c] = (position as u32).min(self.size - 2);
-            fraction[c] = position - f64::from(cell[c]);
-        }
-        let at = |p: [u32; 3]| {
-            DVec3::from_array(
-                self.nodes[((p[2] * self.size + p[1]) * self.size + p[0]) as usize].map(f64::from),
-            )
-        };
-        let mut order = [0, 1, 2];
-        order.sort_by(|&a, &b| fraction[b].total_cmp(&fraction[a]));
-        let [a, b, c] = order.map(|i| fraction[i]);
-        let mut out = at(cell) * (1. - a);
-        cell[order[0]] += 1;
-        out += at(cell) * (a - b);
-        cell[order[1]] += 1;
-        out += at(cell) * (b - c);
-        cell[order[2]] += 1;
-        Ok(out + at(cell) * c)
-    }
-
-    pub fn apply(&self, linear_ap1: DVec3) -> Result<DVec3, Error> {
-        require(linear_ap1.is_finite(), "nonfinite scene-linear look input")?;
-        // A finite negative AP1 value can overflow ACEScct's linear branch.
-        // Clip the encoded result before admission; nonfinite source values still reject.
-        let encoded = linear_ap1.map(photographic::encode).clamp(
-            DVec3::from_array(self.min.map(f64::from)),
-            DVec3::from_array(self.max.map(f64::from)),
-        );
-        let output = self.sample_encoded(encoded)?.map(photographic::decode);
-        require(output.is_finite(), "nonfinite scene-linear look output")?;
-        Ok(output)
     }
 }
 
@@ -597,7 +555,7 @@ mod tests {
                 < 1e-14
         );
         let extreme = lut.apply(DVec3::new(-f64::MAX, f64::MAX, 0.18)).unwrap();
-        let expected = DVec3::new(photographic::decode(-0.5), photographic::decode(1.), 0.18);
+        let expected = DVec3::new(decode(-0.5), decode(1.), 0.18);
         assert!((extreme - expected).abs().max_element() < 1e-12);
         for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             assert!(lut.sample_encoded(DVec3::splat(value)).is_err());
