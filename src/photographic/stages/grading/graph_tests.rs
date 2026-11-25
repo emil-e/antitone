@@ -4,7 +4,7 @@ use crate::{
         AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
     },
     geometry::{SourcePoint, SourceRegion},
-    gpu::grading::Grading,
+    photographic::stages::grading::Grading,
     processing::RollSettings,
 };
 use glam::DVec3;
@@ -550,7 +550,7 @@ fn overflowing_matrix_products_retry_without_turning_signed_channels_into_nan() 
     let function = Function::new(
         format!(
             "{}\n{}",
-            crate::photographic::graph::shader::functions(),
+            crate::photographic::stages::shader::functions(),
             r#"
 fn matrix_retry_probe(pixel: vec4f, position: vec2f) -> vec4f {
     let columns = array<vec4f, 3>(

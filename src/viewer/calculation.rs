@@ -1,14 +1,13 @@
 //! Capture resident camera calculations and record their result into an image's target storage.
 
 use super::*;
-use crate::gpu::{
-    evaluation::Value,
-    grading::Grading,
-    interpretation::{InputTransform, InspectionView},
-    raster::Raster,
-};
+use crate::gpu::{evaluation::Value, raster::Raster};
 use crate::looks::LutChain;
 use crate::photographic::graph::{PhotographGraph, operations::CameraInput};
+use crate::photographic::stages::{
+    grading::Grading,
+    interpretation::{InputTransform, InspectionView},
+};
 
 impl ImageProcessing {
     fn camera(&self, raster: Raster) -> Result<Value, Error> {

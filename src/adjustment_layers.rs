@@ -3,7 +3,7 @@ use crate::{
     Error,
     color::{Balance, wb_matrix},
     geometry::SourcePoint,
-    photographic::Grade,
+    photographic::stages::grading::Grade,
     processing::{InputPipeline, InvertedPixel, RollSettings, exposure_multiplier},
 };
 use glam::{DMat3, DVec2, DVec3};
@@ -88,7 +88,7 @@ impl AdjustmentLayerSettings {
     pub fn validate(self) -> Result<Self, Error> {
         exposure_multiplier(self.exposure)?;
         wb_matrix(self.wb)?;
-        crate::photographic::Grade::new(self)?;
+        Grade::new(self)?;
         Ok(self)
     }
 }

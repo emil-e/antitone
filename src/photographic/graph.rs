@@ -3,7 +3,6 @@
 use crate::Error;
 use crate::gpu::evaluation::*;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::grading::Grading;
 #[cfg(any(test, feature = "editor"))]
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::source::ProcessingSource;
@@ -11,6 +10,7 @@ use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::stages::grading::Grading;
 use crate::reconstruction::reconstruct_cells;
 use std::sync::Arc;
 
@@ -49,12 +49,12 @@ mod provenance_tests;
 pub(crate) mod request;
 #[cfg(all(feature = "ui", feature = "render"))]
 mod resident;
-pub(crate) mod shader;
 #[cfg(all(test, feature = "editor"))]
 mod tests;
 #[cfg(feature = "editor")]
 pub(crate) mod view_source;
-use operations::{Camera, CameraInput, Captured, Interpretation, Mapping, ResidentCamera};
+use crate::photographic::stages::interpretation::operation::Interpretation;
+use operations::{Camera, CameraInput, Captured, Mapping, ResidentCamera};
 #[cfg(feature = "render")]
 mod prewarm;
 #[cfg(test)]
@@ -96,7 +96,7 @@ impl PhotographGraph {
     #[cfg(feature = "editor")]
     pub(super) fn native_positive(
         camera: Value,
-        program: crate::gpu::interpretation::InputTransform,
+        program: crate::photographic::stages::interpretation::InputTransform,
     ) -> Result<Value, Error> {
         Assembly::native(program).interpret(camera)
     }
@@ -157,7 +157,7 @@ impl PhotographGraph {
     #[cfg(feature = "editor")]
     pub(crate) fn input_transform(
         image: &Value,
-    ) -> Result<Option<crate::gpu::interpretation::InputTransform>, Error> {
+    ) -> Result<Option<crate::photographic::stages::interpretation::InputTransform>, Error> {
         Assembly::input_transform(image)
     }
 
@@ -228,7 +228,7 @@ impl PhotographGraph {
         let function = Function::new(
             format!(
                 "{}\n{}",
-                crate::photographic::graph::shader::functions(),
+                crate::photographic::stages::shader::functions(),
                 include_str!("graph/gathered.wgsl")
             ),
             "gathered_camera_light",
@@ -457,7 +457,7 @@ fn view_domain(frame: crate::frame_raster::FrameRaster, coverage: u32) -> Domain
 /// Inputs for calculating ungraded AP1, before Roll and adjustment-layer grading.
 #[cfg(feature = "editor")]
 pub(crate) struct NeutralInput {
-    pub interpretation: crate::gpu::interpretation::SourceInterpretation,
+    pub interpretation: crate::photographic::stages::interpretation::SourceInterpretation,
     pub field: Option<Arc<GpuFlatField>>,
     pub repairs: Vec<crate::dust_repair::Repair>,
     #[cfg(test)]
@@ -578,12 +578,12 @@ impl NeutralInput {
         let captured = Captured::new(
             definition,
             match self.interpretation {
-                crate::gpu::interpretation::SourceInterpretation::Photograph(program) => {
-                    Interpretation::Program(program)
-                }
-                crate::gpu::interpretation::SourceInterpretation::Inspection(_) => {
-                    Interpretation::Packed(ProcessingParameters::source())
-                }
+                crate::photographic::stages::interpretation::SourceInterpretation::Photograph(
+                    program,
+                ) => Interpretation::Program(program),
+                crate::photographic::stages::interpretation::SourceInterpretation::Inspection(
+                    _,
+                ) => Interpretation::Packed(ProcessingParameters::source()),
             },
         )?;
         let mut assembly = Assembly::captured(captured);

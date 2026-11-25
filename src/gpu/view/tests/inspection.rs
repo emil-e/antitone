@@ -189,7 +189,7 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                     )
                     .unwrap();
                     assert!(
-                        crate::gpu::grading::Grading::captured_bytes(
+                        crate::photographic::stages::grading::Grading::captured_bytes(
                             &view.product.as_ref().unwrap().definition
                         ) == 0,
                         "no calibration, inversion, WB, contrast, saturation or layers"

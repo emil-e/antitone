@@ -12,8 +12,6 @@ pub mod evaluation;
 pub(crate) mod execution;
 pub mod flat;
 pub mod gaussian;
-pub mod grading;
-pub mod interpretation;
 pub mod lut3d;
 #[cfg(all(
     feature = "raw",
@@ -124,3 +122,6 @@ mod tests;
 
 #[cfg(test)]
 mod shader_layout_tests;
+
+// Preserve the original public paths for prepared photographic controls.
+pub use crate::photographic::stages::{grading, interpretation};

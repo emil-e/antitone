@@ -4,7 +4,7 @@ use super::*;
 use crate::gpu::flat::GpuFlatField;
 use crate::{
     editor::measurement::query::{FORWARD_RESIDUAL_FLOOR, Samples},
-    gpu::grading::Grading,
+    photographic::stages::grading::Grading,
 };
 use glam::DVec3;
 use std::sync::Arc;

@@ -314,7 +314,9 @@ fn inspection_and_positive_views_share_budgeted_inputs_but_not_view_results() {
                 let frame = editor.document.visit.working_view.frame.as_ref().unwrap();
                 assert_eq!(frame.request.capture.is_inspection(), spec.is_inspection());
                 assert_eq!(
-                    crate::gpu::interpretation::has_filtered_inspection(&frame.source.definition),
+                    crate::photographic::stages::interpretation::has_filtered_inspection(
+                        &frame.source.definition
+                    ),
                     spec.is_inspection()
                 );
             });

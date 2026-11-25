@@ -1,8 +1,8 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSnapshot;
 use crate::geometry::Composition;
-use crate::gpu::grading::Grading;
 use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::stages::grading::Grading;
 use crate::processing::InputSettings;
 use crate::processing::RollSettings;
 use crate::rendering::OutputTarget;

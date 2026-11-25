@@ -1,8 +1,8 @@
 //! Captured photographic functions over neutral AP1, independent of raster acquisition.
 
+use super::Grading;
 use crate::Error;
 use crate::gpu::evaluation::*;
-use crate::gpu::grading::Grading;
 
 fn grading_context(
     parameters: &crate::gpu::parameters::ProcessingParameters,
@@ -99,16 +99,8 @@ impl Operation for Grade {
                 self.function.code,
                 include_str!("camera_adjustments.wgsl")
             );
-            let mut function = self.function.clone();
-            function.bindings.push((
-                5,
-                FunctionBinding::Uniform(
-                    bytemuck::bytes_of(&crate::gpu::flat::FieldGeometry::uncorrected(Some(
-                        geometry,
-                    )))
-                    .into(),
-                ),
-            ));
+            let function =
+                crate::gpu::flat::bind_source_coordinates(self.function.clone(), geometry);
             value::Operation::new(
                 "camera-coordinate grading v1",
                 self.definition.clone(),
@@ -165,7 +157,7 @@ impl Grading {
 
     pub(crate) fn shader() -> String {
         [
-            crate::photographic::graph::shader::functions(),
+            crate::photographic::stages::shader::functions(),
             include_str!("view_bindings.wgsl").to_owned(),
             include_str!("view.wgsl").to_owned(),
         ]

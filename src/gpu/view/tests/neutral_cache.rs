@@ -1,6 +1,6 @@
 use super::*;
-use crate::gpu::interpretation::InputTransform;
 use crate::photographic::graph::view_source::SourceRequest;
+use crate::photographic::stages::interpretation::InputTransform;
 
 #[test]
 fn neutral_definitions_and_live_values_do_not_change_with_processing_padding() {
@@ -150,11 +150,11 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         .remove(0);
         assert!(repeated.same_pixels_as(&source));
         let program = *wanted.program().unwrap();
-        let mut changed_input = program.input;
+        let mut changed_input = program.input();
         if let InputSettings::Negative { gamma, .. } = &mut changed_input {
             *gamma = gamma.next_up();
         }
-        let changed_program = InputTransform::new(changed_input, program.matrix).unwrap();
+        let changed_program = InputTransform::new(changed_input, program.matrix()).unwrap();
         assert_ne!(program, changed_program);
         assert_eq!(
             bytemuck::bytes_of(&program.neutral_parameters().unwrap()),
@@ -185,7 +185,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         );
         let changed = SourceRequest::new(
             wanted.frame(),
-            wanted.program().unwrap().input,
+            wanted.program().unwrap().input(),
             wanted.matrix() * 1.01,
             wanted.field.clone(),
         )

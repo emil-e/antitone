@@ -29,7 +29,7 @@ fn validate(name: &str, source: &str, entry_points: &[&str]) {
 fn photographic_functions_and_masked_composition_validate() {
     validate(
         "photographic functions",
-        &crate::photographic::graph::shader::functions(),
+        &crate::photographic::stages::shader::functions(),
         &[],
     );
     use gpu::evaluation::*;
@@ -70,7 +70,7 @@ fn photographic_functions_and_masked_composition_validate() {
 fn composed_working_view_validates() {
     validate(
         "source inspection functions",
-        include_str!("gpu/interpretation/inspection.wgsl"),
+        include_str!("photographic/stages/interpretation/inspection.wgsl"),
         &[],
     );
     validate(
@@ -80,15 +80,15 @@ fn composed_working_view_validates() {
     );
     validate(
         "photographic functions",
-        &gpu::grading::Grading::shader(),
+        &crate::photographic::stages::grading::Grading::shader(),
         &[],
     );
     validate(
         "camera-cell adjustments",
         &format!(
             "{}\n{}",
-            gpu::grading::Grading::shader(),
-            include_str!("gpu/grading/camera_adjustments.wgsl")
+            crate::photographic::stages::grading::Grading::shader(),
+            include_str!("photographic/stages/grading/camera_adjustments.wgsl")
         ),
         &[],
     );

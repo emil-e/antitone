@@ -613,7 +613,7 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
                 .filter(|root| root.upgrade().is_some())
                 .count()
         };
-        let bytes = crate::gpu::grading::Grading::captured_bytes(&roots[0]);
+        let bytes = crate::photographic::stages::grading::Grading::captured_bytes(&roots[0]);
         assert!(bytes > 0, "the fixture must capture photographic arguments");
         let context = egui::Context::default();
         let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());

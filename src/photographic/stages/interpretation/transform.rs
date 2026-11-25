@@ -9,7 +9,7 @@ use glam::DMat3;
 /// The source viewer's transform over ungraded working light.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InspectionView {
-    pub(super) matrix: DMat3,
+    matrix: DMat3,
 }
 
 impl InspectionView {
@@ -80,11 +80,8 @@ pub(crate) fn inspect_filtered(
         value::Operation::pointwise_function(
             "source inspection v1",
             operation,
-            Function::new(
-                include_str!("interpretation/inspection.wgsl"),
-                "inspect_source",
-            )
-            .with_uniform(0, &operation),
+            Function::new(include_str!("inspection.wgsl"), "inspect_source")
+                .with_uniform(0, &operation),
         ),
     )
 }
@@ -99,8 +96,8 @@ pub(crate) fn has_filtered_inspection(image: &Value) -> bool {
 /// Source execution captured separately from photographic controls.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InputTransform {
-    pub(super) input: InputSettings,
-    pub(super) matrix: DMat3,
+    input: InputSettings,
+    matrix: DMat3,
 }
 
 #[cfg(feature = "editor")]

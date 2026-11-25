@@ -2,7 +2,7 @@ use super::tests::{fixture, make_plan, make_plan_with_policy};
 use super::*;
 use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use crate::photographic::graph::test_support::{matrix, settings};
-use crate::{gpu::evaluation::CellRegion as Rect, gpu::grading::Grading};
+use crate::{gpu::evaluation::CellRegion as Rect, photographic::stages::grading::Grading};
 
 #[test]
 fn independent_code_reference_can_be_composed_and_replaced_without_planner_changes() {

@@ -129,9 +129,9 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
     use crate::adjustment_layers::AdjustmentLayer;
     use crate::adjustment_layers::AdjustmentLayerSettings;
     use crate::adjustment_layers::AdjustmentLayerSnapshot;
-    use crate::gpu::grading::Grading;
-    use crate::gpu::interpretation::InputTransform;
     use crate::gpu::test_inputs::AuthoredPhotograph;
+    use crate::photographic::stages::grading::Grading;
+    use crate::photographic::stages::interpretation::InputTransform;
     use crate::processing::InputSettings;
     use crate::processing::RollSettings;
     pollster::block_on(async {

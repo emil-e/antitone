@@ -1,13 +1,13 @@
 use super::*;
 use crate::gpu::evaluation;
-#[cfg(any(feature = "ui", feature = "editor"))]
-use crate::gpu::grading::Grading;
-#[cfg(feature = "ui")]
-use crate::gpu::interpretation::{InputTransform, InspectionView};
 #[cfg(feature = "editor")]
 use crate::gpu::parameters::ProcessingParameters;
 #[cfg(feature = "ui")]
 use crate::gpu::source::ProcessingSource;
+#[cfg(any(feature = "ui", feature = "editor"))]
+use crate::photographic::stages::grading::Grading;
+#[cfg(feature = "ui")]
+use crate::photographic::stages::interpretation::{InputTransform, InspectionView};
 
 /// Compile the common viewer paths before foreground command recording.
 pub fn prewarm_viewer(
@@ -84,7 +84,7 @@ impl PhotographGraph {
         context: &evaluation::Context,
         drt: &crate::gpu::drt::Targets,
     ) -> Result<(), Error> {
-        use crate::gpu::interpretation::inspect_filtered;
+        use crate::photographic::stages::interpretation::inspect_filtered;
 
         let domain = Domain {
             bounds: Some([0, 0, 1, 1].into()),

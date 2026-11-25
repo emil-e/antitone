@@ -1,14 +1,12 @@
 //! Photographs over already-sampled camera cells. The source owns their raster declaration.
 
 use super::*;
+use crate::photographic::stages::interpretation::{InputTransform, InspectionView};
 use crate::{
     acquisition::{Plan, Request, Sampling},
     frame_raster::FrameRaster,
     geometry::Composition,
-    gpu::{
-        interpretation::{InputTransform, InspectionView},
-        raster::Raster,
-    },
+    gpu::raster::Raster,
 };
 
 impl PhotographGraph {

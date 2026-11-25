@@ -1,12 +1,12 @@
 use super::*;
 use crate::Error;
-use crate::gpu::grading::Grading;
-use crate::gpu::interpretation::InputTransform;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::photographic::graph::test_support::CameraFixture;
+use crate::photographic::stages::grading::Grading;
+use crate::photographic::stages::interpretation::InputTransform;
 use crate::processing::{InputSettings, RollSettings};
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},

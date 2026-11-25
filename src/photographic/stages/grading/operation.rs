@@ -1,9 +1,4 @@
-mod graph;
-#[cfg(all(test, feature = "editor"))]
-mod graph_tests;
-#[cfg(test)]
-mod layout_tests;
-
+use super::{Grade, TONAL_WIDTH, encoded_grey};
 use crate::gpu::{
     parameters::{CameraMatrix, ProcessingParameters},
     source::SourceGeometry,
@@ -13,7 +8,6 @@ use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
     color::{AP1_TO_XYZ, Balance, ap1_to_cones, oklab},
     geometry::SourceRegion,
-    photographic::{Grade, TONAL_WIDTH, encoded_grey},
     processing::RollSettings,
 };
 use bytemuck::Zeroable;
@@ -22,7 +16,7 @@ use glam::{DVec2, Vec2, Vec3};
 // Host layouts for grading/bindings.wgsl; shader layout tests check the member offsets.
 #[repr(C, align(16))]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(super) struct AdjustmentLayerParameters {
+pub(crate) struct AdjustmentLayerParameters {
     mask_origin: Vec2,
     mask_x_axis: Vec2,
     mask_y_axis: Vec2,
@@ -45,7 +39,7 @@ pub(super) struct AdjustmentLayerParameters {
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(super) struct AdjustmentLayerContext {
+pub(crate) struct AdjustmentLayerContext {
     ap1_to_bradford: CameraMatrix,
     bradford_to_ap1: CameraMatrix,
     ap1_to_oklab_lms: CameraMatrix,
@@ -120,10 +114,10 @@ impl Grading {
     /// identity-valued layer omitted from the active grade traversal.
     #[cfg(feature = "editor")]
     pub(crate) fn weight_image(
-        input: super::evaluation::Value,
+        input: crate::gpu::evaluation::Value,
         mut layer: AdjustmentLayer,
-    ) -> Result<super::evaluation::Value, Error> {
-        use super::evaluation::{Function, pointwise};
+    ) -> Result<crate::gpu::evaluation::Value, Error> {
+        use crate::gpu::evaluation::{Function, pointwise};
 
         layer.validate()?;
         if !layer.enabled {
@@ -131,17 +125,18 @@ impl Grading {
         }
 
         let parameters = AdjustmentLayerParameters::new(layer, input.domain().finite()?.source()?)?;
-        let code = format!(
-            "{}\n{}",
-            Self::shader(),
-            include_str!("grading/layer_weight.wgsl")
-        );
+        let code = format!("{}\n{}", Self::shader(), include_str!("layer_weight.wgsl"));
 
         Ok(pointwise(
             input,
             Function::new(code, "evaluation_layer_weight")
                 .with_storage(6, bytemuck::bytes_of(&parameters)),
         ))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn context_bytes(&self) -> &[u8] {
+        bytemuck::bytes_of(&self.context)
     }
 
     pub fn snapshot(&self) -> &AdjustmentLayerSnapshot {
@@ -231,7 +226,7 @@ fn prepare_layers(
     Ok(packed)
 }
 
-pub(super) fn supported(bound: f64) -> Result<(), Error> {
+fn supported(bound: f64) -> Result<(), Error> {
     if !bound.is_finite() || bound > f32::MAX as f64 / 4. {
         Err(Error::Gpu(
             "adjustment mask coordinates exceed the f32 range".into(),
@@ -336,3 +331,6 @@ fn context_parameters(
         _padding: [0; 3],
     })
 }
+
+#[cfg(test)]
+mod layout_tests;

@@ -613,7 +613,7 @@ impl ImageKey {
                     .checked_add(look.gpu_bytes())?;
             }
             bytes = bytes.checked_add(
-                2 * (crate::gpu::grading::Grading::byte_len_for(&recipe.grade)
+                2 * (crate::photographic::stages::grading::Grading::byte_len_for(&recipe.grade)
                     + recipe.grade.retained_bytes() as u64),
             )?;
         }

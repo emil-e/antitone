@@ -578,7 +578,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
             let post = wb_matrix(photo.wb).unwrap()
                 * wb_matrix(roll.wb).unwrap()
                 * (roll.exposure + photo.exposure).exp2();
-            let grade = crate::photographic::Grade::new(photo).unwrap();
+            let grade = crate::photographic::stages::grading::Grade::new(photo).unwrap();
             for (neutral, pixel) in actual.iter().zip(values) {
                 let expected = grade
                     .apply(
@@ -856,7 +856,7 @@ fn original_reference_repairs_are_pre_grade_and_leave_other_rendered_pixels_bit_
         let post = wb_matrix(photo.wb).unwrap()
             * wb_matrix(roll.wb).unwrap()
             * (roll.exposure + photo.exposure).exp2();
-        let grade = crate::photographic::Grade::new(photo).unwrap();
+        let grade = crate::photographic::stages::grading::Grade::new(photo).unwrap();
         let cpu = crate::rendering::CpuRenderer::new(OutputTarget::Srgb).unwrap();
         let values = evaluated
             .pixels()

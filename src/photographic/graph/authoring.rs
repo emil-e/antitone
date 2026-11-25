@@ -143,7 +143,7 @@ impl PhotographGraph {
         limits: &wgpu::Limits,
         source: Value,
         field: Option<Arc<GpuFlatField>>,
-        program: crate::gpu::interpretation::InputTransform,
+        program: crate::photographic::stages::interpretation::InputTransform,
         grading: Grading,
         repairs: Vec<crate::dust_repair::Repair>,
         definition: &Assembly,

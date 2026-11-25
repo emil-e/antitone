@@ -36,7 +36,7 @@ fn initial_brush_size(active: SourceRegion) -> u32 {
 }
 
 #[cfg(test)]
-pub(super) type Signature = crate::gpu::interpretation::InputTransform;
+pub(super) type Signature = crate::photographic::stages::interpretation::InputTransform;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RepairFeedback {

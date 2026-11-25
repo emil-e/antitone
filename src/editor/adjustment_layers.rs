@@ -495,7 +495,7 @@ impl Editor {
                     let response = ui::ParameterRow::new(
                         "contrast",
                         "Contrast",
-                        crate::photographic::CONTRAST_RANGE,
+                        crate::photographic::stages::grading::CONTRAST_RANGE,
                     )
                     .default_value(defaults.contrast)
                     .help("Adjust contrast around Pivot; 1 leaves contrast unchanged.")
@@ -514,7 +514,7 @@ impl Editor {
                         .edit;
                     self.photo_control(response, |adjustment| adjustment.photo.pivot = photo.pivot);
 
-                    let max_ev = crate::photographic::MAX_TONAL_EV;
+                    let max_ev = crate::photographic::stages::grading::MAX_TONAL_EV;
                     let response =
                         ui::ParameterRow::new("photo-shadows", "Shadows", -max_ev..=max_ev)
                             .default_value(defaults.shadows)
