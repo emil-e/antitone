@@ -47,7 +47,7 @@ def verify_package(directory: Path, name: str, digest: str) -> str:
     return actual
 
 
-def assemble(macos: Path, windows: Path, output: Path) -> None:
+def assemble(macos: Path, windows: Path, output: Path, *, tag: str) -> None:
     # Validate both inputs before creating anything publishable. A fresh output directory prevents
     # stale assets from an earlier run from being picked up by a release upload.
     mac_checksums = read_checksums(macos, (PACKAGES[0], LIGHTROOM))
@@ -61,12 +61,12 @@ def assemble(macos: Path, windows: Path, output: Path) -> None:
     ]
     output.mkdir(parents=True, exist_ok=False)
     try:
-        for directory, name in inputs:
-            shutil.copyfile(directory / name, output / name)
-        checksums = "".join(
-            f"{digest}  {name}\n" for digest, (_, name) in zip(hashes, inputs, strict=True)
-        )
-        (output / "SHA256SUMS").write_text(checksums, encoding="ascii")
+        checksums = []
+        for (directory, name), digest in zip(inputs, hashes, strict=True):
+            asset_name = f"{Path(name).stem}-{tag}.zip"
+            shutil.copyfile(directory / name, output / asset_name)
+            checksums.append(f"{digest}  {asset_name}\n")
+        (output / "SHA256SUMS").write_text("".join(checksums), encoding="ascii")
     except Exception:
         shutil.rmtree(output)
         raise
@@ -86,7 +86,7 @@ def main() -> None:
         return
     if any(value is None for value in (args.macos, args.windows, args.output)):
         parser.error("assembly requires --macos, --windows and --output")
-    assemble(args.macos, args.windows, args.output)
+    assemble(args.macos, args.windows, args.output, tag=args.tag)
 
 
 if __name__ == "__main__":

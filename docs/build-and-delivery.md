@@ -68,7 +68,9 @@ GitHub's runner images change over time (Xcode and tool versions drift); the pin
 
 Pushing a `v*` tag publishes both platforms: [release.yml](../.github/workflows/release.yml) first validates that the tag matches the crate version in `Cargo.toml`, then builds macOS ARM64 and Windows x64 in separate jobs. macOS runs native setup, direct-SDK adapter tests, `cargo xtask package` and relocated-package verification; Windows reuses the [Windows workflow](../.github/workflows/windows.yml), including its tests and package smoke checks.
 
-Only after both jobs succeed does publication download the artifacts, verify each platform's SHA-256 manifest and ZIP integrity with [release assembly](../scripts/prepare-release.py), and create one GitHub Release containing both application ZIPs, the matching Lightroom plug-in ZIP and a combined `SHA256SUMS`. Publishing is direct rather than draft because pushing a tag is a deliberate act. Device-dependent suites remain the local pre-merge responsibility. Before tagging, complete the license review and clean-machine acceptance under [before public distribution](#before-public-distribution).
+Only after both jobs succeed does [release assembly](../scripts/prepare-release.py) verify the downloaded ZIPs against each platform's SHA-256 manifest and check their integrity. It appends the tag to the published application and Lightroom ZIP filenames (for example, `Antitone-macos-arm64-v0.2.0.zip`) and writes a combined `SHA256SUMS` with those names.
+
+Publishing is direct rather than draft because pushing a tag is a deliberate act. Device-dependent suites remain the local pre-merge responsibility. Before tagging, complete the license review and clean-machine acceptance under [before public distribution](#before-public-distribution).
 
 ## Before public distribution
 

@@ -32,7 +32,7 @@ Antitone supports **Apple Silicon Macs running macOS 14 or later** and
 
 ### macOS
 
-Download `Antitone-macos-arm64.zip` from the [releases page](https://github.com/emil-e/antitone/releases),
+Download the macOS ARM64 ZIP from the [releases page](https://github.com/emil-e/antitone/releases),
 unzip it, and move `Antitone.app` to Applications. The release also publishes
 `SHA256SUMS` if you want to verify the download.
 
@@ -43,7 +43,7 @@ lists the blocked app with an **Open Anyway** button. After that it opens normal
 
 ### Windows
 
-Download `Antitone-windows-x64.zip` from the [releases page](https://github.com/emil-e/antitone/releases).
+Download the Windows x64 ZIP from the [releases page](https://github.com/emil-e/antitone/releases).
 Extract the whole folder and run `antitone.exe`, keeping the runtime DLLs beside it.
 The release's `SHA256SUMS` covers both platform packages. The [build guide](docs/build-and-run.md#windows)
 covers building and packaging from source.
