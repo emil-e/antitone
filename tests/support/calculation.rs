@@ -5,10 +5,11 @@ use antitone::photographic::stages::{grading::Grading, interpretation::InputTran
 use antitone::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
+    evaluation::Value,
     frame_raster::FrameRaster,
     geometry::{SourceRegion, TextureMapping},
-    gpu::{evaluation::Value, parameters::ProcessingParameters},
     gpu_scopes::{GpuScopes, ScopePaint},
+    photographic::parameters::ProcessingParameters,
     processing::{InputSettings, RollSettings},
     scopes::{Counts, Settings},
     viewer::{GpuImage, ImagePaint, Presentation},
@@ -36,7 +37,7 @@ pub fn photograph_with_field(
     layers: AdjustmentLayerSnapshot,
     matrix: DMat3,
     area: SourceRegion,
-    field: Option<Arc<antitone::gpu::flat::GpuFlatField>>,
+    field: Option<Arc<antitone::photographic::stages::flat_field::GpuFlatField>>,
 ) -> Result<Calculation, Error> {
     let program = InputTransform::new(input, matrix)?;
     let grading = Grading::new(limits, roll, layers, area)?;
@@ -52,7 +53,7 @@ pub fn inspection(parameters: ProcessingParameters) -> Calculation {
 
 pub fn inspection_with_field(
     parameters: ProcessingParameters,
-    field: Option<Arc<antitone::gpu::flat::GpuFlatField>>,
+    field: Option<Arc<antitone::photographic::stages::flat_field::GpuFlatField>>,
 ) -> Calculation {
     Arc::new(move |image| {
         let prefix = image.inspection(parameters, field.clone())?;

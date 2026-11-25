@@ -2,10 +2,10 @@
 
 pub(crate) fn functions() -> String {
     [
-        include_str!("../../gpu/parameters.wgsl"),
+        include_str!("../parameters.wgsl"),
         include_str!("grading/bindings.wgsl"),
         include_str!("pixel.wgsl"),
-        include_str!("../../gpu/working_range.wgsl"),
+        include_str!("working_range.wgsl"),
         include_str!("interpretation/camera_conversion.wgsl"),
         include_str!("interpretation/film_response.wgsl"),
         include_str!("grading/coverage.wgsl"),

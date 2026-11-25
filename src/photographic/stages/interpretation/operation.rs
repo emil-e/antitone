@@ -3,7 +3,8 @@
 use super::InputTransform;
 use crate::{
     Error,
-    gpu::{evaluation::*, parameters::ProcessingParameters},
+    evaluation::*,
+    photographic::parameters::ProcessingParameters,
     processing::{InputSettings, RollSettings},
 };
 use std::hash::{Hash, Hasher};
@@ -114,18 +115,18 @@ impl Operation for Native {
         Some(RetainedKey::new(NativeIdentity(self.interpretation)))
     }
 
-    fn reads(&self, region: CellRegion) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
-        Ok(vec![crate::gpu::evaluation::Read::new(0, region)])
+    fn reads(&self, region: CellRegion) -> Result<Vec<crate::evaluation::Read>, Error> {
+        Ok(vec![crate::evaluation::Read::new(0, region)])
     }
 
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         value::Calculation::new(
             domain,
             output,
@@ -164,7 +165,7 @@ pub struct Working {
 impl Working {
     pub fn new(interpretation: Interpretation, matrix: glam::DMat3) -> Result<Self, Error> {
         interpretation.parameters()?;
-        crate::gpu::parameters::CameraMatrix::new(matrix)?;
+        crate::photographic::parameters::CameraMatrix::new(matrix)?;
         Ok(Self {
             interpretation,
             matrix,
@@ -192,18 +193,18 @@ impl Operation for Working {
         )))
     }
 
-    fn reads(&self, region: CellRegion) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
-        Ok(vec![crate::gpu::evaluation::Read::new(0, region)])
+    fn reads(&self, region: CellRegion) -> Result<Vec<crate::evaluation::Read>, Error> {
+        Ok(vec![crate::evaluation::Read::new(0, region)])
     }
 
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         value::Calculation::new(
             domain,
             output,
@@ -224,7 +225,7 @@ impl Working {
             .interpretation
             .parameters()
             .expect("captured interpretation was admitted");
-        let matrix = crate::gpu::parameters::CameraMatrix::new(self.matrix)
+        let matrix = crate::photographic::parameters::CameraMatrix::new(self.matrix)
             .expect("captured camera matrix was admitted");
         Function::new(
             format!(

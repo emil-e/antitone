@@ -1,11 +1,11 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerStack;
+use crate::evaluation::numeric_fixture::NumericKey;
 use crate::geometry::SourcePoint;
 use crate::geometry::SourceRegion;
-use crate::gpu::evaluation::numeric_fixture::NumericKey;
-use crate::gpu::flat::GpuFlatField;
-use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::photographic::graph::authoring::PhotographTaps;
+use crate::photographic::stages::flat_field::GpuFlatField;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::processing::Calibration;
 use crate::processing::InputPipeline;
 use crate::processing::InputSettings;
@@ -33,7 +33,7 @@ impl Source for Codes {
         }
     }
 
-    fn read(&self, r: crate::gpu::evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+    fn read(&self, r: crate::evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
         let r = r.source()?;
         Ok((r.y..r.bottom())
             .flat_map(|y| {
@@ -75,7 +75,7 @@ fn evaluate(
 
 #[test]
 fn repaired_spatial_composition_matches_host_and_image_delivery() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let area: SourceRegion = [0, 0, 128, 128].into();
     let codes = Arc::new(Codes {
@@ -160,11 +160,7 @@ fn repaired_spatial_composition_matches_host_and_image_delivery() {
                     .unwrap(),
             )
             .unwrap();
-            return crate::gpu::evaluation::read_buffer(
-                &device,
-                &queue,
-                image.as_buffer().unwrap(),
-            )[0];
+            return crate::evaluation::read_buffer(&device, &queue, image.as_buffer().unwrap())[0];
         }
         let mut pixels = Vec::new();
         context
@@ -206,7 +202,7 @@ fn photographic_identities_follow_captured_operations_not_physical_fusion() {
         AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
     };
     use crate::processing::RollSettings;
-    let (device, _queue, _) = crate::gpu::test_support::render_context();
+    let (device, _queue, _) = crate::photographic::test_support::render_context();
     let area = SourceRegion::from([0, 0, 2, 2]);
     let codes = Arc::new(Codes {
         area,
@@ -284,7 +280,7 @@ fn photographic_identities_follow_captured_operations_not_physical_fusion() {
 
 #[test]
 fn camera_light_uses_original_coordinates_and_shared_correction_before_interpretation() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let area = SourceRegion::from([11, 17, 13, 9]);
     let pixels: Vec<_> = (0..area.width * area.height)
         .map(|index| {
@@ -379,7 +375,7 @@ fn camera_light_uses_original_coordinates_and_shared_correction_before_interpret
 #[test]
 fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composition() {
     use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let area = SourceRegion::from([11, 17, 81, 67]);
     let pixels: Vec<_> = (0..area.width * area.height)
         .map(|i| {
@@ -634,7 +630,7 @@ fn double(p: vec4f, pos: vec2f) -> vec4f {
 
 #[test]
 fn keeping_a_neutral_image_does_not_retain_its_downstream_grade() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let area = SourceRegion::from([11, 17, 3, 2]);
     let pipeline = Arc::new(
         AuthoredPhotograph::new(

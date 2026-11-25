@@ -2,12 +2,12 @@
 
 use super::GrainParameters;
 use crate::Error;
-use crate::gpu::{
+use crate::{
+    acquisition::raster::Raster,
     evaluation::{
         CellRegion, Domain, Operation, Read, RetainedKey, Tiling, Value,
         value::{self, Access, Calculation},
     },
-    raster::Raster,
 };
 use std::sync::Arc;
 
@@ -121,8 +121,8 @@ impl Operation for GrainOperation {
         let inputs = Calculation::references(inputs);
         let raster = domain.grid.raster(output);
         let code = [
-            include_str!("../../../gpu/raster.wgsl"),
-            include_str!("../../../gpu/working_range.wgsl"),
+            include_str!("../../../acquisition/raster.wgsl"),
+            include_str!("../working_range.wgsl"),
             include_str!("parameters.wgsl"),
             include_str!("apply.wgsl"),
             "fn pixel(cell:vec2i,position:vec2f,source:vec4f,p:Grain)->vec4f { return apply_grain(source,input_1(cell).rgb,p); }"
@@ -156,8 +156,8 @@ pub(crate) fn is_field_key(key: &RetainedKey) -> bool {
 #[cfg(test)]
 pub(crate) fn shader() -> String {
     [
-        include_str!("../../../gpu/raster.wgsl"),
-        include_str!("../../../gpu/working_range.wgsl"),
+        include_str!("../../../acquisition/raster.wgsl"),
+        include_str!("../working_range.wgsl"),
         include_str!("parameters.wgsl"),
         include_str!("bindings.wgsl"),
         include_str!("apply.wgsl"),
@@ -202,7 +202,7 @@ fn parameter_data(raster: Raster, model: GrainParameters, noise_seed: u64) -> Pa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gpu::evaluation::{Grid, borrowed_input};
+    use crate::evaluation::{Grid, borrowed_input};
 
     #[test]
     fn field_identity_distinguishes_seeds_with_the_same_packed_word() {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::parameters::ProcessingParameters;
+use crate::photographic::parameters::ProcessingParameters;
 
 /// Display transforms follow captured source inputs, independently of document snapshots.
 #[derive(Default, Debug)]

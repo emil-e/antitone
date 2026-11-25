@@ -1,8 +1,8 @@
 use super::*;
 mod layout;
-use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::photographic::graph::request::PhotographRequest;
 use crate::photographic::graph::view_source::SourceRequest;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 
 fn capture(pixels: &source::Context, base: &SourceRequest, offset: f64, wb: f64) -> Demand {
     let scan = pixels.scan().unwrap();
@@ -34,7 +34,7 @@ fn capture(pixels: &source::Context, base: &SourceRequest, offset: f64, wb: f64)
     .unwrap();
     let spec = SourceRequest::for_processing(base.frame(), &processing)
         .unwrap()
-        .with_identity(crate::gpu::source::identity::Identity::camera(
+        .with_identity(crate::acquisition::camera::identity::Identity::camera(
             pixels.source.identity(),
         ));
     Demand {

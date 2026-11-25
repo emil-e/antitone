@@ -62,7 +62,7 @@ Justify numerical expectations independently; test exact supplied-sample seriali
 
 #### Export checks
 
-Check captured recipes, source-specific output, cold acquisition, failure continuation, collision races, atomic publication and preservation of completed files. [Original-processing comparisons](../src/gpu/execution/photographic_tests.rs) check scalar/OCIO correspondence at linear GPU readback, independently of file storage. Their negative fixture measures calibration from the authored native-camera patches; nominal sensor ratios can introduce a near-base mismatch amplified by inversion and grading. [Writer checks](../tests/gpu_export.rs) and [encoder checks](../tests/export.rs) instead verify serialization of supplied samples and colour metadata. [Output](colour-and-output.md#render-and-encode-a-file) owns those contracts; [editor](editor.md#export-photographs) owns the composed interaction.
+Check captured recipes, source-specific output, cold acquisition, failure continuation, collision races, atomic publication and preservation of completed files. [Original-processing comparisons](../src/rendering/execution/photographic_tests.rs) check scalar/OCIO correspondence at linear GPU readback, independently of file storage. Their negative fixture measures calibration from the authored native-camera patches; nominal sensor ratios can introduce a near-base mismatch amplified by inversion and grading. [Writer checks](../tests/gpu_export.rs) and [encoder checks](../tests/export.rs) instead verify serialization of supplied samples and colour metadata. [Output](colour-and-output.md#render-and-encode-a-file) owns those contracts; [editor](editor.md#export-photographs) owns the composed interaction.
 
 #### Roll analysis
 
@@ -94,7 +94,7 @@ Require actual paints/completion and failure on premature closure or timeout. Fu
 
 ### Specialist diagnostics
 
-Ignored tests are opt-in for samples, hardware, windows or substantial resources. [Diagnostics](diagnostics.md) owns workloads and interpretation. Authored resource observations live with [acquisition/execution](../src/gpu/view/tests/resource_observation.rs) and [native output](../src/gpu_export/native_resources.rs); sampled peaks and phase timings have limited coverage. Keep private inputs read-only and generated products ignored.
+Ignored tests are opt-in for samples, hardware, windows or substantial resources. [Diagnostics](diagnostics.md) owns workloads and interpretation. Authored resource observations live with [acquisition/execution](../src/viewer/view/tests/resource_observation.rs) and [native output](../src/gpu_export/native_resources.rs); sampled peaks and phase timings have limited coverage. Keep private inputs read-only and generated products ignored.
 
 ## Before handoff
 

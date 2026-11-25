@@ -73,9 +73,9 @@ fn evaluate(
     output: [u32; 2],
     tile: [u32; 2],
 ) -> Vec<[f32; 4]> {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let input = Domain {
-        bounds: Some(crate::gpu::evaluation::CellRegion::new([11, 17], size)),
+        bounds: Some(crate::evaluation::CellRegion::new([11, 17], size)),
         grid: Grid::axis_aligned([123.25, -81.5], [1.; 2]),
     };
     let mapping = Mapping {
@@ -83,7 +83,7 @@ fn evaluate(
         ..mapping
     };
     let domain = Domain {
-        bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], output)),
+        bounds: Some(crate::evaluation::CellRegion::new([0, 0], output)),
         grid: Grid {
             origin: input.grid.point(mapping.start),
             axes: mapping.axes,
@@ -104,12 +104,12 @@ fn evaluate(
         .run(&device, &queue, &plan, || false)
         .unwrap()
         .unwrap();
-    crate::gpu::evaluation::read_buffer(&device, &queue, &result.pixels)
+    crate::evaluation::read_buffer(&device, &queue, &result.pixels)
 }
 
 #[test]
 fn signed_grid_origins_preserve_sample_addressing_and_mean_placement_across_tiles() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let input = Domain {
         bounds: Some([-4, -2, 4, 2].into()),
         grid: Grid {
@@ -144,7 +144,7 @@ fn signed_grid_origins_preserve_sample_addressing_and_mean_placement_across_tile
             .unwrap()
             .unwrap();
         assert_eq!(
-            crate::gpu::evaluation::read_buffer(&device, &queue, &result.pixels),
+            crate::evaluation::read_buffer(&device, &queue, &result.pixels),
             vec![[6., 7., 8., 8.], [10., 11., 12., 8.]]
         );
     }

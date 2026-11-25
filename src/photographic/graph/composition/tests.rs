@@ -1,8 +1,8 @@
 use super::*;
-use crate::gpu::evaluation;
-#[cfg(feature = "editor")]
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::evaluation;
 use crate::photographic::stages::interpretation::InspectionView;
+#[cfg(feature = "editor")]
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::project::{Development, Project, Source, SourceDevelopment, SourceId};
 use glam::{DMat3, DVec3};
 
@@ -62,7 +62,7 @@ fn project(input: crate::processing::InputSettings) -> (Project, SourceId) {
 
 #[test]
 fn a_gamma_question_is_an_independent_intent_evaluated_by_the_same_graph() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let (mut project, id) = project(Default::default());
     project.input = crate::processing::InputSettings::Negative {
         dmin: Some(DVec3::ONE),
@@ -104,7 +104,7 @@ fn a_roll_prefix_does_not_admit_or_author_later_layers() {
     use crate::adjustment_layers::{
         AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
     };
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let (mut project, id) = project(crate::processing::InputSettings::Digital);
     project.roll.exposure = 1.;
     let mut recipe = project.image_recipe(id).unwrap();
@@ -211,7 +211,7 @@ fn near(pixels: &[[f32; 4]], expected: DVec3) {
 
 #[test]
 fn camera_codes_do_not_require_resources_for_a_later_corrected_prefix() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let (project, id) = project(crate::processing::InputSettings::Digital);
     let correction = Arc::new(
         crate::flat_field::FlatField::from_nodes(
@@ -239,7 +239,7 @@ fn camera_codes_do_not_require_resources_for_a_later_corrected_prefix() {
 
 #[test]
 fn an_uncalibrated_negative_has_camera_and_inspection_endpoints_but_no_positive() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let recipe = recipe();
     assert!(!recipe.neutral.input.ready());
     let source = evaluation::source(Arc::new(CameraCodes));
@@ -272,7 +272,7 @@ fn an_uncalibrated_negative_has_camera_and_inspection_endpoints_but_no_positive(
 
 #[test]
 fn correction_is_shared_upstream_of_positive_and_inspection_but_recorded_exposure_is_not() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let (project, id) = project(crate::processing::InputSettings::Digital);
     let correction = Arc::new(
         crate::flat_field::FlatField::from_nodes(
@@ -347,7 +347,7 @@ fn correction_is_shared_upstream_of_positive_and_inspection_but_recorded_exposur
 #[test]
 fn recipe_quality_preserves_the_direct_operations_and_pixels_for_original_and_physical_views() {
     use crate::adjustment_layers::AdjustmentLayerSettings;
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let source = project.source_mut(id).unwrap();
     source.development.dimensions = [1000, 800];
@@ -453,10 +453,10 @@ fn recipe_quality_preserves_the_direct_operations_and_pixels_for_original_and_ph
 #[test]
 fn proxy_and_measurement_omit_repairs_without_stripping_the_captured_intent() {
     use crate::{
+        acquisition::camera::SourceGeometry,
         dust_repair::{RepairOrigin, SupportMask},
-        gpu::source::SourceGeometry,
     };
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let source = project.source_mut(id).unwrap();
     source.development.dimensions = [64, 48];
@@ -609,7 +609,7 @@ fn filtered_recipe_keeps_the_photographs_mask_extent_instead_of_redefining_it_fr
     use crate::geometry::{Composition, SourcePoint};
     use crate::photographic::graph::view_source::SourceRequest;
 
-    let (device, _queue, _renderer) = crate::gpu::test_support::render_context();
+    let (device, _queue, _renderer) = crate::photographic::test_support::render_context();
     let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let mut layer = AdjustmentLayer::global(AdjustmentLayerSettings {
         exposure: 1.,

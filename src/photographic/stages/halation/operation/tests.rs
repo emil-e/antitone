@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::evaluation::{
+use crate::evaluation::{
     CellRegion as Rect, Executor, Grid, Plan, Policy, Source, raster_input, source,
 };
 use crate::photographic::stages::halation::reference;
@@ -40,7 +40,7 @@ fn fixture(size: [u32; 2], pitch: [f64; 2], coverage: u32, pixels: Vec<[f32; 4]>
     grid.coverage = coverage;
     Authored {
         domain: Domain {
-            bounds: Some(crate::gpu::evaluation::CellRegion::new([11, 17], size)),
+            bounds: Some(crate::evaluation::CellRegion::new([11, 17], size)),
             grid,
         },
         pixels,
@@ -240,7 +240,7 @@ fn completed_signed_mtf_precedes_positive_light_extraction() {
             .any(|(a, b)| (a[0] - b[0]).abs() > 0.01),
         "signed fixture distinguishes otherwise commuting Gaussians"
     );
-    let input = crate::gpu::gaussian::blur(source(Arc::new(data)), mtf_sigma).unwrap();
+    let input = crate::gaussian::operation::blur(source(Arc::new(data)), mtf_sigma).unwrap();
     let actual = render(&device, &queue, parameters.compose(input).unwrap(), [11, 9]);
     for (a, b) in actual.iter().zip(expected) {
         for c in 0..3 {

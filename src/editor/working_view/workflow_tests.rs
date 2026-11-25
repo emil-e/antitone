@@ -1,7 +1,7 @@
 use super::*;
-use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::photographic::graph::request::PhotographRequest;
 use crate::photographic::graph::view_source::SourceRequest;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::{
     application::test_support::with_application,
     geometry::{Composition, FramePoint},
@@ -18,8 +18,8 @@ fn requested_image(
     demand: &Demand,
     source: &ViewImage,
     frame: &Frame,
-) -> Result<crate::gpu::evaluation::Value, Error> {
-    crate::gpu::view::rendering::photograph(
+) -> Result<crate::evaluation::Value, Error> {
+    crate::viewer::view::rendering::photograph(
         &source.context.device().limits(),
         &demand.pixels.scan()?,
         demand.pixels.correction.gpu()?,
@@ -36,8 +36,8 @@ fn image_matches(demand: &Demand, source: &ViewImage, frame: &Frame) -> bool {
         .is_ok_and(|image| source.definition.same_definition(&image))
 }
 
-fn cached_inputs(view: &ViewImage) -> Vec<std::sync::Weak<crate::gpu::evaluation::ImageValue>> {
-    use crate::gpu::evaluation::ImageLayout;
+fn cached_inputs(view: &ViewImage) -> Vec<std::sync::Weak<crate::evaluation::ImageValue>> {
+    use crate::evaluation::ImageLayout;
 
     let scope = view.context.materializations();
     let root = &view.definition;
@@ -91,7 +91,7 @@ fn fixture() -> (
     .unwrap();
     let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, None)
         .unwrap()
-        .with_identity(crate::gpu::source::identity::Identity::camera(
+        .with_identity(crate::acquisition::camera::identity::Identity::camera(
             scan.source().identity(),
         ));
     let input = source::Context {
@@ -154,7 +154,7 @@ fn positive_spec(frame: FrameRaster, input: &source::Context, sigma: f64) -> Sou
         .with_view_pitch(pitch)
     })
     .unwrap()
-    .with_identity(crate::gpu::source::identity::Identity::camera(
+    .with_identity(crate::acquisition::camera::identity::Identity::camera(
         input.source.identity(),
     ))
 }
@@ -542,7 +542,7 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
             for value in ready.images() {
                 assert!(matches!(
                     value.pixels,
-                    crate::gpu::evaluation::BufferImage::Produced(_)
+                    crate::evaluation::BufferImage::Produced(_)
                 ));
                 assert!(
                     value.recording().is_none(),
@@ -587,13 +587,13 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
             );
             assert!(matches!(
                 value.pixels,
-                crate::gpu::evaluation::BufferImage::Produced(_)
+                crate::evaluation::BufferImage::Produced(_)
             ));
             value.definition.clone()
         });
         assert!(
             scope
-                .find_ready::<crate::gpu::evaluation::ImageLayout>(
+                .find_ready::<crate::evaluation::ImageLayout>(
                     definition.identity().unwrap(),
                     |_| true
                 )
@@ -632,11 +632,11 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
         let evaluation = context
             .request(
                 definition.clone(),
-                crate::gpu::evaluation::Region {
+                crate::evaluation::Region {
                     bounds: layout.finite().unwrap(),
                     grid: layout.grid,
                 },
-                crate::gpu::evaluation::Tiling { tile: [32, 24] },
+                crate::evaluation::Tiling { tile: [32, 24] },
             )
             .unwrap();
         let held = pollster::block_on(
@@ -645,8 +645,8 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
                     &queue,
                     &scope,
                     evaluation.clone(),
-                    crate::gpu::evaluation::ImageFormat::Rgba32Float,
-                    crate::gpu::evaluation::ImageBacking::Buffer,
+                    crate::evaluation::ImageFormat::Rgba32Float,
+                    crate::evaluation::ImageBacking::Buffer,
                 )
                 .unwrap(),
         )
@@ -679,7 +679,7 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
         app.update(|e| e.document.visit.working_view.clear());
         assert!(
             scope
-                .find_ready::<crate::gpu::evaluation::ImageLayout>(
+                .find_ready::<crate::evaluation::ImageLayout>(
                     definition.identity().unwrap(),
                     |_| true
                 )
@@ -820,7 +820,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
         });
         let before_inputs = cached_inputs(&before.source);
         let processing = AuthoredPhotograph::from(
-            crate::gpu::parameters::ProcessingParameters::source_inspection(1.2).unwrap(),
+            crate::photographic::parameters::ProcessingParameters::source_inspection(1.2).unwrap(),
         );
         let edited = Demand {
             rendering: OnceLock::new(),
@@ -848,7 +848,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
             let (device, queue) = (services.device.clone(), services.queue.clone());
             let working = &mut e.document.visit.working_view;
             let frame = working.frame.as_ref().unwrap();
-            let crate::gpu::evaluation::BufferImage::Produced(output) = &frame.source.pixels else {
+            let crate::evaluation::BufferImage::Produced(output) = &frame.source.pixels else {
                 panic!("expected a new calculated image");
             };
             assert!(
@@ -1002,7 +1002,7 @@ fn ordinary_canvas_during_save_keeps_acquisition_and_tracks_current_demand() {
     .unwrap();
     let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, None)
         .unwrap()
-        .with_identity(crate::gpu::source::identity::Identity::camera(
+        .with_identity(crate::acquisition::camera::identity::Identity::camera(
             input.source.identity(),
         ));
     let (entered, reached) = std::sync::mpsc::sync_channel(1);

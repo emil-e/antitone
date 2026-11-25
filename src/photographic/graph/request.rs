@@ -3,14 +3,14 @@
 use super::view_source::SourceRequest;
 use super::*;
 use crate::acquisition::Sampling;
-use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::source::camera_source;
-#[cfg(test)]
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::acquisition::camera::camera_source;
 use crate::image_recipe::{ImageRecipe, quality::Quality};
 use crate::looks::LutChain;
+use crate::photographic::parameters::ProcessingParameters;
 use crate::photographic::stages::interpretation::InspectionView;
 use crate::photographic::stages::{display_rendering as drt, look::Looks};
+#[cfg(test)]
+use crate::photographic::test_inputs::AuthoredPhotograph;
 
 static NO_LUTS: LutChain = LutChain {
     lut: None,
@@ -312,7 +312,7 @@ impl PhotographRequest {
                 "repaired previews require original-coordinate acquisition".into(),
             ));
         }
-        let raster = crate::gpu::raster::Raster::region(geometry.region(), geometry.size());
+        let raster = crate::acquisition::raster::Raster::region(geometry.region(), geometry.size());
         let codes = resident::codes(source, raster)?;
         let root = if let Some(recipe) = self.recipe() {
             composition::sampled_unrepaired(codes, source, field, recipe)?
@@ -427,8 +427,8 @@ impl PhotographRequest {
         &self,
         limits: &wgpu::Limits,
         spec: &SourceRequest,
-        neutral: crate::gpu::evaluation::Value,
-    ) -> Result<(crate::gpu::evaluation::Value, crate::acquisition::Plan), Error> {
+        neutral: crate::evaluation::Value,
+    ) -> Result<(crate::evaluation::Value, crate::acquisition::Plan), Error> {
         match self {
             Self::Recipe(recipe) => composition::filtered_recipe(limits, spec, neutral, recipe),
             Self::Inspection(view) => Ok((

@@ -15,9 +15,9 @@ impl ImageMtfParameters {
     #[cfg(feature = "gpu")]
     pub(crate) fn compose(
         self,
-        input: crate::gpu::evaluation::Value,
-    ) -> Result<crate::gpu::evaluation::Value, crate::Error> {
-        crate::gpu::gaussian::blur(input, self.sigma)
+        input: crate::evaluation::Value,
+    ) -> Result<crate::evaluation::Value, crate::Error> {
+        crate::gaussian::operation::blur(input, self.sigma)
     }
 
     pub fn support(self, pitch: [f64; 2]) -> Support {

@@ -12,12 +12,12 @@ use antitone::frame_raster::FrameRaster;
 use antitone::geometry::Composition;
 use antitone::geometry::SourcePoint;
 use antitone::geometry::SourceRegion;
-use antitone::gpu::flat::GpuFlatField;
+use antitone::photographic::stages::flat_field::GpuFlatField;
 #[path = "support/calculation.rs"]
 mod calculation;
-use antitone::gpu::parameters::ProcessingParameters;
-use antitone::gpu::source::SourceGeometry;
+use antitone::acquisition::camera::SourceGeometry;
 use antitone::gpu_scopes::GpuScopes;
+use antitone::photographic::parameters::ProcessingParameters;
 use antitone::processing::Calibration;
 use antitone::processing::Pipeline;
 use antitone::processing::RollSettings;

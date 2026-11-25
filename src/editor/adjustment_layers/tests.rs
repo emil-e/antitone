@@ -2,7 +2,7 @@ use super::*;
 
 mod history_tests;
 use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage};
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 
 fn reinterpret_fixture(editor: &mut Editor) {
     let ready = editor.document.visit.canvas.ready.take();

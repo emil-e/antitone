@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::evaluation::CellRegion;
+use crate::evaluation::CellRegion;
 
 #[test]
 fn repaired_previews_keep_the_neutral_dependency_when_pans_exclude_other_repairs() {
@@ -76,7 +76,7 @@ fn repaired_previews_keep_the_neutral_dependency_when_pans_exclude_other_repairs
             left,
         )
         .unwrap();
-        let codes = crate::gpu::source::camera_source(&scan).unwrap();
+        let codes = crate::acquisition::camera::camera_source(&scan).unwrap();
         let neutral =
             crate::photographic::graph::composition::original_neutral(codes, None, &recipe)
                 .unwrap();
@@ -127,7 +127,7 @@ fn repaired_previews_keep_the_neutral_dependency_when_pans_exclude_other_repairs
                     produced.definition.domain().finite().unwrap(),
                     CellRegion::new([0, 0], frame.output)
                 );
-                let actual = crate::gpu::evaluation::read_buffer(&device, &queue, &produced.pixels);
+                let actual = crate::evaluation::read_buffer(&device, &queue, &produced.pixels);
                 assert_eq!(
                     actual.len(),
                     frame.output[0] as usize * frame.output[1] as usize

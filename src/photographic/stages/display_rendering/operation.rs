@@ -1,7 +1,7 @@
 //! The pinned ACES display rendering transform and its immutable device resources.
 
 use super::aces;
-use crate::gpu::evaluation::*;
+use crate::evaluation::*;
 #[cfg(test)]
 use crate::gpu::{FULLSCREEN_VERTEX, fullscreen_pipeline};
 use crate::{Error, rendering::OutputTarget};

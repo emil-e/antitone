@@ -12,7 +12,7 @@ impl Source for CameraLight {
         self.domain
     }
 
-    fn read(&self, region: crate::gpu::evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+    fn read(&self, region: crate::evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
         let region = region.source()?;
         assert_eq!(region, self.domain.finite().unwrap().source().unwrap());
 
@@ -22,7 +22,7 @@ impl Source for CameraLight {
 
 #[test]
 fn native_response_preserves_finite_zero_light_signed_values_and_continuation_flags() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let domain = Domain {
         bounds: Some([9, 13, 4, 1].into()),

@@ -3,11 +3,8 @@ use super::{ImageKey, Product, Proxy, disk};
 #[cfg(test)]
 use crate::project::SourceId;
 use crate::{
-    Error,
-    geometry::Composition,
-    gpu::{evaluation, submission::Queue},
-    photographic::stages::look::Looks,
-    source as source_loading,
+    Error, evaluation, geometry::Composition, gpu::submission::Queue,
+    photographic::stages::look::Looks, source as source_loading,
 };
 use std::sync::Arc;
 
@@ -37,7 +34,7 @@ pub(crate) struct ThumbnailGpu {
     pub(crate) evaluation: evaluation::Context,
     pub(crate) queue: Queue,
     pub(crate) looks: Arc<Looks>,
-    pub(crate) display: Arc<crate::gpu::display::Warmup>,
+    pub(crate) display: Arc<crate::editor::display::Warmup>,
 }
 
 #[derive(Default, Debug)]
@@ -134,7 +131,7 @@ pub(crate) struct Worker {
     gpu: ThumbnailGpu,
     disk: Option<disk::DiskCache>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
-    kernels: std::sync::OnceLock<Result<Arc<crate::gpu::view::ViewKernels>, Error>>,
+    kernels: std::sync::OnceLock<Result<Arc<crate::viewer::view::ViewKernels>, Error>>,
 }
 
 impl Worker {
@@ -210,10 +207,10 @@ impl Worker {
         proxy: Option<&crate::scan::CameraProxy>,
         metrics: &mut ThumbnailMetrics,
     ) -> Result<Option<Arc<Product>>, Error> {
-        use crate::gpu::view::RenderedView;
-        use crate::gpu::view::ViewImage;
-        use crate::gpu::view::ViewKernels;
         use crate::photographic::graph::view_source::SourceRequest;
+        use crate::viewer::view::RenderedView;
+        use crate::viewer::view::ViewImage;
+        use crate::viewer::view::ViewKernels;
         if !self.active(job) {
             return Ok(None);
         }

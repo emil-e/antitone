@@ -1,9 +1,9 @@
 use super::*;
-use crate::gpu::evaluation::{BufferImage, ImageDelivery};
-use crate::gpu::source::{ProcessingSource, SourceGeometry};
-use crate::gpu::view::{RenderedView, ViewImage, ViewKernels};
+use crate::acquisition::camera::{ProcessingSource, SourceGeometry};
+use crate::evaluation::{BufferImage, ImageDelivery};
 use crate::photographic::graph::request::PhotographRequest;
 use crate::photographic::graph::view_source::SourceRequest;
+use crate::viewer::view::{RenderedView, ViewImage, ViewKernels};
 
 #[test]
 fn completed_thumbnails_charge_only_the_allocations_they_still_own() {
@@ -22,7 +22,7 @@ fn completed_thumbnails_charge_only_the_allocations_they_still_own() {
     let area: crate::raw::Rect = recipe.neutral.source_development.active_area().into();
     let size = [128, 96];
     for produce in [false, true] {
-        let (device, queue, renderer) = crate::gpu::test_support::render_context();
+        let (device, queue, renderer) = crate::photographic::test_support::render_context();
         renderer
             .evaluation()
             .materializations()
@@ -75,7 +75,7 @@ fn completed_thumbnails_charge_only_the_allocations_they_still_own() {
             .unwrap();
         let context = renderer.evaluation();
         let evaluation = ViewImage::evaluation(context, definition.clone()).unwrap();
-        crate::gpu::test_support::take_evaluation_buffer_creations();
+        crate::evaluation::test_support::take_evaluation_buffer_creations();
         let recorded = if produce {
             context.produce_image_on_worker(evaluation, &queue).unwrap()
         } else {
@@ -92,7 +92,8 @@ fn completed_thumbnails_charge_only_the_allocations_they_still_own() {
         let final_bytes = output.as_buffer().unwrap().size() + camera.input.size();
         let dependencies = output.image.used_inputs();
         if produce {
-            let [_, allocated_bytes] = crate::gpu::test_support::take_evaluation_buffer_creations();
+            let [_, allocated_bytes] =
+                crate::evaluation::test_support::take_evaluation_buffer_creations();
             assert!(
                 allocated_bytes > 0,
                 "control: the worker allocated evaluation scratch"

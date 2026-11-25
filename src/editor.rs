@@ -101,7 +101,7 @@ mod calibration;
 mod canvas;
 mod canvas_view;
 mod crop_editor;
-pub(crate) use crate::gpu::display;
+pub(crate) mod display;
 mod export;
 mod filmstrip;
 mod gamma_pivot;
@@ -298,7 +298,7 @@ impl Editor {
 
     pub fn new(device: &wgpu::Device, queue: &crate::gpu::submission::Queue) -> Self {
         let cache_limits = cache_limits::Hardware::current(Some(device)).defaults();
-        let evaluation = crate::gpu::evaluation::Context::new(device, Default::default());
+        let evaluation = crate::evaluation::Context::new(device, Default::default());
         let looks = Arc::new(crate::photographic::stages::look::Looks::new(device));
         let display = display::Warmup::new(evaluation.clone(), queue.clone());
         display.start();
@@ -385,7 +385,7 @@ impl Editor {
         self.document.visit.working_view = WorkingView::new(device.clone(), queue.clone());
         // Preview, thumbnail and viewport rendering share one lazy kernel set; initialising it
         // here avoids a shader-compilation pause when the first provisional view is selected.
-        if let Ok(kernels) = pollster::block_on(crate::gpu::view::ViewKernels::new(device)) {
+        if let Ok(kernels) = pollster::block_on(crate::viewer::view::ViewKernels::new(device)) {
             let _ = self.document.visit.working_view.kernels.set(kernels);
         }
     }

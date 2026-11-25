@@ -7,9 +7,7 @@ use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
 
 #[cfg(feature = "render")]
-use crate::gpu::evaluation::{
-    CellRegion, Domain, Operation, Read, RetainedKey, Tiling, Value, value,
-};
+use crate::evaluation::{CellRegion, Domain, Operation, Read, RetainedKey, Tiling, Value, value};
 
 #[cfg(feature = "render")]
 mod cache;
@@ -129,9 +127,9 @@ mod tests;
 fn calculation(
     id: LookId,
     parameters: Parameters,
-    nodes: crate::gpu::evaluation::FunctionBinding,
-) -> crate::gpu::evaluation::value::Operation {
-    use crate::gpu::evaluation::{Function, value};
+    nodes: crate::evaluation::FunctionBinding,
+) -> crate::evaluation::value::Operation {
+    use crate::evaluation::{Function, value};
     let code = [
         include_str!("arguments.wgsl"),
         include_str!("value.wgsl"),
@@ -151,7 +149,7 @@ fn calculation(
     .with_bindings(bindings)
 }
 
-fn prewarm_calculation(coverage: bool) -> crate::gpu::evaluation::value::Operation {
+fn prewarm_calculation(coverage: bool) -> crate::evaluation::value::Operation {
     let parameters = Parameters {
         minimum: [0.; 4],
         maximum: [1.; 4],
@@ -161,9 +159,7 @@ fn prewarm_calculation(coverage: bool) -> crate::gpu::evaluation::value::Operati
     calculation(
         LookId([0; 32]),
         parameters,
-        crate::gpu::evaluation::FunctionBinding::Storage(
-            bytemuck::cast_slice(&[[0f32; 4]; 8]).into(),
-        ),
+        crate::evaluation::FunctionBinding::Storage(bytemuck::cast_slice(&[[0f32; 4]; 8]).into()),
     )
 }
 
@@ -225,13 +221,13 @@ impl Lut {
         }))
     }
 
-    pub(crate) fn calculation(&self, coverage: bool) -> crate::gpu::evaluation::value::Operation {
+    pub(crate) fn calculation(&self, coverage: bool) -> crate::evaluation::value::Operation {
         calculation(
             self.id,
             self.parameters(0, 0, coverage),
-            crate::gpu::evaluation::FunctionBinding::Shared(
-                crate::gpu::evaluation::Shared::Buffer(self.buffer.clone()),
-            ),
+            crate::evaluation::FunctionBinding::Shared(crate::evaluation::Shared::Buffer(
+                self.buffer.clone(),
+            )),
         )
     }
 

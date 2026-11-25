@@ -1,4 +1,4 @@
-use crate::gpu::evaluation as e;
+use crate::evaluation as e;
 use std::sync::Arc;
 
 #[test]

@@ -29,6 +29,8 @@ pub mod dust_repair;
 pub mod editor;
 #[cfg(all(feature = "raw", feature = "project"))]
 pub(crate) mod embedded_preview;
+#[cfg(feature = "gpu")]
+pub mod evaluation;
 #[cfg(feature = "export")]
 pub mod export;
 #[cfg(feature = "export")]
@@ -39,7 +41,7 @@ pub mod exposure_reference;
 pub mod flat_field;
 mod float_hash;
 pub mod frame_raster;
-mod gaussian;
+pub mod gaussian;
 pub mod geometry;
 #[cfg(feature = "gpu")]
 pub mod gpu;

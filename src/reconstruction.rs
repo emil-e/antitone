@@ -1,6 +1,6 @@
 //! Cell-area reconstruction between affine image grids, independent of photographic position.
 use crate::Error;
-use crate::gpu::evaluation::{CellRegion as Rect, *};
+use crate::evaluation::{CellRegion as Rect, *};
 use glam::{DMat2, DVec2};
 use std::sync::Arc;
 
@@ -13,6 +13,8 @@ mod affine_tests;
 mod coverage_tests;
 #[cfg(test)]
 mod fixture;
+#[cfg(all(test, feature = "editor"))]
+pub(crate) mod integration_tests;
 #[cfg(all(test, feature = "editor"))]
 mod numeric_tests;
 mod phases;
@@ -437,7 +439,7 @@ impl Operation for Reconstruction {
     fn describe(
         &self,
         output: Output,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         _requested: &[Rect],
     ) -> Result<Output, Error> {
         if !self.tiled {
@@ -483,12 +485,12 @@ impl Operation for Reconstruction {
 
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: Rect,
         _tiling: Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+    ) -> Result<Option<crate::evaluation::value::Calculation>, Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         self.express(inputs[0].clone(), domain, output, None)
             .map(Some)
     }
@@ -505,7 +507,7 @@ impl Operation for Reconstruction {
             .map(Some)
     }
 
-    fn reads(&self, region: Rect) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
+    fn reads(&self, region: Rect) -> Result<Vec<crate::evaluation::Read>, Error> {
         let demand = self.input_demand(region)?;
         let slices = self.tiled;
         if !slices {

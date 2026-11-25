@@ -96,7 +96,7 @@ fn evaluate(
     let (scan, recipe) = crate::photo_preparation::native_image(&scan, &recipe)?;
     let (evaluation, queue) =
         gpu.ok_or_else(|| Error::Gpu("repair image-query services unavailable".into()))?;
-    let source = crate::gpu::repair_source::Source::from_recipe(
+    let source = crate::dust_repair::image_source::Source::from_recipe(
         context.correction.gpu()?,
         &evaluation,
         &queue,

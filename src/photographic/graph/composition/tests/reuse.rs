@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::evaluation::{Image, ImageBacking, ImageFormat, ImageLayout, Materializations};
+use crate::evaluation::{Image, ImageBacking, ImageFormat, ImageLayout, Materializations};
 use crate::photographic::graph::request::PhotographRequest;
 
 pub(super) fn materialize(
@@ -39,7 +39,7 @@ pub(super) fn materialize(
 #[test]
 fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
     use crate::looks::{LookAsset, LookOrigin, Lut3D};
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let plain_recipe = Arc::new(project.image_recipe(id).unwrap());
     let codes = evaluation::source(Arc::new(CameraCodes));
@@ -108,7 +108,7 @@ fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
 
 #[test]
 fn disabled_effect_edits_are_captured_without_replacing_an_unchanged_gpu_calculation() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let before_recipe = project.image_recipe(id).unwrap();
     let codes = evaluation::source(Arc::new(CameraCodes));

@@ -47,7 +47,7 @@ enum PhotoResult {
 
 #[derive(Clone)]
 pub(super) struct Services {
-    evaluation: crate::gpu::evaluation::Context,
+    evaluation: crate::evaluation::Context,
     looks: Arc<crate::photographic::stages::look::Looks>,
     pub(super) display: Arc<super::display::Warmup>,
     pub(super) queue: crate::gpu::submission::Queue,
@@ -56,7 +56,7 @@ pub(super) struct Services {
 
 impl Services {
     pub fn new(
-        evaluation: crate::gpu::evaluation::Context,
+        evaluation: crate::evaluation::Context,
         looks: Arc<crate::photographic::stages::look::Looks>,
         display: Arc<super::display::Warmup>,
         queue: crate::gpu::submission::Queue,

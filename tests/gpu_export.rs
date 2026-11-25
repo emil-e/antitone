@@ -5,9 +5,9 @@
     target_os = "macos"
 ))]
 use antitone::{
+    evaluation::{self, CellRegion, Domain, Grid, Source},
     export::{FileFormat, FloatPrecision, JpegQuality, Overwrite, Plan, RenderTarget},
     geometry::Composition,
-    gpu::evaluation::{self, CellRegion, Domain, Grid, Source},
     gpu_export::Request,
     rendering::OutputTarget,
 };

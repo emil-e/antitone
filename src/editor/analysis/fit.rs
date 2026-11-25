@@ -1,6 +1,6 @@
 //! Roll fitting uses shared original-camera evidence, independent of optional RAW retention.
 use crate::{
-    gpu::evaluation,
+    evaluation,
     photographic::graph::camera_response,
     photographic::stages::display_rendering as drt,
     rendering::OutputTarget,
@@ -591,7 +591,10 @@ impl Fit {
                     self.cameras[index].camera_to_ap1,
                     crate::processing::MAX_SOURCE_GAIN,
                 )?;
-                crate::gpu::source::SourceGeometry::new(record.development.active_area, [1, 1])?;
+                crate::acquisition::camera::SourceGeometry::new(
+                    record.development.active_area,
+                    [1, 1],
+                )?;
             }
         }
         if cancelled() {

@@ -4,7 +4,7 @@
 use antitone::photographic::stages::{display_rendering as drt, look};
 use antitone::{
     Error,
-    gpu::evaluation::{CachePolicy, Context},
+    evaluation::{CachePolicy, Context},
 };
 use std::sync::Arc;
 
@@ -12,12 +12,12 @@ use std::sync::Arc;
 pub struct RenderFixture {
     pub(crate) drt: Arc<drt::Targets>,
     pub(crate) looks: Arc<look::Looks>,
-    pub(crate) evaluation: antitone::gpu::evaluation::Context,
+    pub(crate) evaluation: antitone::evaluation::Context,
 }
 
 impl RenderFixture {
     /// Shared device-scoped evaluation and its optional calculated-image retention allowance.
-    pub fn evaluation(&self) -> &antitone::gpu::evaluation::Context {
+    pub fn evaluation(&self) -> &antitone::evaluation::Context {
         &self.evaluation
     }
 

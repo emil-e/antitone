@@ -178,7 +178,7 @@ fn only_influencing_repair_instructions_change_a_regional_output() {
 }
 #[test]
 fn a_new_repair_reuses_the_actual_gpu_value_for_an_unchanged_view_region() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(
         &device,
         CachePolicy {
@@ -242,10 +242,9 @@ fn a_new_repair_reuses_the_actual_gpu_value_for_an_unchanged_view_region() {
         Arc::ptr_eq(&before.image, &after.image),
         "reuse must mean the physical GPU value, not merely equivalent definitions"
     );
-    let before_pixels =
-        crate::gpu::evaluation::read_buffer(&device, &queue, held.as_buffer().unwrap());
+    let before_pixels = crate::evaluation::read_buffer(&device, &queue, held.as_buffer().unwrap());
     let after_pixels =
-        crate::gpu::evaluation::read_buffer(&device, &queue, updated.as_buffer().unwrap());
+        crate::evaluation::read_buffer(&device, &queue, updated.as_buffer().unwrap());
     // The new repair removes one +1 source sample from this 2x2 view cell.
     // Its linear neighbours/donor recover the undamaged ramp's exact cell mean.
     let cell = 20 * 512 + 360;
@@ -262,7 +261,7 @@ fn a_new_repair_reuses_the_actual_gpu_value_for_an_unchanged_view_region() {
 
 #[test]
 fn regional_and_direct_reconstruction_preserve_ramps_across_tiles_with_no_optional_retention() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let base = source(Arc::new(Plate));
     let repaired = compose(base, &[repair(254, 32)]).unwrap();
@@ -316,7 +315,7 @@ fn regional_and_direct_reconstruction_preserve_ramps_across_tiles_with_no_option
 
 #[test]
 fn failed_repair_inputs_leave_partial_and_direct_view_regions_available() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let root = view(&[repair(100, 10000)]);
     let read = |bounds| {
@@ -344,7 +343,7 @@ fn failed_repair_inputs_leave_partial_and_direct_view_regions_available() {
 
 #[test]
 fn admitted_repairs_keep_partial_views_renderable() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let captured = repair(100, 32);
     let mut repairs = crate::dust_repair::RepairSet::default();
@@ -401,7 +400,7 @@ fn admitted_repairs_keep_partial_views_renderable() {
 
 #[test]
 fn regional_units_fit_small_allowances_without_changing_demand() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let root = view(&[repair(40, 32)]);
     // Leave working storage beyond the output itself for upstream reconstruction.
@@ -445,7 +444,7 @@ fn regional_units_fit_small_allowances_without_changing_demand() {
 
 #[test]
 fn unbounded_view_regions_with_negative_origins_keep_real_source_edges() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let repaired = compose(source(Arc::new(Plate)), &[repair(40, 32)]).unwrap();
     let domain = Domain {

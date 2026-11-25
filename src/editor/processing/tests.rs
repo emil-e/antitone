@@ -1,11 +1,11 @@
 use super::*;
-use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::parameters::ProcessingParameters;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::project::Development;
 use crate::{
+    acquisition::camera::SourceGeometry,
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
     geometry::SourcePoint,
-    gpu::source::SourceGeometry,
     project::{AdjustmentLayers, SourceDevelopment},
 };
 
@@ -328,7 +328,7 @@ fn correction_leaves_inversion_parameters_and_captured_layer_stacks_unchanged() 
         );
         let calibration = (editor.calibration().unwrap()).validate().unwrap();
         let expected = AuthoredPhotograph::from(Arc::new(
-            crate::gpu::test_inputs::AuthoredPhotograph::new(
+            crate::photographic::test_inputs::AuthoredPhotograph::new(
                 &device.limits(),
                 calibration,
                 editor.document.project.roll,
@@ -569,7 +569,7 @@ fn original_requests_and_scopes_capture_the_same_immutable_stack_and_reject_stal
 
 #[test]
 fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
-    use crate::gpu::evaluation::Value;
+    use crate::evaluation::Value;
     use crate::gpu_scopes::{GpuScopes, ScopePaint};
     use crate::image_recipe::ImageRecipe;
     use crate::photographic::graph::request::PhotographRequest;

@@ -36,12 +36,12 @@ impl Operation for Grade {
     }
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, crate::Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         let function = Function::new(
             "fn grade(p:vec4f,at:vec2f)->vec4f{return vec4f(p.rgb*2.,p.w);}",
             "grade",
@@ -67,7 +67,7 @@ fn a_small_optional_cache_bounds_retention_without_changing_repaired_pixels() {
 }
 
 fn regional_retention(capacity: u64, keeps_regions: bool) {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(
         &device,
         CachePolicy {
@@ -138,7 +138,7 @@ fn regional_retention(capacity: u64, keeps_regions: bool) {
     let graded = original.map(|root| Value::from_operation(root.domain(), [root], Grade));
     let finished = materialize(&graded);
     for image in &finished {
-        crate::gpu::evaluation::BufferImage::try_from(image.clone())
+        crate::evaluation::BufferImage::try_from(image.clone())
             .unwrap()
             .submitted(&scope);
     }
@@ -159,7 +159,7 @@ fn regional_retention(capacity: u64, keeps_regions: bool) {
     let graded = changed.map(|root| Value::from_operation(root.domain(), [root], Grade));
     let new_finished = materialize(&graded);
     for image in &new_finished {
-        crate::gpu::evaluation::BufferImage::try_from(image.clone())
+        crate::evaluation::BufferImage::try_from(image.clone())
             .unwrap()
             .submitted(&scope);
     }

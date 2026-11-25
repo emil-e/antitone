@@ -296,7 +296,7 @@ fn acquisition_shares_lazy_wb_and_persists_it_without_dirtying_or_redefaulting()
 }
 
 fn editor_with_loader(loader: source_loading::SourceLoader, document: Document) -> Editor {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let mut editor = Editor::new(&device, &queue);
     editor.source_services.as_mut().unwrap().developments = loader.clone();
     editor.developments = Some(loader);

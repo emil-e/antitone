@@ -1,6 +1,6 @@
 use super::*;
 #[cfg(test)]
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::{
     frame_raster::FrameRaster,
     gpu_scopes::{GpuScopes, ScopePaint},
@@ -310,7 +310,7 @@ impl Scopes {
 }
 
 pub(super) struct ScopeInput {
-    pub view: Arc<crate::gpu::view::RenderedView>,
+    pub view: Arc<crate::viewer::view::RenderedView>,
     pub frame: FrameRaster,
     pub mapping: crate::geometry::TextureMapping,
 }

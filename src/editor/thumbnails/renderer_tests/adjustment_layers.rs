@@ -5,11 +5,11 @@
     target_os = "macos"
 ))]
 use crate as api;
+use crate::acquisition::camera::ProcessingSource;
+use crate::acquisition::camera::SourceGeometry;
 use crate::adjustment_layers::AdjustmentLayerSettings;
-use crate::gpu::source::ProcessingSource;
-use crate::gpu::source::SourceGeometry;
-use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::photographic::graph::test_support::CameraFixture;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::raw_test_support::train_raw;
 use api::adjustment_layers::AdjustmentLayer;
 use api::adjustment_layers::AdjustmentLayerCoverage;

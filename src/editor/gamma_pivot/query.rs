@@ -4,11 +4,9 @@ use crate::{
     Error,
     color::{AP1_TO_XYZ, Balance, ap1_to_cones, opponent_coordinates},
     coverage::Coverage,
+    evaluation::{self, CellRegion, Domain, Grid, Region, Tiling, Value},
     geometry::SourceRegion,
-    gpu::{
-        evaluation::{self, CellRegion, Domain, Grid, Region, Tiling, Value},
-        flat::GpuFlatField,
-    },
+    photographic::stages::flat_field::GpuFlatField,
     processing::NegativeInput,
     scan::Scan,
 };

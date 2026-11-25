@@ -7,10 +7,10 @@ mod tests;
 #[cfg(feature = "gpu")]
 pub(super) fn frame_input(
     output: FrameRaster,
-    compose: impl FnOnce(crate::gpu::evaluation::Value) -> Result<crate::gpu::evaluation::Value, Error>,
+    compose: impl FnOnce(crate::evaluation::Value) -> Result<crate::evaluation::Value, Error>,
     sampling: Sampling,
 ) -> Result<(FrameRaster, [u32; 2]), Error> {
-    use crate::gpu::evaluation::{CellRegion, Domain, Grid, borrowed_input};
+    use crate::evaluation::{CellRegion, Domain, Grid, borrowed_input};
     let requested = CellRegion::new([0, 0], output.output).validate()?;
     let input = borrowed_input(Domain {
         bounds: matches!(sampling, Sampling::CameraCells { .. }).then_some(requested),
@@ -27,9 +27,9 @@ pub(super) fn frame_input(
 pub(super) fn original_input(
     source: SourceRegion,
     requested: SourceRegion,
-    compose: impl FnOnce(crate::gpu::evaluation::Value) -> Result<crate::gpu::evaluation::Value, Error>,
+    compose: impl FnOnce(crate::evaluation::Value) -> Result<crate::evaluation::Value, Error>,
 ) -> Result<SourceRegion, Error> {
-    use crate::gpu::evaluation::{Domain, Grid, borrowed_input};
+    use crate::evaluation::{Domain, Grid, borrowed_input};
     let input = borrowed_input(Domain {
         bounds: Some(source.try_into()?),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
@@ -39,11 +39,11 @@ pub(super) fn original_input(
 
 #[cfg(feature = "gpu")]
 fn dependency_bounds(
-    input: &crate::gpu::evaluation::Value,
-    compose: impl FnOnce(crate::gpu::evaluation::Value) -> Result<crate::gpu::evaluation::Value, Error>,
-    requested: crate::gpu::evaluation::CellRegion,
-) -> Result<crate::gpu::evaluation::CellRegion, Error> {
-    use crate::gpu::evaluation::{CellRegion, Tiling};
+    input: &crate::evaluation::Value,
+    compose: impl FnOnce(crate::evaluation::Value) -> Result<crate::evaluation::Value, Error>,
+    requested: crate::evaluation::CellRegion,
+) -> Result<crate::evaluation::CellRegion, Error> {
+    use crate::evaluation::{CellRegion, Tiling};
     let processed = compose(input.clone())?;
     // Retain output cells in the contiguous layout even for translated-only reads.
     let mut low = [requested.x, requested.y];
@@ -71,9 +71,7 @@ impl Plan {
     /// input on the requested processing grid and declares the original or frame cells it reads.
     pub fn for_graph(
         request: Request,
-        compose: impl FnOnce(
-            crate::gpu::evaluation::Value,
-        ) -> Result<crate::gpu::evaluation::Value, Error>,
+        compose: impl FnOnce(crate::evaluation::Value) -> Result<crate::evaluation::Value, Error>,
     ) -> Result<Self, Error> {
         let mut plan = Self::new(request)?;
         match plan.input {

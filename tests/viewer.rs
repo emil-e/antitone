@@ -8,9 +8,11 @@ use antitone::adjustment_layers::{
 #[path = "support/calculation.rs"]
 mod calculation;
 use antitone::{
+    acquisition::camera::SourceGeometry,
     color::{Balance, ap1_to_ap0},
     flat_field::FlatField,
-    gpu::{flat::GpuFlatField, parameters::ProcessingParameters, source::SourceGeometry},
+    photographic::parameters::ProcessingParameters,
+    photographic::stages::flat_field::GpuFlatField,
     processing::{Calibration, DEFAULT_GAMMA, InputSettings, Pipeline, Response, RollSettings},
     rendering::{CpuRenderer, OutputTarget},
     viewer::GpuImage,

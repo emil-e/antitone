@@ -4,7 +4,7 @@ use crate::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
     geometry::SourceRegion,
-    gpu::parameters::ProcessingParameters,
+    photographic::parameters::ProcessingParameters,
     photographic::stages::{grading::Grading, interpretation::InputTransform},
     processing::{InputSettings, RollSettings},
 };

@@ -1,10 +1,10 @@
 use super::*;
-use crate::gpu::parameters::CameraMatrix;
-use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::source::ProcessingSource;
-use crate::gpu::source::SourceGeometry;
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::acquisition::camera::ProcessingSource;
+use crate::acquisition::camera::SourceGeometry;
 use crate::photographic::graph::test_support::CameraFixture;
+use crate::photographic::parameters::CameraMatrix;
+use crate::photographic::parameters::ProcessingParameters;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::processing::RollSettings;
 use crate::{
     adjustment_layers::AdjustmentLayerSettings,
@@ -57,7 +57,7 @@ fn corrected_conversion_and_processing_preserve_spatial_gains_and_floor_flags() 
                 format!(
                     "{}\n{}\n{}\n{}",
                     shader(),
-                    include_str!("../../../gpu/parameters.wgsl"),
+                    include_str!("../../parameters.wgsl"),
                     include_str!("test_read.wgsl"),
                     r#"
 @group(0) @binding(1) var<storage, read_write> output: array<vec4f>;

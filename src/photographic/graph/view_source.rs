@@ -5,14 +5,14 @@ use super::authoring::Assembly;
 use crate::acquisition::{Plan, Request as AcquisitionRequest, Sampling};
 #[cfg(test)]
 use crate::photographic::stages::interpretation::InputTransform;
-use crate::{Error, frame_raster::FrameRaster, gpu::source::SourceGeometry};
+use crate::{Error, acquisition::camera::SourceGeometry, frame_raster::FrameRaster};
 #[cfg(test)]
 use glam::DMat3;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct SourceRequest {
-    pub identity: crate::gpu::source::identity::Identity,
+    pub identity: crate::acquisition::camera::identity::Identity,
     pub area: crate::raw::Rect,
     #[cfg(test)]
     fixture: Option<SourceFixture>,
@@ -27,7 +27,7 @@ pub struct SourceRequest {
 #[cfg(test)]
 #[derive(Clone)]
 enum SourceFixture {
-    Photograph(crate::gpu::test_inputs::AuthoredPhotograph),
+    Photograph(crate::photographic::test_inputs::AuthoredPhotograph),
     Inspection(DMat3),
 }
 
@@ -41,7 +41,7 @@ impl SourceRequest {
     #[cfg(test)]
     pub fn for_processing(
         frame: FrameRaster,
-        input: &crate::gpu::test_inputs::AuthoredPhotograph,
+        input: &crate::photographic::test_inputs::AuthoredPhotograph,
     ) -> Result<Self, Error> {
         let program = input.source_transform().ok_or(Error::InvalidParameter(
             "working photograph has no captured source interpretation",
@@ -60,13 +60,13 @@ impl SourceRequest {
     }
 
     #[cfg(test)]
-    pub fn processing_fixture(&self) -> crate::gpu::test_inputs::AuthoredPhotograph {
+    pub fn processing_fixture(&self) -> crate::photographic::test_inputs::AuthoredPhotograph {
         match &self.fixture {
             Some(SourceFixture::Photograph(input)) => input
                 .clone()
                 .with_definition(self.definition.as_ref().clone()),
-            _ => crate::gpu::test_inputs::AuthoredPhotograph::from(
-                crate::gpu::parameters::ProcessingParameters::source(),
+            _ => crate::photographic::test_inputs::AuthoredPhotograph::from(
+                crate::photographic::parameters::ProcessingParameters::source(),
             ),
         }
     }
@@ -84,14 +84,17 @@ impl SourceRequest {
         self.presentation
     }
 
-    pub fn with_identity(mut self, identity: crate::gpu::source::identity::Identity) -> Self {
+    pub fn with_identity(
+        mut self,
+        identity: crate::acquisition::camera::identity::Identity,
+    ) -> Self {
         self.identity = identity;
         self
     }
 
     pub fn capture(
         mut self,
-        identity: crate::gpu::source::identity::Identity,
+        identity: crate::acquisition::camera::identity::Identity,
     ) -> Result<Self, Error> {
         if self.identity.captured() && self.identity != identity {
             return Err(Error::Gpu(
@@ -160,7 +163,7 @@ impl SourceRequest {
     }
 
     #[cfg(test)]
-    pub fn input_region(&self) -> Result<crate::gpu::evaluation::CellRegion, Error> {
+    pub fn input_region(&self) -> Result<crate::evaluation::CellRegion, Error> {
         let offset = self.plan.output_offset().ok_or(Error::InvalidParameter(
             "physical view requires a frame grid",
         ))?;
@@ -171,7 +174,7 @@ impl SourceRequest {
         let y = -offset[1]
             .as_ref()
             .map_err(|_| Error::InvalidParameter("view padding exceeds cell coordinates"))?;
-        crate::gpu::evaluation::CellRegion::new([x, y], self.plan.input().size()).validate()
+        crate::evaluation::CellRegion::new([x, y], self.plan.input().size()).validate()
     }
 
     #[cfg(test)]
@@ -186,7 +189,7 @@ impl SourceRequest {
         matrix: DMat3,
         field: Option<Arc<crate::flat_field::FlatField>>,
     ) -> Result<Self, Error> {
-        let fixture = crate::gpu::test_inputs::AuthoredPhotograph::new(
+        let fixture = crate::photographic::test_inputs::AuthoredPhotograph::new(
             &wgpu::Limits::default(),
             input,
             Default::default(),
@@ -214,7 +217,7 @@ impl SourceRequest {
         field: Option<Arc<crate::flat_field::FlatField>>,
     ) -> Result<Self, Error> {
         crate::processing::validate_camera_matrix(matrix)?;
-        crate::gpu::parameters::CameraMatrix::new(matrix)?;
+        crate::photographic::parameters::CameraMatrix::new(matrix)?;
         Ok(Self {
             fixture: Some(SourceFixture::Inspection(matrix)),
             field,
@@ -263,7 +266,7 @@ impl SourceRequest {
             [area.width, area.height],
         )?;
         Ok(Self {
-            identity: crate::gpu::source::identity::Identity::unbound(),
+            identity: crate::acquisition::camera::identity::Identity::unbound(),
             area,
             #[cfg(test)]
             fixture: None,

@@ -101,7 +101,16 @@ mod tests {
 
     #[test]
     fn native_scopes_return_valid_allocations_and_reject_invalid_handles_without_waiting() {
-        let (device, _, _) = crate::gpu::test_support::render_context();
+        let device = pollster::block_on(async {
+            let adapter = crate::gpu::instance()
+                .request_adapter(&Default::default())
+                .await
+                .unwrap();
+            let (device, _) = crate::gpu::submission::request_device(&adapter, &Default::default())
+                .await
+                .unwrap();
+            device
+        });
         let descriptor = wgpu::BufferDescriptor {
             label: None,
             size: 16,

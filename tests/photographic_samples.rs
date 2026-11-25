@@ -20,7 +20,7 @@ use antitone::{
     export::{self, Overwrite},
     flat_field::FlatField,
     geometry::{Composition, SourcePoint, SourceRegion},
-    gpu::flat::GpuFlatField,
+    photographic::stages::flat_field::GpuFlatField,
     processing::{InputSettings, RollSettings},
     rendering::OutputTarget,
     scan::Scan,

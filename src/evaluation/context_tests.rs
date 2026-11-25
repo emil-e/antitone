@@ -1,0 +1,511 @@
+use super::CellRegion as SourceRegion;
+use super::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+struct Pixels {
+    domain: Domain,
+    reads: Arc<AtomicUsize>,
+}
+
+impl Source for Pixels {
+    fn domain(&self) -> Domain {
+        self.domain
+    }
+
+    fn read(&self, r: SourceRegion) -> Result<Vec<[f32; 4]>, Error> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        Ok(vec![[-0.25, 0.4, 2., 3.]; (r.width * r.height) as usize])
+    }
+}
+
+#[derive(Debug, PartialEq, Hash)]
+struct FieldKey {
+    seed: u32,
+}
+
+fn field(domain: Domain, seed: u32) -> Value {
+    let bounds = domain.finite().unwrap();
+    let code = r#"
+struct Parameters { seed:vec4u }
+fn pixel(cell:vec2i,position:vec2f,p:Parameters)->vec4f {
+    let x=u32(cell.x);
+    let y=u32(cell.y);
+    let v=1.0+f32((x+3u*y+p.seed.x)%5u)*0.0625;
+    return vec4f(v);
+}
+"#;
+    let operation = value::Operation::new(
+        "context field",
+        FieldKey { seed },
+        code,
+        "pixel",
+        value::Access::Neighborhood,
+    )
+    .with_uniform("Parameters", &[seed, 0u32, 0, 0]);
+    value::Value::new(domain, bounds, vec![], operation).unwrap()
+}
+
+struct ApplyField;
+impl Operation for ApplyField {
+    fn reads(&self, region: CellRegion) -> Result<Vec<Read>, Error> {
+        Ok(vec![Read::new(0, region), Read::new(1, region)])
+    }
+    fn calculation(
+        self: std::sync::Arc<Self>,
+        inputs: &[crate::evaluation::value::Value],
+        domain: Domain,
+        output: CellRegion,
+        _: Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
+        let code = r#"
+fn pixel(cell:vec2i,position:vec2f,input:vec4f)->vec4f {
+    return vec4f(input.rgb*input_1(cell).x,input.w);
+}
+"#;
+        let operation = value::Operation::new(
+            "context field application",
+            (),
+            code,
+            "pixel",
+            value::Access::Pointwise,
+        )
+        .with_input_access(vec![value::Access::Pointwise, value::Access::Neighborhood]);
+        let inputs = vec![inputs[0].request(output)?, inputs[1].request(output)?];
+        value::Calculation::new(domain, output, inputs, operation).map(Some)
+    }
+}
+fn apply_field(input: Value, seed: u32) -> Value {
+    Value::from_operation(
+        input.domain(),
+        [input.clone(), field(input.domain(), seed)],
+        ApplyField,
+    )
+}
+
+fn domain() -> Domain {
+    Domain {
+        bounds: Some([11, 17, 9, 7].into()),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+    }
+}
+
+fn root(reads: Arc<AtomicUsize>) -> Value {
+    let d = domain();
+    apply_field(operators::source(Arc::new(Pixels { domain: d, reads })), 7)
+}
+
+fn request(context: &Context, image: Value, bounds: SourceRegion) -> Evaluation {
+    context
+        .request(
+            image.clone(),
+            Region {
+                bounds,
+                grid: image.domain.grid,
+            },
+            Tiling {
+                tile: [bounds.width, bounds.height],
+            },
+        )
+        .unwrap()
+}
+
+fn expected(region: SourceRegion) -> Vec<[f32; 4]> {
+    (region.y..region.bottom())
+        .flat_map(|y| {
+            (region.x..region.right()).map(move |x| {
+                let v = 1. + ((x + 3 * y + 7) % 5) as f32 * 0.0625;
+                [-0.25 * v, 0.4 * v, 2. * v, 3.]
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn evaluation_preserves_the_requested_grid_and_cancels_before_source_acquisition() {
+    let (device, queue, _renderer) = crate::photographic::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let reads = Arc::new(AtomicUsize::new(0));
+    let image = root(reads.clone());
+    let mut region = Region {
+        bounds: [12, 18, 5, 4].into(),
+        grid: image.domain.grid,
+    };
+    let evaluation = request(&context, image.clone(), region.bounds);
+    assert!(
+        context
+            .evaluate(
+                &queue,
+                &evaluation,
+                || true,
+                |_, _, _| panic!("cancelled request reached its sink")
+            )
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 0);
+    region.grid.axes[0][0] = 2.;
+    assert!(
+        context
+            .request(image, region, Tiling { tile: [5, 4] })
+            .is_err()
+    );
+    let mut actual = None;
+    let stats = context
+        .evaluate(
+            &queue,
+            &evaluation,
+            || false,
+            |encoder, image, buffer| {
+                let output = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("context result"),
+                    size: u64::from(image.cells()) * 16,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                });
+                encoder.copy_buffer_to_buffer(buffer, 0, &output, 0, output.size());
+                actual = Some(output);
+                Ok(())
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(stats.initializations, 1);
+    assert_eq!(
+        execute::read(&device, &queue, &actual.unwrap()),
+        expected([12, 18, 5, 4].into())
+    );
+    assert_eq!(context.retained_bytes(), 0);
+}
+
+#[test]
+fn generated_retention_is_bounded_independently_of_scratch_and_cache_off_preserves_pixels() {
+    let (device, queue, _renderer) = crate::photographic::test_support::render_context();
+    let region = SourceRegion::from([12, 18, 5, 4]);
+    let field_bytes = u64::from(region.width * region.height) * 16;
+    for limit in [0, field_bytes - 1, field_bytes] {
+        let context = Context::new(
+            &device,
+            CachePolicy {
+                generated_bytes: limit,
+            },
+        );
+        let evaluation = request(&context, root(Arc::new(AtomicUsize::new(0))), region);
+        let plan = evaluation.plans().next().unwrap().unwrap();
+        let materialized = pollster::block_on(
+            context
+                .materialize(
+                    &queue,
+                    &context.materializations(),
+                    request(&context, field(domain(), 7), region),
+                    ImageFormat::Rgba32Float,
+                    ImageBacking::Buffer,
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        let field_pixels = execute::read(&device, &queue, materialized.as_buffer().unwrap());
+        let field_expected = (region.y..region.bottom())
+            .flat_map(|y| {
+                (region.x..region.right())
+                    .map(move |x| [1. + ((x + 3 * y + 7) % 5) as f32 * 0.0625; 4])
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            field_pixels, field_expected,
+            "the independently materialized field must actually be initialized"
+        );
+        let mut executor = context.executor();
+        for _ in 0..2 {
+            let result = executor
+                .run(&device, &queue, &plan, || false)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                execute::read(&device, &queue, &result.pixels),
+                expected(region)
+            );
+            assert_eq!(
+                result.counts.initializations, 0,
+                "the explicitly held field must be reused independently of optional retention"
+            );
+            assert!(
+                executor.pool_bytes() > 0,
+                "cache-off still admits necessary working storage"
+            );
+            assert_eq!(
+                context.retained_bytes(),
+                if limit >= field_bytes { field_bytes } else { 0 }
+            );
+        }
+        drop((executor, materialized));
+        let mut fresh = context.executor();
+        let result = fresh
+            .run(&device, &queue, &plan, || false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            result.counts.initializations,
+            usize::from(limit < field_bytes),
+            "only optional retention should preserve the value after its live owner retires"
+        );
+        assert_eq!(
+            execute::read(&device, &queue, &result.pixels),
+            expected(region)
+        );
+        drop(fresh);
+        context.materializations().clear();
+        assert_eq!(
+            context.retained_bytes(),
+            0,
+            "optional ownership belongs to the materialization scope, not the last program"
+        );
+    }
+}
+
+#[test]
+fn recorded_generated_values_reuse_the_scope_without_program_history() {
+    use wgpu::util::DeviceExt;
+    let (device, queue, _) = crate::photographic::test_support::render_context();
+    let d = domain();
+    let bytes = u64::from(d.finite().unwrap().width * d.finite().unwrap().height) * 16;
+    let input = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&vec![[-0.25f32, 0.4, 2., 3.]; (bytes / 16) as usize]),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let output = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: bytes,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    for limit in [0, bytes] {
+        let context = Context::new(
+            &device,
+            CachePolicy {
+                generated_bytes: limit,
+            },
+        );
+        let scope = context.test_materializations(true);
+        let image = apply_field(borrowed_input(d), 7);
+        let first = context
+            .record(
+                request(&context, image.clone(), d.finite().unwrap()),
+                scope.clone(),
+                Vec::new(),
+            )
+            .unwrap();
+        let field_key = field(d, 7).identity().unwrap().clone();
+        let reserved = first.cached_image(&field_key).cloned();
+        assert!(
+            reserved.is_some(),
+            "recording owns its field even without optional retention"
+        );
+        if let Some(field) = &reserved {
+            assert!(
+                !field.ready(),
+                "unsubmitted initializers cannot satisfy a lookup"
+            );
+        }
+        let mut encoder = device.create_command_encoder(&Default::default());
+        first
+            .encode_into(&device, &mut encoder, &input, &output)
+            .unwrap();
+        queue.submit([encoder.finish()]);
+        first.submitted();
+        assert_eq!(
+            execute::read(&device, &queue, &output),
+            expected(d.finite().unwrap())
+        );
+        let next = context
+            .record(
+                request(&context, image, d.finite().unwrap()),
+                scope.clone(),
+                Vec::new(),
+            )
+            .unwrap();
+        if let Some(field) = &reserved {
+            let reused = next.cached_image(&field_key).unwrap();
+            assert_eq!(
+                field.pixels, reused.pixels,
+                "sharing is by image value, not a previous-program parameter"
+            );
+            assert!(reused.ready());
+        }
+        let mut encoder = device.create_command_encoder(&Default::default());
+        next.encode_into(&device, &mut encoder, &input, &output)
+            .unwrap();
+        queue.submit([encoder.finish()]);
+        next.submitted();
+        assert_eq!(
+            execute::read(&device, &queue, &output),
+            expected(d.finite().unwrap())
+        );
+        let foreign = Context::new(&device, CachePolicy { generated_bytes: 0 });
+        let foreign_image = apply_field(borrowed_input(d), 7);
+        assert!(
+            foreign
+                .record(
+                    request(&foreign, foreign_image, d.finite().unwrap()),
+                    scope.clone(),
+                    Vec::new()
+                )
+                .is_err()
+        );
+        scope.clear();
+        assert_eq!(
+            context.retained_bytes(),
+            0,
+            "cache ownership ends independently of active generated-buffer handles"
+        );
+        if let Some(field) = &reserved {
+            assert!(field.ready());
+        }
+        drop((first, next, reserved, scope));
+        assert_eq!(context.retained_bytes(), 0);
+    }
+}
+
+#[test]
+fn abandoning_an_unsubmitted_generated_value_releases_its_reservation() {
+    let (device, _, _) = crate::photographic::test_support::render_context();
+    let context = Context::new(
+        &device,
+        CachePolicy {
+            generated_bytes: 4096,
+        },
+    );
+    let scope = context.test_materializations(true);
+    let domain = domain();
+    let layout = ImageLayout {
+        domain,
+        region: domain.finite().unwrap(),
+        format: ImageFormat::Rgba32Float,
+        backing: ImageBacking::Buffer,
+    };
+    let work = scope
+        .generated_image(
+            &device,
+            &RetainedKey::new("abandoned typed field"),
+            layout,
+            true,
+            true,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(!work.ready());
+    assert_eq!(context.retained_bytes(), layout.bytes());
+    drop(work);
+    assert_eq!(context.retained_bytes(), 0);
+    assert!(scope.is_empty());
+}
+
+#[test]
+fn retention_reservations_are_atomic_and_do_not_overflow() {
+    let retention = cache::Allowance::new(32);
+    let admitted = std::sync::Barrier::new(9);
+    let release = std::sync::Barrier::new(9);
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            let retention = &retention;
+            let admitted = &admitted;
+            let release = &release;
+            scope.spawn(move || {
+                let lease = retention.acquire(16);
+                admitted.wait();
+                release.wait();
+                drop(lease);
+            });
+        }
+        admitted.wait();
+        assert_eq!(retention.bytes(), 32);
+        release.wait();
+    });
+    assert_eq!(retention.bytes(), 0);
+    let huge = cache::Allowance::new(u64::MAX);
+    let lease = huge.acquire(u64::MAX).unwrap();
+    assert!(huge.acquire(1).is_none());
+    drop(lease);
+    assert_eq!(huge.bytes(), 0);
+}
+
+#[test]
+fn output_grid_carries_oriented_source_coordinates_and_declared_pitch() {
+    use crate::geometry::{Composition, FramePoint, PhotoOrientation, QuarterTurns};
+    let composition = Composition::new(
+        [11, 17, 9, 7].into(),
+        Default::default(),
+        PhotoOrientation {
+            turns: QuarterTurns::One,
+            flips: Default::default(),
+        },
+    )
+    .unwrap();
+    let frame = crate::frame_raster::FrameRaster::new(
+        composition,
+        FramePoint([1., 2.]),
+        FramePoint([6., 8.]),
+        [5, 3],
+    )
+    .unwrap();
+    let grid = Grid::from_frame(frame);
+    assert_eq!(grid.origin, [13., 23.]);
+    assert_eq!(grid.axes, [[0., -1.], [2., 0.]]);
+    assert_eq!(grid.pitch, [1., 2.]);
+    assert_eq!(grid.point([1.5, 1.5]), [16., 21.5]);
+}
+
+#[test]
+fn evaluation_arms_its_readback_sink_before_the_completion_wait() {
+    let (device, queue, _renderer) = crate::photographic::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let bounds = SourceRegion::from([12, 18, 5, 4]);
+    let evaluation = request(&context, root(Arc::new(AtomicUsize::new(0))), bounds);
+    let output = std::cell::RefCell::new(None);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let completed = context
+        .evaluate_with(
+            &queue,
+            &evaluation,
+            || false,
+            Sink {
+                encode: |encoder: &mut wgpu::CommandEncoder,
+                         image: PlannedImage,
+                         pixels: &wgpu::Buffer| {
+                    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("bounded context readback"),
+                        size: u64::from(image.cells()) * 16,
+                        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    });
+                    encoder.copy_buffer_to_buffer(pixels, 0, &buffer, 0, buffer.size());
+                    *output.borrow_mut() = Some(buffer);
+                    Ok(())
+                },
+                submitted: || {
+                    let sender = sender.clone();
+                    output.borrow().as_ref().unwrap().slice(..).map_async(
+                        wgpu::MapMode::Read,
+                        move |result| {
+                            sender.send(result).unwrap();
+                        },
+                    );
+                },
+            },
+        )
+        .unwrap();
+    assert!(completed.is_some());
+    receiver
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap()
+        .unwrap();
+    let output = output.into_inner().unwrap();
+    let mapped = output.slice(..).get_mapped_range().unwrap();
+    assert_eq!(
+        bytemuck::cast_slice::<u8, [f32; 4]>(&mapped),
+        expected(bounds)
+    );
+}

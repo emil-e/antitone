@@ -1,6 +1,6 @@
 use super::*;
 mod preparation;
-use crate::gpu::{evaluation::ImageLayout, source::camera_source};
+use crate::{acquisition::camera::camera_source, evaluation::ImageLayout};
 use std::sync::mpsc;
 
 #[test]

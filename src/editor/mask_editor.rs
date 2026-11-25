@@ -1,6 +1,6 @@
 use super::*;
 #[cfg(test)]
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::processing::InputSettings;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},

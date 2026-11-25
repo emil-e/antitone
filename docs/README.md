@@ -31,17 +31,18 @@ Where each area's implementation lives — navigation, not specification. Follow
 | --- | --- | --- |
 | Processing | [processing](../src/processing.rs), [photographic calculations](../src/photographic/graph.rs), [colour](../src/color.rs) | Response, grading, stage composition and numerical admission |
 | Adjustment layers | [controls and masks](../src/adjustment_layers.rs), [Grading stage](../src/photographic/stages/grading.rs), [editor routing](../src/editor/processing.rs) | Immutable snapshots, analytic masks, source-owned layers and consumer-local numerical admission |
-| RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [source acquisition](../src/source/mod.rs), [GPU camera source](../src/gpu/source/native.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership and immutable camera RGB |
+| RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [source acquisition](../src/source/mod.rs), [GPU camera source](../src/acquisition/camera/native.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership and immutable camera RGB |
 | DNG backend | [adapter](../src/dng.rs), [native owner](../native/dng_bridge.cpp) | Direct SDK development and decode-free inspection in the shared source model |
 | Scan correction | [flat-field model](../src/flat_field.rs), [correction stage](../src/photographic/stages/flat_field.rs) | Source-coordinate illumination gains |
 | Image recipe and repairs | [captured recipe](../src/image_recipe.rs), [repair model](../src/dust_repair.rs), [interaction/search](../src/editor/dust.rs), [healing stage](../src/photographic/stages/healing.rs) | Captured intent, donor search, fixed-donor healing |
 | Roll analysis | [spatial support](../src/scan_regions.rs), [estimator](../src/roll_analysis.rs), [fitter](../src/roll_analysis/gamma.rs) | Source-owned sampling hypotheses, sample-derived starting settings |
-| GPU | [setup](../src/gpu.rs), [evaluation](../src/gpu/evaluation.rs), [display startup](../src/gpu/display.rs) | Device setup, bounded evaluation and rendering resources |
+| GPU | [setup](../src/gpu.rs), [submission](../src/gpu/submission.rs) | Shared device and queue mechanics |
+| Image evaluation | [framework](../src/evaluation.rs), [operations and values](../src/evaluation/value.rs) | Graph planning, bounded execution and reuse |
 | Rendering/output | [display rendering](../src/photographic/stages/display_rendering.rs), [export](../src/export.rs), [native transform](../native/rendering_transform.h) | ACES, file encoding and output safety |
 | Film texture | [photographic stages](../src/photographic/stages.rs), [graph composition](../src/photographic/graph/composition.rs) | Coordinated source-scale image MTF and RGB grain, with independent halation |
 | Colour treatments | [asset/import](../src/looks.rs), [film/paper model](../src/looks/spektrafilm.rs), [Look stage](../src/photographic/stages/look.rs), [selection](../src/editor/look.rs) | Independent embedded LUT and Film & paper stages before output ACES |
 | Geometry | [geometry](../src/geometry.rs), [coverage](../src/coverage.rs), [crop](../src/crop.rs), [auto-crop](../src/auto_crop.rs) | Coordinate mappings, source-cell coverage, measured-frame proposals |
-| Viewer | [working owner](../src/editor/working_view.rs), [GPU view](../src/gpu/view.rs), [viewer](../src/viewer.rs), [original-view owner](../src/editor/original_view.rs), [refinement](../src/refinement.rs), [viewport](../src/viewport.rs) | Physical-view grading/inspection, original-sample tool reconstruction and presentation |
+| Viewer | [working owner](../src/editor/working_view.rs), [view products](../src/viewer/view.rs), [viewer](../src/viewer.rs), [original-view owner](../src/editor/original_view.rs), [refinement](../src/refinement.rs), [viewport](../src/viewport.rs) | Physical-view grading/inspection, original-sample tool reconstruction and presentation |
 | Scopes | [measurement](../src/scopes.rs), [GPU reduction](../src/gpu_scopes.rs) | Approximate visible-image output statistics |
 | Editor | [editor](../src/editor.rs) and its feature modules | Live state, controls and transactions |
 | Workflows | [application](../src/application.rs), [blocking execution](../src/background.rs), [picking](../src/editor/picking.rs), [export](../src/editor/export.rs) | Feature-owned async execution, borrowed UI context, off-thread work |

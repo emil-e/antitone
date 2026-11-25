@@ -35,7 +35,7 @@ fn healing_does_not_swallow_underlying_source_read_errors() {
             Err(Error::InvalidParameter("underlying source unavailable"))
         }
     }
-    let (_, queue, renderer) = crate::gpu::test_support::render_context();
+    let (_, queue, renderer) = crate::photographic::test_support::render_context();
     let image = compose(source(Arc::new(Unavailable)), &[repair([32, 32], [10, 0])]).unwrap();
     let error = pixels(renderer.evaluation(), &queue, image, [32, 32, 1, 1].into()).unwrap_err();
     assert!(

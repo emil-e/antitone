@@ -12,7 +12,7 @@ use std::{
 #[test]
 #[ignore = "isolated authored native output latency and allocator diagnostic"]
 fn native_output_resources() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::dng_fixture::Fixture {
         side: 1536,
         bits: 16,
@@ -79,14 +79,14 @@ fn native_output_resources() {
         let started = Instant::now();
         let write = || {
             if std::env::var_os("ANTITONE_NATIVE_GPU_ONLY").is_some() {
-                use crate::gpu::execution;
+                use crate::rendering::execution;
                 let plan = format.plan();
                 let encoding = super::area::sample_encoding(plan);
                 let layout = block_layout(composition, plan);
                 let photograph =
                     crate::photographic::graph::authoring::PhotographTaps::authored_original(
                         &device.limits(),
-                        crate::gpu::source::camera_source(&scan)?,
+                        crate::acquisition::camera::camera_source(&scan)?,
                         None,
                         crate::photographic::stages::interpretation::InputTransform::for_scan(
                             &scan,

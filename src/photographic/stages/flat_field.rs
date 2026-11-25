@@ -1,8 +1,8 @@
 //! Camera-light correction and its immutable, reusable gain map.
 
-use crate::gpu::evaluation::{Function, Shared};
-use crate::gpu::parameters::CameraMatrix;
-use crate::gpu::source::{Mapping, SourceGeometry, coordinates};
+use crate::acquisition::camera::{Mapping, SourceGeometry, coordinates};
+use crate::evaluation::{Function, Shared};
+use crate::photographic::parameters::CameraMatrix;
 use crate::{Error, flat_field::FlatField};
 use coordinates::SourceCoordinates;
 use glam::{DMat3, DVec3};
@@ -105,16 +105,16 @@ pub(crate) fn shader() -> String {
 
 #[cfg(feature = "editor")]
 pub(crate) fn gathered(
-    source: crate::gpu::evaluation::Value,
+    source: crate::evaluation::Value,
     field: Option<&GpuFlatField>,
     origins: &[[u32; 2]],
     patch: [u32; 2],
-) -> Result<crate::gpu::evaluation::Value, Error> {
+) -> Result<crate::evaluation::Value, Error> {
     let code = [shader().as_str(), include_str!("flat_field/gathered.wgsl")].join("\n");
     let function = Function::new(code, "gathered_camera_light")
         .with_storage(18, bytemuck::cast_slice(origins).to_vec())
         .with_uniform(19, &[patch[0], patch[1], 0u32, 0u32]);
-    Ok(crate::gpu::evaluation::pointwise(
+    Ok(crate::evaluation::pointwise(
         source,
         GpuFlatField::bind(field, Mapping::Originals, function)?,
     ))

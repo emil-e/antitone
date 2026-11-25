@@ -31,7 +31,7 @@ pub(crate) mod authored;
 pub(crate) mod job;
 #[cfg(all(test, target_os = "macos", feature = "editor"))]
 mod native_resources;
-use crate::gpu::{evaluation, execution::OutputBlock, rgb16};
+use crate::{evaluation, rendering::execution::OutputBlock, rendering::rgb16};
 
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) mod observation_clock;
@@ -83,7 +83,7 @@ fn authored_area(
     request: authored::Request<'_>,
     destination: (&Path, Overwrite),
     check: impl FnMut() -> Result<(), Error>,
-) -> Result<crate::gpu::execution::Stats, Error> {
+) -> Result<crate::rendering::execution::Stats, Error> {
     let request = request.calculation(renderer, device)?;
     area::write_calculation(renderer.evaluation(), gpu, request, destination, check)
 }

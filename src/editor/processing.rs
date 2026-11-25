@@ -1,6 +1,6 @@
 use super::*;
 #[cfg(test)]
-use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::processing::InputSettings;
 
 #[cfg(test)]
@@ -172,7 +172,7 @@ pub(super) fn image_paint(
     presentation: &Presentation,
     image: Arc<GpuImage>,
     capture: Option<crate::photographic::graph::request::PhotographRequest>,
-    field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
+    field: Option<Arc<crate::photographic::stages::flat_field::GpuFlatField>>,
     mapping: crate::geometry::TextureMapping,
 ) -> Result<ImagePaint, Error> {
     use crate::photographic::graph::request::PhotographRequest;

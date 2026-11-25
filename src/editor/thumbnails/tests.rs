@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::parameters::ProcessingParameters;
+use crate::photographic::parameters::ProcessingParameters;
 use crate::project::Development;
 
 mod correction;

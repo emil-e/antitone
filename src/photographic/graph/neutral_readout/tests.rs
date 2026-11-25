@@ -20,7 +20,7 @@ impl Source for Codes {
 
 #[test]
 fn neutral_readout_bounds_extreme_samples_and_keeps_representable_hdr_and_floor_flags() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let region = SourceRegion::from([11, 17, 3, 2]);
     let mut input = InputSettings::negative(Calibration {
         dmin: DVec3::splat(0.7),

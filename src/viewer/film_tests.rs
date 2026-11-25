@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::source::SourceGeometry;
+use crate::acquisition::camera::SourceGeometry;
 use crate::render_fixture::RenderFixture;
 
 #[test]
@@ -8,9 +8,9 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         adjustment_layers::AdjustmentLayerSnapshot,
         frame_raster::FrameRaster,
         geometry::Composition,
-        gpu::test_inputs::AuthoredPhotograph,
         gpu_scopes::{GpuScopes, ScopePaint},
         grain::GrainPreset,
+        photographic::test_inputs::AuthoredPhotograph,
         processing::InputSettings,
     };
     pollster::block_on(async {
@@ -129,9 +129,9 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
     use crate::adjustment_layers::AdjustmentLayer;
     use crate::adjustment_layers::AdjustmentLayerSettings;
     use crate::adjustment_layers::AdjustmentLayerSnapshot;
-    use crate::gpu::test_inputs::AuthoredPhotograph;
     use crate::photographic::stages::grading::Grading;
     use crate::photographic::stages::interpretation::InputTransform;
+    use crate::photographic::test_inputs::AuthoredPhotograph;
     use crate::processing::InputSettings;
     use crate::processing::RollSettings;
     pollster::block_on(async {

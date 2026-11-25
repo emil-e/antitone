@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::evaluation::{BufferImage, ImageLayout};
+use crate::evaluation::{BufferImage, ImageLayout};
 
 #[test]
 fn repaired_and_unrepaired_visits_reuse_complete_images_through_the_common_cache() {

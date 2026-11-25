@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::{evaluation::*, source::camera_source};
+use crate::{acquisition::camera::camera_source, evaluation::*};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -45,9 +45,9 @@ impl CpuKernel for ObserveKernel {
 // decorated operation is unnamed so an earlier retained solve cannot hide this observation.
 fn observe(image: &Value, observation: &Arc<Observation>) -> Value {
     fn value(
-        image: &crate::gpu::evaluation::value::Value,
+        image: &crate::evaluation::value::Value,
         observation: &Arc<Observation>,
-    ) -> crate::gpu::evaluation::value::Value {
+    ) -> crate::evaluation::value::Value {
         let inputs = image
             .inputs()
             .iter()
@@ -61,7 +61,7 @@ fn observe(image: &Value, observation: &Arc<Observation>) -> Value {
                 })
             })
             .unwrap_or_else(|| {
-                crate::gpu::evaluation::value::Value::captured(
+                crate::evaluation::value::Value::captured(
                     image.domain(),
                     inputs,
                     image.operation().clone(),

@@ -1,6 +1,6 @@
 //! Bounded view acquisition quality, independent of optional pixel retention.
 
-use crate::gpu::evaluation::Value;
+use crate::evaluation::Value;
 use crate::{
     Error,
     acquisition::{Plan, Request, Sampling},

@@ -2,6 +2,11 @@ use glam::{DMat3, DVec3, Vec3};
 
 use crate::{Error, photographic::stages::display_rendering::validate_channel};
 
+#[cfg(all(feature = "gpu", any(feature = "raw", feature = "ui")))]
+pub(crate) mod execution;
+#[cfg(all(feature = "gpu", feature = "raw"))]
+pub(crate) mod rgb16;
+
 pub use crate::color::OutputTarget;
 
 impl OutputTarget {

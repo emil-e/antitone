@@ -1,14 +1,14 @@
 use super::{Grade, TONAL_WIDTH, encoded_grey};
-use crate::gpu::{
-    parameters::{CameraMatrix, ProcessingParameters},
-    source::SourceGeometry,
-};
 use crate::{
     Error,
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
     color::{AP1_TO_XYZ, Balance, ap1_to_cones, oklab},
     geometry::SourceRegion,
     processing::RollSettings,
+};
+use crate::{
+    acquisition::camera::SourceGeometry,
+    photographic::parameters::{CameraMatrix, ProcessingParameters},
 };
 use bytemuck::Zeroable;
 use glam::{DVec2, Vec2, Vec3};
@@ -114,10 +114,10 @@ impl Grading {
     /// identity-valued layer omitted from the active grade traversal.
     #[cfg(feature = "editor")]
     pub(crate) fn weight_image(
-        input: crate::gpu::evaluation::Value,
+        input: crate::evaluation::Value,
         mut layer: AdjustmentLayer,
-    ) -> Result<crate::gpu::evaluation::Value, Error> {
-        use crate::gpu::evaluation::{Function, pointwise};
+    ) -> Result<crate::evaluation::Value, Error> {
+        use crate::evaluation::{Function, pointwise};
 
         layer.validate()?;
         if !layer.enabled {

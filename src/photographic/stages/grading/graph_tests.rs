@@ -1,4 +1,4 @@
-use crate::gpu::evaluation::*;
+use crate::evaluation::*;
 use crate::{
     adjustment_layers::{
         AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
@@ -137,7 +137,7 @@ fn standalone_vibrance_precedes_film_paper_and_both_display_targets() {
         looks::{LutChain, spektrafilm},
         rendering::{CpuRenderer, OutputTarget},
     };
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let pixels = [
         [0.22, 0.18, 0.14, 7.],
         [0.18, 0.18, 0.18, 7.],
@@ -229,7 +229,7 @@ fn standalone_vibrance_precedes_film_paper_and_both_display_targets() {
 fn tonal_ranges_grade_before_display_and_respect_feathered_exposure() {
     use crate::rendering::OutputTarget;
 
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let grey = 0.18_f32;
     let bright = grey * 32.;
     let dark = grey / 32.;
@@ -321,7 +321,7 @@ fn tonal_ranges_grade_before_display_and_respect_feathered_exposure() {
 fn preserve_operates_on_gpu_tone_even_with_neutral_contrast() {
     use crate::color::oklab::{AP1_TO_LMS, LIGHTNESS};
 
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let pixels = [[2.4, 1.2, -0.1, 0.]];
     let input = buffer(&device, &pixels);
     let region = CellRegion::new([0, 0], [1, 1]);
@@ -368,7 +368,7 @@ fn preserve_operates_on_gpu_tone_even_with_neutral_contrast() {
 
 #[test]
 fn photographic_grading_keeps_signed_hdr_and_saturates_only_extreme_arithmetic() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let pixels = [
         [1e35, 1e35, 1e35, 7.],
         [-1e35, -1e35, -1e35, 7.],
@@ -478,7 +478,7 @@ fn photographic_grading_keeps_signed_hdr_and_saturates_only_extreme_arithmetic()
 
 #[test]
 fn extreme_grading_stays_finite_through_actual_grain_generation_and_application() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let region = CellRegion::new([0, 0], [64, 64]);
     let domain = Domain {
         bounds: Some(region),
@@ -541,7 +541,7 @@ fn extreme_grading_stays_finite_through_actual_grain_generation_and_application(
 
 #[test]
 fn overflowing_matrix_products_retry_without_turning_signed_channels_into_nan() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let pixels = [[f32::MAX, f32::MAX, 1., 7.], [1., 1., 1., 7.]];
     let domain = Domain {
         bounds: Some([0, 0, 2, 1].into()),
@@ -594,7 +594,7 @@ fn photographic_constants_and_layer_queries_can_be_captured_without_a_device() {
         exposure: 0.5,
         ..Default::default()
     });
-    let input = crate::gpu::test_inputs::AuthoredPhotograph::new(
+    let input = crate::photographic::test_inputs::AuthoredPhotograph::new(
         &wgpu::Limits::default(),
         crate::processing::InputSettings::Digital,
         RollSettings::default(),
@@ -625,7 +625,7 @@ fn photographic_constants_and_layer_queries_can_be_captured_without_a_device() {
 
 #[test]
 fn a_borrowed_source_can_deliver_a_whole_or_partial_region_without_processing() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let domain = Domain {
         bounds: Some([11, 17, 8, 5].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
@@ -656,7 +656,7 @@ fn a_borrowed_source_can_deliver_a_whole_or_partial_region_without_processing() 
 
 #[test]
 fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_source() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let domain = Domain {
         bounds: Some([0, 0, 9, 7].into()),
         grid: Grid {
@@ -770,7 +770,7 @@ fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_s
 
 #[test]
 fn private_module_slots_preserve_each_captured_resource_when_fused() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let domain = Domain {
         bounds: Some([0, 0, 3, 2].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),

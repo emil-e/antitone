@@ -18,7 +18,7 @@ fn cold_positive_captures_resolved_starting_exposure_before_authoring_its_graph(
     let source = document.project.source(id).unwrap().clone();
     let scan = Scan::open(file.path(), document.project.acquisition_wb()).unwrap();
     let camera = Arc::new(crate::scan::CameraPixels::from_scan(&scan).unwrap());
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let loader = source_loading::SourceLoader::new();
     let thumbnails = Thumbnails::with_developments(
         device.clone(),

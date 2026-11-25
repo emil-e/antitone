@@ -618,7 +618,7 @@ fn failed_graph_region_does_not_poison_an_independent_repair_demand() {
     }
     let recipe = capture(&e);
     let services = e.source_services.as_ref().unwrap();
-    let base = crate::gpu::repair_source::Source::from_recipe(
+    let base = crate::dust_repair::image_source::Source::from_recipe(
         e.correction().gpu().unwrap(),
         &services.evaluation,
         &services.queue,
@@ -631,9 +631,12 @@ fn failed_graph_region_does_not_poison_an_independent_repair_demand() {
         &recipe.repairs,
     )
     .unwrap();
-    let mut reader =
-        crate::gpu::repair_source::Source::from_image(&services.evaluation, &services.queue, root)
-            .unwrap();
+    let mut reader = crate::dust_repair::image_source::Source::from_image(
+        &services.evaluation,
+        &services.queue,
+        root,
+    )
+    .unwrap();
     let failed = reader
         .read(
             SourceRegion {

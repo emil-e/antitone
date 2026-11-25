@@ -40,7 +40,7 @@ impl Source for Pattern {
 
 #[test]
 fn rotated_graph_footprints_match_scalar_coverage_across_output_blocks() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let area = SourceRegion {
         x: 120,
@@ -116,11 +116,8 @@ fn rotated_graph_footprints_match_scalar_coverage_across_output_blocks() {
                         .unwrap(),
                 )
                 .unwrap();
-                let pixels = crate::gpu::evaluation::read_buffer(
-                    &device,
-                    &queue,
-                    image.as_buffer().unwrap(),
-                );
+                let pixels =
+                    crate::evaluation::read_buffer(&device, &queue, image.as_buffer().unwrap());
                 for y in block.y..block.bottom() {
                     for x in block.x..block.right() {
                         actual[region.index([x, y])] = pixels[block.index([x, y])];

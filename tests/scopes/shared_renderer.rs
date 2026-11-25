@@ -1,9 +1,10 @@
 use super::*;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
-use antitone::gpu::parameters::ProcessingParameters;
+use antitone::photographic::parameters::ProcessingParameters;
 use antitone::{
+    acquisition::camera::SourceGeometry,
     color::Balance,
-    gpu::{flat::GpuFlatField, source::SourceGeometry},
+    photographic::stages::flat_field::GpuFlatField,
     processing::{Calibration, RollSettings},
 };
 use glam::DVec3;

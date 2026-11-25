@@ -10,12 +10,12 @@ impl Operation for Damage {
     }
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: CellRegion,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, crate::Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, crate::Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         let function = Function::new(
             "fn damage(p:vec4f,at:vec2f)->vec4f{if all(vec2i(floor(at))==vec2i(41,41)){return vec4f(0.,0.,0.,p.w);}return p;}",
             "damage",
@@ -31,7 +31,7 @@ impl Operation for Damage {
 }
 #[test]
 fn default_regional_quantum_preserves_the_complete_healed_ramp_and_real_edge_extension() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let original = source(Arc::new(Plate));
     let damaged = Value::from_operation(original.domain(), [original], Damage);

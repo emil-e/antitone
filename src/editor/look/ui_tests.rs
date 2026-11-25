@@ -1,7 +1,7 @@
 use super::*;
-use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::looks::{LookOrigin, Lut3D};
+use crate::photographic::parameters::ProcessingParameters;
+use crate::photographic::test_inputs::AuthoredPhotograph;
 
 fn asset() -> Arc<LookAsset> {
     let mut nodes = Vec::new();

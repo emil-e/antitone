@@ -24,7 +24,7 @@ pub(crate) fn encode_supplied(
     support: Option<&[u32]>,
 ) -> Result<(), Error> {
     let input = Domain {
-        bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], source_size)),
+        bounds: Some(crate::evaluation::CellRegion::new([0, 0], source_size)),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
     };
     let domain = Domain {

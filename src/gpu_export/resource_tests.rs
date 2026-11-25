@@ -7,13 +7,13 @@ use crate::frame_raster::FrameRaster;
 use crate::geometry::PhotoOrientation;
 use crate::geometry::QuarterTurns;
 use crate::geometry::RollOrientation;
-use crate::gpu::flat::GpuFlatField;
-use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::view::RenderedView;
-use crate::gpu::view::ViewImage;
-use crate::gpu::view::ViewKernels;
 use crate::gpu_export::authored::Request;
 use crate::photographic::graph::view_source::SourceRequest;
+use crate::photographic::stages::flat_field::GpuFlatField;
+use crate::photographic::test_inputs::AuthoredPhotograph;
+use crate::viewer::view::RenderedView;
+use crate::viewer::view::ViewImage;
+use crate::viewer::view::ViewKernels;
 use std::time::{Duration, Instant};
 
 #[test]

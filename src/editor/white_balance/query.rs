@@ -1,7 +1,7 @@
 //! Original-grid WB inputs evaluated through the shared photographic components.
 
 use super::*;
-use crate::gpu::flat::GpuFlatField;
+use crate::photographic::stages::flat_field::GpuFlatField;
 use crate::{
     editor::measurement::query::{FORWARD_RESIDUAL_FLOOR, Samples},
     photographic::stages::grading::Grading,

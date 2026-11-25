@@ -12,7 +12,7 @@ fn precision_eligibility_keeps_the_strict_floor_boundary_in_the_evaluated_repres
             self.domain
         }
 
-        fn read(&self, region: crate::gpu::evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+        fn read(&self, region: crate::evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
             let region = region.source()?;
             Ok(vec![
                 [self.value, self.value, self.value, 0.];

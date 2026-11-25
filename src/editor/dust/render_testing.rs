@@ -2,7 +2,7 @@
 use super::*;
 use crate::dust_repair::BaseImage;
 #[cfg(feature = "ui-tests")]
-use crate::gpu::evaluation::Value;
+use crate::evaluation::Value;
 
 pub(super) fn pixels(
     scan: &Scan,
@@ -10,11 +10,13 @@ pub(super) fn pixels(
     repair: &Repair,
     services: &source::Services,
 ) -> Vec<([u32; 2], [f32; 3])> {
-    let field = scan
-        .flat_field()
-        .cloned()
-        .map(|map| Arc::new(crate::gpu::flat::GpuFlatField::new(&services.device, map).unwrap()));
-    let base = crate::gpu::repair_source::Source::from_recipe(
+    let field = scan.flat_field().cloned().map(|map| {
+        Arc::new(
+            crate::photographic::stages::flat_field::GpuFlatField::new(&services.device, map)
+                .unwrap(),
+        )
+    });
+    let base = crate::dust_repair::image_source::Source::from_recipe(
         field,
         &services.evaluation,
         &services.queue,
@@ -25,9 +27,12 @@ pub(super) fn pixels(
     let image =
         crate::photographic::stages::healing::operation::healing_image(base.image(), repair)
             .unwrap();
-    let mut reader =
-        crate::gpu::repair_source::Source::from_image(&services.evaluation, &services.queue, image)
-            .unwrap();
+    let mut reader = crate::dust_repair::image_source::Source::from_image(
+        &services.evaluation,
+        &services.queue,
+        image,
+    )
+    .unwrap();
     let [x, y] = repair.support.origin();
     let [width, height] = repair.support.size();
     let values = reader
@@ -79,7 +84,7 @@ impl Image {
     // This performs common graph work: call outside an Editor/Harness borrow.
     pub fn pixels(&self) -> std::vec::IntoIter<([u32; 2], [f32; 3])> {
         let services = &self.services;
-        let mut source = crate::gpu::repair_source::Source::from_image(
+        let mut source = crate::dust_repair::image_source::Source::from_image(
             &services.evaluation,
             &services.queue,
             self.definition.clone(),
@@ -139,7 +144,7 @@ impl Editor {
         let scan = self.source_context().unwrap().scan().unwrap();
         let (scan, capture) = crate::photo_preparation::native_image(&scan, &capture).unwrap();
         let base = crate::photographic::graph::composition::original_unrepaired(
-            crate::gpu::source::camera_source(&scan).unwrap(),
+            crate::acquisition::camera::camera_source(&scan).unwrap(),
             self.correction()
                 .prepared()
                 .map(|correction| correction.gpu.clone()),

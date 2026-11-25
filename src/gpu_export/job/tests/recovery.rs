@@ -25,7 +25,7 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
     let renderer = pollster::block_on(crate::render_fixture::RenderFixture::new_with_cache_policy(
         &device,
         &queue,
-        crate::gpu::evaluation::CachePolicy { generated_bytes: 0 },
+        crate::evaluation::CachePolicy { generated_bytes: 0 },
     ))
     .unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -90,11 +90,10 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
             }
         }
     }
-    let field = scan
-        .flat_field()
-        .cloned()
-        .map(|map| Arc::new(crate::gpu::flat::GpuFlatField::new(&device, map).unwrap()));
-    let reader = crate::gpu::repair_source::Source::from_recipe(
+    let field = scan.flat_field().cloned().map(|map| {
+        Arc::new(crate::photographic::stages::flat_field::GpuFlatField::new(&device, map).unwrap())
+    });
+    let reader = crate::dust_repair::image_source::Source::from_recipe(
         field,
         renderer.evaluation(),
         &queue,

@@ -542,11 +542,11 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
     fn digital_proxy_pixels(
         e: &Editor,
         ready: &crate::editor::Ready,
-        field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
+        field: Option<Arc<crate::photographic::stages::flat_field::GpuFlatField>>,
     ) -> Vec<[f32; 4]> {
-        use crate::gpu::view::RenderedView;
-        use crate::gpu::view::ViewKernels;
         use crate::photographic::graph::view_source::SourceRequest;
+        use crate::viewer::view::RenderedView;
+        use crate::viewer::view::ViewKernels;
         let services = e.source_services.as_ref().unwrap();
         let (device, queue) = (&services.device, &services.queue);
         let composition =
@@ -571,8 +571,8 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 spec,
             )
             .unwrap();
-        let parameters = crate::gpu::test_inputs::AuthoredPhotograph::from(Arc::new(
-            crate::gpu::test_inputs::AuthoredPhotograph::new(
+        let parameters = crate::photographic::test_inputs::AuthoredPhotograph::from(Arc::new(
+            crate::photographic::test_inputs::AuthoredPhotograph::new(
                 &device.limits(),
                 InputSettings::Digital,
                 Default::default(),

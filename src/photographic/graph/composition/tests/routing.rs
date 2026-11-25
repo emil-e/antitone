@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::source::{ProcessingSource, SourceGeometry};
+use crate::acquisition::camera::{ProcessingSource, SourceGeometry};
 use crate::photographic::graph::request::PhotographRequest;
 use crate::photographic::graph::view_source::SourceRequest;
 use crate::rendering::OutputTarget;
@@ -71,7 +71,7 @@ fn pixels(
 
 #[test]
 fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changing_prefixes() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([2949, 11796, 5898]);
     let scan = crate::scan::Scan::open(file.path(), None).unwrap();
     let mut project = Project {
@@ -100,7 +100,7 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
         .unwrap();
     let recipe = Arc::new(project.image_recipe(id).unwrap());
     let capture = PhotographRequest::Recipe(recipe.clone());
-    let codes = crate::gpu::source::camera_source(&scan).unwrap();
+    let codes = crate::acquisition::camera::camera_source(&scan).unwrap();
     let limits = device.limits();
     let proxy = crate::scan::CameraProxy::from_scan(&scan).unwrap();
     let camera = ProcessingSource::new_continuous(
@@ -171,7 +171,7 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
                 (
                     "working",
                     physical,
-                    crate::gpu::view::rendering::photograph(
+                    crate::viewer::view::rendering::photograph(
                         &limits,
                         &scan,
                         None,
@@ -296,7 +296,7 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
 #[test]
 fn preview_and_proxy_layouts_can_be_replanned_with_an_explicit_capture() {
     use crate::acquisition::Sampling;
-    let (device, _, renderer) = crate::gpu::test_support::render_context();
+    let (device, _, renderer) = crate::photographic::test_support::render_context();
     let limits = device.limits();
     let file = crate::raw::fixture::bayer_dng_with_rgb([2949, 11796, 5898]);
     let scan = crate::scan::Scan::open(file.path(), None).unwrap();
@@ -328,7 +328,7 @@ fn preview_and_proxy_layouts_can_be_replanned_with_an_explicit_capture() {
     let capture = PhotographRequest::Recipe(recipe.clone());
     let mut frame = crate::frame_raster::FrameRaster::full(recipe.composition).unwrap();
     frame.output = [8, 6];
-    let identity = crate::gpu::source::identity::Identity::camera(scan.source().identity());
+    let identity = crate::acquisition::camera::identity::Identity::camera(scan.source().identity());
     let fresh = capture
         .source_request(frame)
         .unwrap()

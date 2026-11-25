@@ -640,7 +640,7 @@ impl Editor {
 
     fn rendered_paint(
         &mut self,
-        rendered: Arc<crate::gpu::view::RenderedView>,
+        rendered: Arc<crate::viewer::view::RenderedView>,
         mapping: crate::geometry::TextureMapping,
         context: egui::Context,
     ) -> Option<ImagePaint> {

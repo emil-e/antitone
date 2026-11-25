@@ -8,7 +8,7 @@ mod adjustment_layers;
 
 #[test]
 fn calculation_retention_honors_the_full_settings_share_before_and_after_display_warmup() {
-    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::photographic::test_support::render_context();
     let renderers = Arc::new(DisplayFixture::for_device(&device));
     let mut editor = Editor::state();
     editor.document.thumbnails.processed.gpu =
@@ -71,10 +71,10 @@ fn calculation_retention_honors_the_full_settings_share_before_and_after_display
 #[test]
 fn retained_cards_reduce_calculation_space_and_release_restores_admission_without_revoking_leases()
 {
-    use crate::gpu::evaluation::{ImageValue as StoredImage, RetainedKey};
+    use crate::evaluation::{ImageValue as StoredImage, RetainedKey};
 
     pollster::block_on(async {
-        let (device, queue, _) = crate::gpu::test_support::render_context();
+        let (device, queue, _) = crate::photographic::test_support::render_context();
         let renderers = Arc::new(DisplayFixture::for_device(&device));
         let mut editor = Editor::state();
         *editor.document = super::tests::fixture();
@@ -200,7 +200,7 @@ fn retained_cards_reduce_calculation_space_and_release_restores_admission_withou
 
 #[test]
 fn gpu_retention_settings_include_calculation_values_without_withdrawing_live_owners() {
-    use crate::gpu::evaluation::{ImageValue as StoredImage, RetainedKey};
+    use crate::evaluation::{ImageValue as StoredImage, RetainedKey};
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
@@ -343,7 +343,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
         crop::Crop,
         frame_raster::FrameRaster,
         geometry::{Flips, FramePoint, PhotoOrientation, QuarterTurns, RollOrientation},
-        gpu::flat::GpuFlatField,
+        photographic::stages::flat_field::GpuFlatField,
         rendering::CpuRenderer,
     };
     pollster::block_on(async {
@@ -389,7 +389,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
             )
         })
         .unwrap();
-        let parameters = crate::gpu::test_inputs::AuthoredPhotograph::new(
+        let parameters = crate::photographic::test_inputs::AuthoredPhotograph::new(
             &device.limits(),
             calibration,
             roll,
@@ -577,7 +577,7 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         let _ = file;
 
         let image = ready.proxy.image(OutputTarget::DisplayP3).unwrap();
-        let parameters = crate::gpu::test_inputs::AuthoredPhotograph::new(
+        let parameters = crate::photographic::test_inputs::AuthoredPhotograph::new(
             &device.limits(),
             Calibration {
                 dmin: DVec3::new(0.28, 0.23, 0.25),

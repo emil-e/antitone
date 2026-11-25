@@ -2,8 +2,8 @@
 
 use crate::{
     Error,
-    gpu::evaluation::CellRegion as Rect,
-    gpu::evaluation::{self, Domain, Function, Operation, Value, value},
+    evaluation::CellRegion as Rect,
+    evaluation::{self, Domain, Function, Operation, Value, value},
     processing_support::Support,
 };
 
@@ -88,8 +88,8 @@ struct Tent {
 }
 
 impl Operation for Tent {
-    fn reads(&self, output: Rect) -> Result<Vec<crate::gpu::evaluation::Read>, Error> {
-        Ok(vec![crate::gpu::evaluation::Read::new(
+    fn reads(&self, output: Rect) -> Result<Vec<crate::evaluation::Read>, Error> {
+        Ok(vec![crate::evaluation::Read::new(
             0,
             output.expanded(self.support.0, self.domain.bounds)?,
         )])
@@ -97,12 +97,12 @@ impl Operation for Tent {
 
     fn calculation(
         self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
+        inputs: &[crate::evaluation::value::Value],
         domain: Domain,
         output: Rect,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
+        _budget: crate::evaluation::Tiling,
+    ) -> Result<Option<crate::evaluation::value::Calculation>, Error> {
+        let inputs = crate::evaluation::value::Calculation::references(inputs);
         let horizontal = output.expanded([0, self.support.0[1]], domain.bounds)?;
         let read = horizontal.expanded([self.support.0[0], 0], domain.bounds)?;
         let mut input = inputs[0].request(read)?;
