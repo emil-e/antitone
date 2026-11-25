@@ -18,7 +18,7 @@ pub(crate) struct Job {
     pub(crate) generation: Arc<std::sync::atomic::AtomicU64>,
     pub(crate) key: ImageKey,
     pub(crate) physical: crate::source::Input,
-    pub(crate) correction: crate::gpu::flat::resources::Resources,
+    pub(crate) correction: crate::photographic::stages::flat_field::resources::Resources,
     pub(crate) render: bool,
     pub(crate) priority: source_loading::Priority,
     pub(crate) previous: Option<Arc<Product>>,

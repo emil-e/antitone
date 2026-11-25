@@ -1,31 +1,9 @@
-//! Camera interpretation and working-space conversion.
+//! Resident camera-code reads and joint correction/conversion admission.
 
 use crate::Error;
 use crate::gpu::evaluation::*;
-use crate::gpu::{flat::GpuFlatField, source::SourceGeometry};
-use std::{
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
-
-#[derive(Clone, Copy)]
-pub enum Mapping {
-    Originals,
-    Resident(Option<SourceGeometry>),
-}
-
-impl Mapping {
-    pub fn geometry(self, region: CellRegion) -> Result<Option<SourceGeometry>, Error> {
-        match self {
-            Self::Originals => {
-                let r = region.source()?;
-                SourceGeometry::original_tile([r.x, r.y, r.width, r.height], [r.width, r.height])
-                    .map(Some)
-            }
-            Self::Resident(geometry) => Ok(geometry),
-        }
-    }
-}
+use crate::photographic::stages::flat_field::GpuFlatField;
+use std::hash::{Hash, Hasher};
 
 pub(super) fn validate_camera_range(
     matrix: glam::DMat3,
@@ -43,99 +21,6 @@ pub(super) fn validate_camera_range(
     }
     crate::gpu::parameters::CameraMatrix::new(matrix)?;
     Ok(())
-}
-
-pub struct CameraCorrection {
-    pub field: Option<Arc<GpuFlatField>>,
-    pub mapping: Mapping,
-}
-
-#[derive(Debug, PartialEq)]
-pub(super) struct CameraIdentity {
-    pub field: Option<Arc<crate::flat_field::FlatField>>,
-    original_mapping: bool,
-    geometry: Option<SourceGeometry>,
-}
-
-impl Hash for CameraIdentity {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        // Map dimensions locate candidates without reading the gain table.
-        self.field
-            .as_ref()
-            .map(|field| (field.area(), field.size()))
-            .hash(state);
-        self.original_mapping.hash(state);
-        self.geometry.hash(state);
-    }
-}
-
-impl CameraCorrection {
-    fn identity(&self) -> CameraIdentity {
-        let (original_mapping, geometry) = match self.mapping {
-            Mapping::Originals => (true, None),
-            Mapping::Resident(geometry) => (false, geometry),
-        };
-        CameraIdentity {
-            field: self.field.as_ref().map(|field| field.field().clone()),
-            original_mapping,
-            geometry,
-        }
-    }
-}
-impl Operation for CameraCorrection {
-    fn key(&self) -> Option<RetainedKey> {
-        Some(RetainedKey::new(self.identity()))
-    }
-    fn reads(&self, region: CellRegion) -> Result<Vec<Read>, Error> {
-        Ok(vec![Read::new(0, region)])
-    }
-    fn calculation(
-        self: std::sync::Arc<Self>,
-        inputs: &[crate::gpu::evaluation::value::Value],
-        domain: Domain,
-        output: CellRegion,
-        _budget: crate::gpu::evaluation::Tiling,
-    ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
-        let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
-        let original = matches!(self.mapping, Mapping::Originals);
-        let geometry = if original {
-            self.field
-                .as_ref()
-                .map(|field| SourceGeometry::new(field.field().area(), [1, 1]))
-                .transpose()?
-        } else {
-            self.mapping.geometry(output)?
-        };
-        let source = if original {
-            "source=vec2u(floor(position));"
-        } else {
-            "if field.grid.z != 0u { let xy=vec2u(cell);source=source_pixel(xy.y*field.dimensions.x+xy.x); }"
-        };
-        let code = format!(
-            "{}\nfn pixel(cell:vec2i, position:vec2f, value:vec4f)->vec4f {{ if value.w<0.0 {{return value;}} var source=vec2u(0u); {source} return vec4f(camera_light_at(value.rgb,source),0.0); }}",
-            crate::photographic::stages::shader::functions()
-        );
-        let bindings = GpuFlatField::bind(
-            self.field.as_deref(),
-            geometry,
-            Function::new(code.clone(), "pixel"),
-        )?
-        .bindings;
-        value::Calculation::new(
-            domain,
-            output,
-            vec![inputs[0].request(output)?],
-            value::Operation::new(
-                "camera illumination v1",
-                self.identity(),
-                code,
-                "pixel",
-                value::Access::Pointwise,
-            )
-            .with_bindings(bindings),
-        )
-        .map(Some)
-    }
 }
 
 #[derive(Debug)]

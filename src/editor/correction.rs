@@ -1,6 +1,6 @@
 //! Correction-owned GPU preparation and immutable inputs retained by its consumers.
 use super::{Editor, UiContext};
-pub(super) use crate::gpu::flat::resources::{Correction, Resources};
+pub(super) use crate::photographic::stages::flat_field::resources::{Correction, Resources};
 use crate::project::FlatFieldSettings;
 use std::{cell::RefCell, sync::Arc};
 

@@ -6,7 +6,6 @@ pub(crate) mod display;
 pub mod evaluation;
 #[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]
 pub(crate) mod execution;
-pub mod flat;
 pub mod gaussian;
 #[cfg(all(
     feature = "raw",
@@ -109,8 +108,6 @@ pub(crate) fn fullscreen_pipeline(
 }
 
 #[cfg(test)]
-mod flat_tests;
-#[cfg(test)]
 mod input_grading_tests;
 #[cfg(test)]
 mod tests;
@@ -119,6 +116,7 @@ mod tests;
 mod shader_layout_tests;
 
 // Preserve the original public paths for prepared photographic controls.
+pub use crate::photographic::stages::flat_field as flat;
 pub use crate::photographic::stages::{grading, interpretation};
 
 // Preserve public paths for device-scoped Look and display resources.

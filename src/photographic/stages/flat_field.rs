@@ -1,18 +1,23 @@
+//! Camera-light correction and its immutable, reusable gain map.
+
 use crate::gpu::evaluation::{Function, Shared};
 use crate::gpu::parameters::CameraMatrix;
-use crate::gpu::source::SourceGeometry;
+use crate::gpu::source::{Mapping, SourceGeometry, coordinates};
 use crate::{Error, flat_field::FlatField};
-use bytemuck::Zeroable;
+use coordinates::SourceCoordinates;
 use glam::{DMat3, DVec3};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+pub(crate) mod operation;
 #[cfg(feature = "editor")]
 pub(crate) mod resources;
+#[cfg(all(test, target_os = "macos"))]
+mod tests;
 
 /// Immutable roll resource; no expanded or corrected full-resolution source is retained.
 pub struct GpuFlatField {
-    pub(super) nodes: wgpu::Buffer,
+    nodes: wgpu::Buffer,
     field: Arc<FlatField>,
     bounds: (DVec3, DVec3),
 }
@@ -51,20 +56,22 @@ impl GpuFlatField {
         &self.field
     }
 
-    pub(crate) fn bind(
-        field: Option<&Self>,
-        geometry: Option<SourceGeometry>,
-        function: Function,
-    ) -> Result<Function, Error> {
-        Ok(match field {
-            Some(field) => {
-                let geometry = geometry.ok_or(Error::InvalidParameter(
-                    "corrected source requires geometry",
-                ))?;
-                function
-                    .with_uniform(5, &FieldGeometry::new(field, geometry))
-                    .with_shared(4, Shared::Buffer(field.nodes.clone()))
+    fn bind(field: Option<&Self>, mapping: Mapping, function: Function) -> Result<Function, Error> {
+        let geometry = match mapping {
+            Mapping::Originals => None,
+            Mapping::Resident(geometry) => {
+                if field.is_some() && geometry.is_none() {
+                    return Err(Error::InvalidParameter(
+                        "corrected source requires geometry",
+                    ));
+                }
+                geometry
             }
+        };
+        Ok(match field {
+            Some(field) => function
+                .with_uniform(5, &FieldGeometry::new(field, geometry))
+                .with_shared(4, Shared::Buffer(field.nodes.clone())),
             None => function
                 .with_uniform(5, &FieldGeometry::uncorrected(geometry))
                 .with_storage(4, bytemuck::bytes_of(&[1f32; 4]).to_vec()),
@@ -87,51 +94,55 @@ impl GpuFlatField {
     }
 }
 
-/// Bind the original-camera coordinate mapping without a correction field.
-pub(crate) fn bind_source_coordinates(function: Function, geometry: SourceGeometry) -> Function {
-    function.with_uniform(5, &FieldGeometry::uncorrected(Some(geometry)))
+pub(crate) fn shader() -> String {
+    [
+        coordinates::FUNCTIONS,
+        include_str!("flat_field/bindings.wgsl"),
+        include_str!("flat_field/field.wgsl"),
+    ]
+    .join("\n")
+}
+
+#[cfg(feature = "editor")]
+pub(crate) fn gathered(
+    source: crate::gpu::evaluation::Value,
+    field: Option<&GpuFlatField>,
+    origins: &[[u32; 2]],
+    patch: [u32; 2],
+) -> Result<crate::gpu::evaluation::Value, Error> {
+    let code = [shader().as_str(), include_str!("flat_field/gathered.wgsl")].join("\n");
+    let function = Function::new(code, "gathered_camera_light")
+        .with_storage(18, bytemuck::cast_slice(origins).to_vec())
+        .with_uniform(19, &[patch[0], patch[1], 0u32, 0u32]);
+    Ok(crate::gpu::evaluation::pointwise(
+        source,
+        GpuFlatField::bind(field, Mapping::Originals, function)?,
+    ))
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(super) struct FieldGeometry {
+pub(crate) struct FieldGeometry {
     support: [u32; 4],
     grid: [u32; 4],
-    area: [u32; 4],
-    dimensions: [u32; 4],
-    packed_origins: [u32; 4],
+    source: SourceCoordinates,
 }
 
 impl FieldGeometry {
-    pub(super) fn uncorrected(source: Option<SourceGeometry>) -> Self {
-        let Some(source) = source else {
-            return Self::zeroed();
-        };
-        let area = source.raster().region();
-        let size = source.size();
-        let mut result = Self {
-            area: [area.x, area.y, area.width, area.height],
-            dimensions: [size[0], size[1], 0, 0],
-            ..Self::zeroed()
-        };
-        if let Some(second) = source.second_raster() {
-            let shape = source.raster().size();
-            let second = second.region();
-            result.dimensions[2..].copy_from_slice(&shape);
-            result.packed_origins = [area.x, area.y, second.x, second.y];
-        } else if [area.width, area.height] == size {
-            result.dimensions[2..].copy_from_slice(&size);
-            result.packed_origins = [area.x, area.y, 0, 0];
+    fn uncorrected(source: Option<SourceGeometry>) -> Self {
+        Self {
+            support: [0; 4],
+            grid: [0; 4],
+            source: SourceCoordinates::new(source),
         }
-        result
     }
 
-    pub(super) fn new(field: &GpuFlatField, source: SourceGeometry) -> Self {
+    fn new(field: &GpuFlatField, source: Option<SourceGeometry>) -> Self {
         let grid = field.field.size();
         Self {
             support: field.field.area(),
             grid: [grid[0] as u32, grid[1] as u32, 1, 0],
-            ..Self::uncorrected(Some(source))
+            source: SourceCoordinates::new(source),
         }
     }
 }

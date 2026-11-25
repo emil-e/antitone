@@ -2,6 +2,8 @@
 
 #[cfg(any(feature = "render", all(test, feature = "gpu", feature = "project")))]
 pub mod display_rendering;
+#[cfg(feature = "gpu")]
+pub mod flat_field;
 pub mod grading;
 pub mod grain;
 pub mod halation;

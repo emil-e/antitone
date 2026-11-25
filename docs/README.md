@@ -33,7 +33,7 @@ Where each area's implementation lives — navigation, not specification. Follow
 | Adjustment layers | [controls and masks](../src/adjustment_layers.rs), [Grading stage](../src/photographic/stages/grading.rs), [editor routing](../src/editor/processing.rs) | Immutable snapshots, analytic masks, source-owned layers and consumer-local numerical admission |
 | RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [source acquisition](../src/source/mod.rs), [GPU camera source](../src/gpu/source/native.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership and immutable camera RGB |
 | DNG backend | [adapter](../src/dng.rs), [native owner](../native/dng_bridge.cpp) | Direct SDK development and decode-free inspection in the shared source model |
-| Scan correction | [flat-field](../src/flat_field.rs), [GPU map](../src/gpu/flat.rs) | Source-coordinate illumination gains |
+| Scan correction | [flat-field model](../src/flat_field.rs), [correction stage](../src/photographic/stages/flat_field.rs) | Source-coordinate illumination gains |
 | Image recipe and repairs | [captured recipe](../src/image_recipe.rs), [repair model](../src/dust_repair.rs), [interaction/search](../src/editor/dust.rs), [healing calculations](../src/gpu/repairs/definition.rs) | Photographic intent and authoring; common graph execution |
 | Roll analysis | [spatial support](../src/scan_regions.rs), [estimator](../src/roll_analysis.rs), [fitter](../src/roll_analysis/gamma.rs) | Source-owned sampling hypotheses, sample-derived starting settings |
 | GPU | [setup](../src/gpu.rs), [evaluation](../src/gpu/evaluation.rs), [display startup](../src/gpu/display.rs) | Device setup, bounded evaluation and rendering resources |

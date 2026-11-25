@@ -21,10 +21,6 @@ fn field_gains_at(source: vec2u) -> vec3f {
     return mix(a, b, fraction.y);
 }
 
-fn field_gains(index: u32) -> vec3f {
-    return field_gains_at(source_pixel(index));
-}
-
 fn camera_light_at(codes: vec3f, source: vec2u) -> vec3f {
     let normalized = codes / 65535.0;
     if field.grid.z == 0u {

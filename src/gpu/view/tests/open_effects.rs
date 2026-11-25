@@ -233,7 +233,7 @@ fn a_supplied_effect_runs_through_native_regional_and_resident_purposes() {
             &pixels,
             scan.positive_matrix(&InputSettings::Digital).unwrap(),
             Some(
-                SourceGeometry::original_tile(
+                SourceGeometry::new(
                     [area.x, area.y, area.width, area.height],
                     [area.width, area.height],
                 )

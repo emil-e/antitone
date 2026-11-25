@@ -1,7 +1,10 @@
 //! Developed camera samples, native acquisition and resident source geometry.
 
 use crate::gpu::parameters::CameraMatrix;
+
+pub(crate) mod coordinates;
 use crate::{Error, geometry::SourceRaster};
+pub(crate) use coordinates::Mapping;
 use glam::DMat3;
 use wgpu::util::DeviceExt;
 
@@ -35,17 +38,6 @@ impl SourceGeometry {
         }
         if u64::from(size[0]) * u64::from(size[1]) > u32::MAX as u64 {
             return Err(Error::Gpu("source geometry exceeds GPU limits".into()));
-        }
-        Ok(Self {
-            raster: SourceRaster::new(area.into(), size)?,
-            second: None,
-        })
-    }
-
-    /// Integer original coordinates do not need the nearest-centre f32 coordinate restriction.
-    pub(crate) fn original_tile(area: [u32; 4], size: [u32; 2]) -> Result<Self, Error> {
-        if area[2..] != size || u64::from(size[0]) * u64::from(size[1]) > u32::MAX as u64 {
-            return Err(Error::Gpu("invalid original tile geometry".into()));
         }
         Ok(Self {
             raster: SourceRaster::new(area.into(), size)?,

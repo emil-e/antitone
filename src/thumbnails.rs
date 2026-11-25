@@ -116,7 +116,7 @@ impl Processed {
         &mut self,
         key: ImageKey,
         physical: source_loading::Input,
-        correction: crate::gpu::flat::resources::Resources,
+        correction: crate::photographic::stages::flat_field::resources::Resources,
         render: bool,
         priority: source_loading::Priority,
         sources: Option<Arc<dyn source_loading::SourceProvider>>,
