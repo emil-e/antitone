@@ -243,14 +243,21 @@ fn lightroom_return_failure_preserves_saved_project_and_never_publishes_a_succes
     // The source name fits the filesystem, but adding the return suffix does not.
     let source = directory.path().join(format!("{}.dng", "a".repeat(250)));
     std::fs::copy(fixture("patches.dng"), &source).unwrap();
+    // Windows needs the verbatim absolute path for the native DNG reader.
+    let source = source.canonicalize().unwrap();
     let input = request(&session, &project, false, std::slice::from_ref(&source));
     editor_harness(|mut h, _| {
         h.enter(|editor, cx| editor.open_external(input, cx));
         wait_for(&mut h, |editor| !editor.interaction_blocked());
         h.update(|editor| {
+            let current = editor.document.visit.current_source.unwrap_or_else(|| {
+                panic!(
+                    "long-name RAW must open before testing return failure: {}",
+                    editor.status
+                )
+            });
             editor.set_dmin(Some(DVec3::splat(0.8)));
             editor.set_dmax(Some(DVec3::splat(0.02)));
-            let current = editor.document.visit.current_source.unwrap();
             editor.document.project.source_mut(current).unwrap().crop = Some(Crop {
                 center: [120., 100.],
                 size: [16, 16],
