@@ -283,9 +283,10 @@ fn padded_repaired_graph_preserves_layout_at_crop_and_source_edges() {
             let evaluated = Arc::new(
                 crate::dust_repair::evaluate(&repair, scan.area, |_| Ok([1.5, -0.2, 0.3])).unwrap(),
             );
-            let patches =
-                crate::gpu::repairs::fixtures::replacements(std::slice::from_ref(&evaluated))
-                    .unwrap();
+            let patches = crate::photographic::stages::healing::fixtures::replacements(
+                std::slice::from_ref(&evaluated),
+            )
+            .unwrap();
             let composition = Composition::with_crop(
                 scan.area,
                 Default::default(),

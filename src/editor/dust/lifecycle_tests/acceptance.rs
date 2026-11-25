@@ -626,8 +626,11 @@ fn failed_graph_region_does_not_poison_an_independent_repair_demand() {
         &recipe,
     )
     .unwrap();
-    let root =
-        crate::gpu::repairs::definition::compose(base.image().clone(), &recipe.repairs).unwrap();
+    let root = crate::photographic::stages::healing::operation::compose(
+        base.image().clone(),
+        &recipe.repairs,
+    )
+    .unwrap();
     let mut reader =
         crate::gpu::repair_source::Source::from_image(&services.evaluation, &services.queue, root)
             .unwrap();

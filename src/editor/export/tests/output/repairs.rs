@@ -93,9 +93,11 @@ fn film_mtf_with_a_failed_repair_outside_the_crop_exports_unrepaired_pixels() {
             recipe,
         )
         .unwrap();
-        let healing =
-            crate::gpu::repairs::definition::healing_image(&graph.unrepaired, &recipe.repairs[0])
-                .unwrap();
+        let healing = crate::photographic::stages::healing::operation::healing_image(
+            &graph.unrepaired,
+            &recipe.repairs[0],
+        )
+        .unwrap();
         !graph
             .processed
             .regions_for(

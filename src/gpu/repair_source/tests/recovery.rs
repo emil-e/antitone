@@ -40,9 +40,11 @@ fn healing_feedback_distinguishes_success_failure_and_cancellation_without_poiso
 
     let region = SourceRegion::from([scan.area.x, scan.area.y, 3, 3]);
     let expected = original.read(region, None, &|| false).unwrap().unwrap();
-    let image =
-        crate::gpu::repairs::definition::compose(original.image().clone(), &[failed, healthy])
-            .unwrap();
+    let image = crate::photographic::stages::healing::operation::compose(
+        original.image().clone(),
+        &[failed, healthy],
+    )
+    .unwrap();
     let mut repaired = Source::from_image(&context, &queue, image).unwrap();
     assert_eq!(
         repaired.read(region, None, &|| false).unwrap().unwrap(),

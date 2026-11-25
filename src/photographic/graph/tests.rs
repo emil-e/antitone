@@ -100,7 +100,8 @@ fn repaired_spatial_composition_matches_host_and_image_delivery() {
         area,
     )
     .unwrap();
-    input.replacements = crate::gpu::repairs::fixtures::replacements(&[evaluated]).unwrap();
+    input.replacements =
+        crate::photographic::stages::healing::fixtures::replacements(&[evaluated]).unwrap();
     let stages = {
         let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 1. };
         let pitch = [Some(mtf.sigma / 0.6)]
@@ -415,8 +416,10 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
     };
     let repaired =
         Arc::new(crate::dust_repair::evaluate(&repair, area, |_| Ok([-0.4, 2.6, 0.7])).unwrap());
-    let snapshot =
-        crate::gpu::repairs::fixtures::replacements(std::slice::from_ref(&repaired)).unwrap();
+    let snapshot = crate::photographic::stages::healing::fixtures::replacements(
+        std::slice::from_ref(&repaired),
+    )
+    .unwrap();
     let region = SourceRegion::from([area.x + 7, area.y + 9, 51, 35]);
     let matrix = super::test_support::matrix();
     let (roll, stack) = super::test_support::settings(area.try_into().unwrap());

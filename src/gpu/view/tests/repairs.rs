@@ -6,7 +6,7 @@ use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     color::{Balance, wb_matrix},
     dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
-    gpu::repairs::fixtures::{self, Replacement},
+    photographic::stages::healing::fixtures::{self, Replacement},
     processing::{NegativeInput, Response},
 };
 
@@ -231,8 +231,11 @@ fn filter_authored_repairs(
         grid: e::Grid::axis_aligned([0.; 2], [1.; 2]),
     };
     let base = fixtures::image(domain, read(device, queue, &source.pixels)).unwrap();
-    let repaired =
-        crate::gpu::repairs::definition::compose_images(base, replacements.to_vec()).unwrap();
+    let repaired = crate::photographic::stages::healing::operation::compose_images(
+        base,
+        replacements.to_vec(),
+    )
+    .unwrap();
     let spec = source.spec.clone().with_frame(frame).unwrap();
     let root = crate::reconstruction::reconstruct(
         repaired,

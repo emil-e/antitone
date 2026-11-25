@@ -69,7 +69,7 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
     );
     let alias = graph(&camera);
     let support = SupportMask::new([30, 30], [2, 2], vec![true; 4]).unwrap();
-    let shared = crate::gpu::repairs::definition::compose_images(
+    let shared = crate::photographic::stages::healing::operation::compose_images(
         first.neutral.clone(),
         vec![(support.clone(), alias.unrepaired)],
     )
@@ -87,7 +87,7 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
         camera.input.size()
     );
     let second = source();
-    let mixed = crate::gpu::repairs::definition::compose_images(
+    let mixed = crate::photographic::stages::healing::operation::compose_images(
         first.neutral.clone(),
         vec![(support, graph(&second).unrepaired)],
     )
@@ -145,7 +145,7 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
         crate::gpu::raster::Raster::region(area, [64; 2]),
     )
     .unwrap();
-    let conflicting = crate::gpu::repairs::definition::compose_images(
+    let conflicting = crate::photographic::stages::healing::operation::compose_images(
         shared,
         vec![(
             SupportMask::new([30, 30], [2, 2], vec![true; 4]).unwrap(),

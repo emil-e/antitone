@@ -9,6 +9,7 @@ use super::*;
 use crate::frame_raster::FrameRaster;
 #[cfg(feature = "project")]
 use crate::image_recipe::ImageRecipe;
+use crate::photographic::stages::healing::operation as healing;
 use crate::photographic::stages::interpretation::InputTransform;
 use crate::photographic::stages::interpretation::operation::{Native, Working};
 use crate::photographic::stages::{
@@ -140,7 +141,7 @@ pub(crate) fn original_neutral(
     recipe: &ImageRecipe,
 ) -> Result<Value, Error> {
     let unrepaired = original_unrepaired(codes, field, recipe)?;
-    crate::gpu::repairs::definition::compose(unrepaired, &recipe.repairs)
+    healing::compose(unrepaired, &recipe.repairs)
 }
 
 /// Measurement endpoints use unrepaired original cells and stop before film effects.
@@ -325,7 +326,7 @@ fn physical_view(
     .plan;
 
     let unrepaired = recipe_unrepaired(codes, field, recipe, matrix, Mapping::Originals, true)?;
-    let repaired = crate::gpu::repairs::definition::compose(unrepaired, &recipe.repairs)?;
+    let repaired = healing::compose(unrepaired, &recipe.repairs)?;
     let neutral = reconstruct_neutral(repaired, plan.output())?;
     let graded = grading.compose(neutral)?;
     let output = PresentationMapping::new(frame, plan.output(), 8);
@@ -429,7 +430,7 @@ pub(super) fn repair_neutral(
     image: Value,
     mapping: Mapping,
     repairs: &[crate::dust_repair::Repair],
-    #[cfg(test)] replacements: &[crate::gpu::repairs::fixtures::Replacement],
+    #[cfg(test)] replacements: &[crate::photographic::stages::healing::fixtures::Replacement],
 ) -> Result<Value, Error> {
     let needed = !repairs.is_empty();
     #[cfg(test)]
@@ -468,13 +469,13 @@ pub(super) fn repair_neutral(
     let image = if repairs.is_empty() {
         image
     } else {
-        crate::gpu::repairs::definition::compose(image, repairs)?
+        healing::compose(image, repairs)?
     };
     #[cfg(test)]
     let image = if replacements.is_empty() {
         image
     } else {
-        crate::gpu::repairs::definition::compose_images(image, replacements.to_vec())?
+        healing::compose_images(image, replacements.to_vec())?
     };
     if image.domain() == domain {
         Ok(image)

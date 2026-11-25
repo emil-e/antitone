@@ -2,10 +2,12 @@
 use crate::gpu::evaluation::*;
 use crate::{
     Error,
-    dust_repair::{self, BaseImage, Repair, SupportMask},
+    dust_repair::{Ap1, BaseImage, Execution, REPAIR_CONTRACT, Repair, SupportMask},
     geometry::SourceRegion,
 };
 use std::sync::Arc;
+
+use super::solver::{evaluate_image, input_regions};
 
 pub(crate) fn compose(base: Value, repairs: &[Repair]) -> Result<Value, Error> {
     let replacements = repairs
@@ -86,7 +88,7 @@ pub(crate) fn healing_image(base: &Value, repair: &Repair) -> Result<Value, Erro
                 .map(|region| base.request(region)?.read(region))
                 .collect::<Result<Vec<_>, Error>>()?,
             value::Operation::cpu(
-                dust_repair::REPAIR_CONTRACT,
+                REPAIR_CONTRACT,
                 calculation.identity(),
                 Arc::new(calculation),
             ),
@@ -138,7 +140,7 @@ struct HealingIdentity {
 impl Heal {
     fn identity(&self) -> HealingIdentity {
         HealingIdentity {
-            contract: dust_repair::REPAIR_CONTRACT,
+            contract: REPAIR_CONTRACT,
             support: self.repair.support.clone(),
             offset: self.repair.offset,
             active: self.active,
@@ -146,7 +148,7 @@ impl Heal {
     }
 
     fn input_regions(&self) -> Result<Vec<CellRegion>, Error> {
-        dust_repair::input_regions(&self.repair, self.active)?
+        input_regions(&self.repair, self.active)?
             .into_iter()
             .map(CellRegion::try_from)
             .collect()
@@ -160,9 +162,8 @@ impl CpuKernel for Heal {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Option<Vec<[f32; 4]>>, Error> {
         let mut base = Inputs(inputs);
-        let mut execution = dust_repair::Execution { cancelled };
-        let evaluated =
-            dust_repair::evaluate_image(&self.repair, self.active, &mut base, &mut execution);
+        let mut execution = Execution { cancelled };
+        let evaluated = evaluate_image(&self.repair, self.active, &mut base, &mut execution);
         if cancelled() || matches!(evaluated, Ok(None) | Err(Error::Cancelled)) {
             return Ok(None);
         }
@@ -189,7 +190,7 @@ impl BaseImage for Inputs<'_> {
         region: SourceRegion,
         needed: Option<&[bool]>,
         cancelled: &dyn Fn() -> bool,
-    ) -> Result<Option<Vec<dust_repair::Ap1>>, Error> {
+    ) -> Result<Option<Vec<Ap1>>, Error> {
         let region: CellRegion = region.try_into()?;
         let input =
             self.0

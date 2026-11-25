@@ -1,3 +1,4 @@
+use super::context::{distance_to_unknown, fetch_crop, gaussian_blur, sobel};
 use super::*;
 
 const FEATURE_EMPHASIS: f64 = 8.;

@@ -53,7 +53,7 @@ fn native_and_working_identity_use_captured_values_not_uniform_packing() {
 #[test]
 fn repair_dag_provenance_is_described_without_pixels_and_rejects_mixed_interpretations() {
     use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
-    use crate::gpu::{evaluation as e, repairs::definition};
+    use crate::{gpu::evaluation as e, photographic::stages::healing::operation as definition};
     struct Unread;
     impl e::Source for Unread {
         fn domain(&self) -> e::Domain {

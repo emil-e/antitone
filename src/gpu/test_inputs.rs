@@ -20,7 +20,7 @@ pub struct AuthoredPhotograph {
     luts: crate::looks::LutChain,
     definition: Arc<crate::photographic::graph::authoring::Assembly>,
     pub(crate) repairs: Vec<crate::dust_repair::Repair>,
-    pub(crate) replacements: Vec<super::repairs::fixtures::Replacement>,
+    pub(crate) replacements: Vec<crate::photographic::stages::healing::fixtures::Replacement>,
     pub(crate) field: Option<Arc<super::flat::GpuFlatField>>,
 }
 
@@ -337,7 +337,10 @@ impl AuthoredPhotograph {
     /// Look changes rerender, but may reuse an immutable graded AP1 prefix.
     pub(crate) fn same_photographic(&self, other: &Self) -> bool {
         if self.repairs != other.repairs
-            || !super::repairs::fixtures::same(&self.replacements, &other.replacements)
+            || !crate::photographic::stages::healing::fixtures::same(
+                &self.replacements,
+                &other.replacements,
+            )
             || self.field.as_ref().map(|field| field.field())
                 != other.field.as_ref().map(|field| field.field())
         {
