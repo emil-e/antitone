@@ -50,7 +50,10 @@ fn correction_resources_ignore_lut_capacity_and_unrepresentable_photographic_con
         )
         .unwrap(),
     );
-    assert!(crate::gpu::lut3d::Lut::require_limits(&device.limits(), asset.lut()).is_err());
+    assert!(
+        crate::photographic::stages::look::Lut::require_limits(&device.limits(), asset.lut())
+            .is_err()
+    );
     document.project.output.lut = Some(asset);
     let source = &mut document.project.sources[0];
     let mut layers = crate::project::AdjustmentLayers::default();

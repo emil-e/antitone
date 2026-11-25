@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
 
 #[cfg(feature = "render")]
-use super::evaluation::{CellRegion, Domain, Operation, Read, RetainedKey, Tiling, Value, value};
+use crate::gpu::evaluation::{
+    CellRegion, Domain, Operation, Read, RetainedKey, Tiling, Value, value,
+};
 
 #[cfg(feature = "render")]
 mod cache;
@@ -131,8 +133,8 @@ fn calculation(
 ) -> crate::gpu::evaluation::value::Operation {
     use crate::gpu::evaluation::{Function, value};
     let code = [
-        include_str!("lut3d/arguments.wgsl"),
-        include_str!("lut3d/value.wgsl"),
+        include_str!("arguments.wgsl"),
+        include_str!("value.wgsl"),
         "fn pixel(cell:vec2i,position:vec2f,value:vec4f)->vec4f {return look_pixel(value);}",
     ]
     .join("\n");
@@ -174,15 +176,15 @@ pub(crate) fn prewarm_value(input: Value) -> Result<Value, Error> {
 #[cfg(test)]
 pub(crate) fn shader() -> String {
     [
-        include_str!("lut3d/arguments.wgsl"),
-        include_str!("lut3d/value.wgsl"),
-        include_str!("lut3d.wgsl"),
+        include_str!("arguments.wgsl"),
+        include_str!("value.wgsl"),
+        include_str!("dispatch.wgsl"),
     ]
     .join("\n")
 }
 
 pub struct Lut {
-    pub(super) buffer: wgpu::Buffer,
+    buffer: wgpu::Buffer,
     minimum: [f32; 3],
     maximum: [f32; 3],
     size: u32,
@@ -233,7 +235,7 @@ impl Lut {
         )
     }
 
-    pub(super) fn parameters(&self, count: u32, stride: u32, coverage: bool) -> Parameters {
+    fn parameters(&self, count: u32, stride: u32, coverage: bool) -> Parameters {
         Parameters {
             minimum: [self.minimum[0], self.minimum[1], self.minimum[2], 0.],
             maximum: [self.maximum[0], self.maximum[1], self.maximum[2], 0.],
@@ -258,7 +260,7 @@ impl Lut {
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(super) struct Parameters {
+struct Parameters {
     minimum: [f32; 4],
     maximum: [f32; 4],
     reciprocal: [f32; 4],

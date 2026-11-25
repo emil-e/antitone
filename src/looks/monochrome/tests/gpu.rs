@@ -1,5 +1,6 @@
 use super::*;
-use crate::gpu::lut3d::{Kernel, Lut};
+use crate::photographic::stages::look;
+use crate::photographic::stages::look::{Kernel, Lut};
 use std::{sync::mpsc, time::Duration};
 use wgpu::util::DeviceExt;
 
@@ -29,8 +30,8 @@ fn all_material_bakes_execute_the_same_tetrahedra_on_gpu_and_cpu() {
                 .unwrap();
             crate::looks::sampling::assert_material_vertices(asset.lut(), |rgb| model.encoded(rgb));
             let gpu = Lut::new(&device, asset.lut()).unwrap();
-            let min = crate::photographic::decode(crate::looks::authoring::DOMAIN_MIN);
-            let max = crate::photographic::decode(crate::looks::authoring::domain_max());
+            let min = look::decode(crate::looks::authoring::DOMAIN_MIN);
+            let max = look::decode(crate::looks::authoring::domain_max());
             // Out-of-window clipping has a different contract from native material
             // evaluation. The sampler's independent analytic tests cover that rule;
             // this comparison uses source probes inside its declared input window.

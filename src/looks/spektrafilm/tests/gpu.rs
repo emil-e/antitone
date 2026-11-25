@@ -68,7 +68,10 @@ fn native_treatment_matches_source_and_reports_final_bake_approximation() {
             };
             assert_eq!(input.len(), targets.len());
             for (input, target) in input.into_iter().zip(targets) {
-                let rgb = model.encoded(input).unwrap().map(photographic::decode);
+                let rgb = model
+                    .encoded(input)
+                    .unwrap()
+                    .map(crate::photographic::stages::look::decode);
                 let context = format!("{}: {input:?}", selection.name());
                 contexts.push(context.clone());
                 scene.push([rgb.x as f32, rgb.y as f32, rgb.z as f32, 1.]);

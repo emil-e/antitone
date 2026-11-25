@@ -1,7 +1,8 @@
 use super::*;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::gpu::{evaluation, lut3d::Looks, parameters::ProcessingParameters, submission::Queue};
+use crate::gpu::{evaluation, parameters::ProcessingParameters, submission::Queue};
+use crate::photographic::stages::look::Looks;
 #[cfg(test)]
 use crate::project::SourceDevelopment;
 pub(super) use crate::source::FileKey;

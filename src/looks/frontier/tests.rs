@@ -1,4 +1,5 @@
 use super::*;
+use crate::photographic::stages::look;
 mod acceptance;
 mod provenance;
 
@@ -59,7 +60,7 @@ fn preparation_uses_shared_grid_and_explicit_encoded_ap1_output() {
             .unwrap();
         assert_eq!(small.lut().size(), 3);
         super::super::sampling::assert_material_vertices(small.lut(), |rgb| {
-            Ok(model.ap1(rgb)?.map(photographic::encode))
+            Ok(model.ap1(rgb)?.map(look::encode))
         });
         let default = selection.prepare(&cancel).unwrap();
         assert_eq!(default.lut().size(), baking::DEFAULT_GRID);
@@ -80,7 +81,7 @@ fn preparation_uses_shared_grid_and_explicit_encoded_ap1_output() {
             let expected_encoded: DVec3 = serde_json::from_value(row["encoded"].clone()).unwrap();
             let encoded = default
                 .lut()
-                .sample_encoded(input.map(photographic::encode))
+                .sample_encoded(input.map(look::encode))
                 .unwrap();
             assert!((encoded - expected_encoded).abs().max_element() < 2e-15);
             if variant == Variant::B {
@@ -88,7 +89,7 @@ fn preparation_uses_shared_grid_and_explicit_encoded_ap1_output() {
             }
         }
         super::super::sampling::assert_material_vertices(default.lut(), |rgb| {
-            Ok(model.ap1(rgb)?.map(photographic::encode))
+            Ok(model.ap1(rgb)?.map(look::encode))
         });
         assert_ne!(small.id(), default.id());
         assert_eq!(small.origin(), default.origin());

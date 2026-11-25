@@ -8,8 +8,8 @@ pub(crate) fn original_chain(
     field: Option<Arc<GpuFlatField>>,
     input: &crate::gpu::test_inputs::AuthoredPhotograph,
     stages: &Assembly,
-    looks: &crate::gpu::lut3d::Looks,
-    target: &crate::gpu::drt::Target,
+    looks: &crate::photographic::stages::look::Looks,
+    target: &crate::photographic::stages::display_rendering::Target,
 ) -> Result<Value, Error> {
     if scan.flat_field() != field.as_ref().map(|f| f.field()) {
         return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));

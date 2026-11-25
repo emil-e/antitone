@@ -299,7 +299,7 @@ impl Editor {
     pub fn new(device: &wgpu::Device, queue: &crate::gpu::submission::Queue) -> Self {
         let cache_limits = cache_limits::Hardware::current(Some(device)).defaults();
         let evaluation = crate::gpu::evaluation::Context::new(device, Default::default());
-        let looks = Arc::new(crate::gpu::lut3d::Looks::new(device));
+        let looks = Arc::new(crate::photographic::stages::look::Looks::new(device));
         let display = display::Warmup::new(evaluation.clone(), queue.clone());
         display.start();
         let developments = source_loading::SourceLoader::with_gpu(device, queue);

@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    gpu::lut3d::{Kernel, Lut},
+    photographic::stages::look::{Kernel, Lut},
     rendering::{CpuRenderer, OutputTarget},
 };
 use std::{sync::mpsc, time::Duration};

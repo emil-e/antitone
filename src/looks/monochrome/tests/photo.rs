@@ -2,7 +2,7 @@
 //! Scalar input/roll evaluation supplies a photographic distribution, not a
 //! pixel-exact oracle for the composed GPU photograph; local grades/texture omit.
 use super::*;
-use crate::photographic;
+use crate::photographic::stages::look;
 
 #[test]
 #[ignore = "requires an explicitly supplied private project and fresh report path"]
@@ -42,8 +42,8 @@ fn supplied_photo_distribution_measures_cube_approximation_without_retuning_mate
             inputs.push(roll.apply(image.sample(point).unwrap()).unwrap());
         }
     }
-    let min = photographic::decode(super::super::super::authoring::DOMAIN_MIN);
-    let max = photographic::decode(super::super::super::authoring::domain_max());
+    let min = look::decode(super::super::super::authoring::DOMAIN_MIN);
+    let max = look::decode(super::super::super::authoring::domain_max());
     let outside = inputs
         .iter()
         .filter(|v| v.min_element() < min || v.max_element() > max)
@@ -73,7 +73,7 @@ fn supplied_photo_distribution_measures_cube_approximation_without_retuning_mate
                     )
                     .unwrap();
                 let rgba = |encoded: DVec3| {
-                    let rgb = encoded.map(photographic::decode);
+                    let rgb = encoded.map(look::decode);
                     [rgb.x as f32, rgb.y as f32, rgb.z as f32, 1.]
                 };
                 let expected = inputs
@@ -82,14 +82,7 @@ fn supplied_photo_distribution_measures_cube_approximation_without_retuning_mate
                     .collect::<Vec<_>>();
                 let actual = inputs
                     .iter()
-                    .map(|v| {
-                        rgba(
-                            asset
-                                .lut()
-                                .sample_encoded(v.map(photographic::encode))
-                                .unwrap(),
-                        )
-                    })
+                    .map(|v| rgba(asset.lut().sample_encoded(v.map(look::encode)).unwrap()))
                     .collect::<Vec<_>>();
                 let expected = reference.apply(&device, &queue, false, &expected).unwrap();
                 let actual = reference.apply(&device, &queue, false, &actual).unwrap();

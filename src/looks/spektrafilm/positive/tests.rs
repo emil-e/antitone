@@ -1,6 +1,5 @@
 use super::*;
 use crate::looks::spektrafilm::{Input, Model, Paper, Selection, develop_print_morph};
-use crate::photographic;
 use std::sync::atomic::AtomicBool;
 
 fn model(paper: Paper) -> Model {
@@ -64,7 +63,7 @@ fn printing_balance_is_fixed_and_all_inputs_use_the_same_spectral_reference() {
 #[test]
 fn complete_neutral_trajectory_is_finite_monotone_and_continuous_at_black() {
     let mut values: Vec<_> = (0..=4096)
-        .map(|i| photographic::decode(-0.5 + 1.6 * i as f64 / 4096.))
+        .map(|i| crate::photographic::stages::look::decode(-0.5 + 1.6 * i as f64 / 4096.))
         .collect();
     values.extend([-100., -1., 0., 0.0078125, 0.18, 1024., 1e6]);
     values.sort_by(f64::total_cmp);

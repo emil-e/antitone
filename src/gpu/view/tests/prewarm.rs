@@ -60,8 +60,8 @@ fn fresh_resident_camera_reuses_warm_programs_after_the_startup_handles_retire()
             .await
             .unwrap();
         let evaluation = crate::gpu::evaluation::Context::new(&device, Default::default());
-        let looks = Arc::new(crate::gpu::lut3d::Looks::new(&device));
-        let targets = crate::gpu::drt::Targets::new(&device, &queue)
+        let looks = Arc::new(crate::photographic::stages::look::Looks::new(&device));
+        let targets = crate::photographic::stages::display_rendering::Targets::new(&device, &queue)
             .await
             .unwrap();
         crate::photographic::graph::prewarm_viewer(&evaluation, &targets).unwrap();

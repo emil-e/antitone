@@ -12,7 +12,7 @@ use crate::photographic::stages::interpretation::{InputTransform, InspectionView
 /// Compile the common viewer paths before foreground command recording.
 pub fn prewarm_viewer(
     context: &evaluation::Context,
-    drt: &crate::gpu::drt::Targets,
+    drt: &crate::photographic::stages::display_rendering::Targets,
 ) -> Result<(), Error> {
     context.prewarm_texture(borrowed_input(Domain {
         bounds: Some([0, 0, 1, 1].into()),
@@ -31,7 +31,7 @@ impl PhotographGraph {
     #[cfg(feature = "ui")]
     pub(crate) fn prewarm_resident(
         context: &evaluation::Context,
-        drt: &crate::gpu::drt::Targets,
+        drt: &crate::photographic::stages::display_rendering::Targets,
     ) -> Result<(), Error> {
         let device = context.device();
         let source = ProcessingSource::new(device, &[[0u16; 4]], glam::DMat3::IDENTITY, None)?;
@@ -82,7 +82,7 @@ impl PhotographGraph {
     #[cfg(feature = "editor")]
     pub(crate) fn prewarm_filtered(
         context: &evaluation::Context,
-        drt: &crate::gpu::drt::Targets,
+        drt: &crate::photographic::stages::display_rendering::Targets,
     ) -> Result<(), Error> {
         use crate::photographic::stages::interpretation::inspect_filtered;
 

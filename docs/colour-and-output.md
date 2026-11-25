@@ -24,7 +24,7 @@ AP0 is used for scene-linear interchange and internally by ACES, not as the spac
 
 The supported display targets are **100-nit sRGB and Display P3**, both with D65 white. Antitone uses the pinned, unmodified ACES 2 output transform through OCIO. Its range limits apply to display rendering, not to working data or scene-linear output. Selecting P3 changes the rendering and limiting primaries, not just the file tag. Preview, thumbnails and scopes use the project's Rendering target; display-referred export starts from that target and can override it. Display P3 uses the segmented sRGB transfer, not cinema P3's gamma 2.6.
 
-The GPU [DRT stage](../src/gpu/drt.rs) owns the target algorithms and tables. It adapts the pinned transform’s resource layout without rewriting its arithmetic; check changes against the independent OCIO reference and in composed consumers. [Pinned OCIO artifacts](../assets/ocio/README.md) and [ICC profiles](../assets/profiles/README.md) own generation and provenance.
+The GPU [DRT stage](../src/photographic/stages/display_rendering.rs) owns the target algorithms and tables. It adapts the pinned transform’s resource layout without rewriting its arithmetic; check changes against the independent OCIO reference and in composed consumers. [Pinned OCIO artifacts](../assets/ocio/README.md) and [ICC profiles](../assets/profiles/README.md) own generation and provenance.
 
 ## Colour treatments precede output rendering
 
@@ -62,7 +62,7 @@ Selected/all-filmstrip exports run sequentially from captured recipes and source
 
 ## Working on this area
 
-- [Rendering](../src/rendering.rs) and [native transform definition](../native/rendering_transform.h): shared OCIO configuration.
+- [Display rendering](../src/photographic/stages/display_rendering.rs) and [native transform definition](../native/rendering_transform.h): pinned ACES and the independent OCIO reference. [Encoding](../src/rendering.rs) handles output transfer and quantization.
 - Presentation: [shared host](../src/platform/host.rs), [macOS layer tagging](../src/platform/macos.rs) and [Windows surface selection](../src/platform/windows.rs).
 - [Export](../src/export.rs) and [profiles](../src/profiles.rs): file encoding, colour tagging and destination safety.
 - [Rendering tests](../tests/rendering.rs), [export tests](../tests/export.rs) and [geometry exports](../tests/geometry_export.rs): reference agreement and numerical reopening.

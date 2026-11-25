@@ -10,8 +10,8 @@ mod tests;
 pub(crate) struct Intent<'a> {
     pub capture: &'a PhotographRequest,
     pub frame: FrameRaster,
-    pub looks: &'a crate::gpu::lut3d::Looks,
-    pub transform: &'a crate::gpu::drt::Target,
+    pub looks: &'a crate::photographic::stages::look::Looks,
+    pub transform: &'a crate::photographic::stages::display_rendering::Target,
 }
 
 pub(crate) struct ImageRequest {
@@ -105,8 +105,8 @@ impl Request {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn camera_proxy(
         context: Context,
-        looks: &crate::gpu::lut3d::Looks,
-        transform: &crate::gpu::drt::Target,
+        looks: &crate::photographic::stages::look::Looks,
+        transform: &crate::photographic::stages::display_rendering::Target,
         kernels: Arc<ViewKernels>,
         source: &Arc<ProcessingSource>,
         field: Option<Arc<GpuFlatField>>,
@@ -220,8 +220,8 @@ pub(crate) fn photograph(
     field: Option<Arc<GpuFlatField>>,
     capture: &PhotographRequest,
     spec: SourceRequest,
-    looks: &crate::gpu::lut3d::Looks,
-    transform: &crate::gpu::drt::Target,
+    looks: &crate::photographic::stages::look::Looks,
+    transform: &crate::photographic::stages::display_rendering::Target,
 ) -> Result<ImageRequest, Error> {
     let (definition, spec) = capture.preview_output(limits, scan, field, spec, looks, transform)?;
     ImageRequest::new(definition, spec)

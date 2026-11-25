@@ -25,8 +25,8 @@ impl ViewImage {
     pub fn camera_preview(
         context: e::Context,
         queue: &crate::gpu::submission::Queue,
-        looks: &crate::gpu::lut3d::Looks,
-        transform: &crate::gpu::drt::Target,
+        looks: &crate::photographic::stages::look::Looks,
+        transform: &crate::photographic::stages::display_rendering::Target,
         kernels: Arc<ViewKernels>,
         proxy: &crate::scan::CameraProxy,
         field: Option<Arc<GpuFlatField>>,

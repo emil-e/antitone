@@ -336,7 +336,7 @@ pub(crate) fn execute_blocks(
     let checks = std::cell::RefCell::new(check);
     let check = || (checks.borrow_mut())();
     #[cfg(all(test, target_os = "macos"))]
-    let look_payload_bytes = crate::gpu::lut3d::applied_luts(&request.definition)
+    let look_payload_bytes = crate::photographic::stages::look::applied_luts(&request.definition)
         .iter()
         .map(|lut| lut.byte_len())
         .sum();

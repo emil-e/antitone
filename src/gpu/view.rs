@@ -94,9 +94,9 @@ impl RenderedView {
         self.capture.look_id()
     }
 
-    pub fn look_resources(&self) -> Vec<Arc<super::lut3d::Lut>> {
+    pub fn look_resources(&self) -> Vec<Arc<crate::photographic::stages::look::Lut>> {
         self.recording.as_ref().map_or_else(Vec::new, |binding| {
-            super::lut3d::applied_luts(binding.endpoint())
+            crate::photographic::stages::look::applied_luts(binding.endpoint())
         })
     }
 
@@ -168,8 +168,8 @@ impl RenderedView {
         source: Arc<ViewImage>,
         capture: PhotographRequest,
         field: Option<Arc<GpuFlatField>>,
-        looks: &crate::gpu::lut3d::Looks,
-        transform: &crate::gpu::drt::Target,
+        looks: &crate::photographic::stages::look::Looks,
+        transform: &crate::photographic::stages::display_rendering::Target,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Arc<Self>, Error> {
         let device = source.context.device();

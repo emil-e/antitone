@@ -1,6 +1,7 @@
 //! Shared preparation boundary: provider models become self-contained numeric LUTs.
 use super::{LookAsset, LookOrigin};
 use crate::Error;
+use crate::photographic::stages::look;
 use glam::DVec3;
 use std::sync::atomic::AtomicBool;
 
@@ -23,16 +24,13 @@ pub const REFERENCE: [f64; 9] = [
 ];
 pub const DOMAIN_MIN: f64 = -0.5;
 pub fn domain_max() -> f64 {
-    DOMAIN_MIN + (crate::photographic::encode(0.18) - DOMAIN_MIN) * (64. / 38.)
+    DOMAIN_MIN + (look::encode(0.18) - DOMAIN_MIN) * (64. / 38.)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        looks::{LookId, material},
-        photographic,
-    };
+    use crate::looks::{LookId, material};
     use std::sync::Arc;
 
     #[test]
@@ -46,7 +44,7 @@ mod tests {
         };
         assert_eq!(material::Selection::from_origin(&origin), None);
         let response = |rgb: DVec3| {
-            let q = rgb.map(photographic::encode);
+            let q = rgb.map(look::encode);
             Ok(DVec3::new(
                 0.5 * q.y + 0.1,
                 0.25 * q.z - 0.02,

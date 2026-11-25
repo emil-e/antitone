@@ -1,6 +1,6 @@
 //! Frontier source model and provenance, resolved to the common LUT during preparation.
 use super::{LookAsset, LookOrigin, authoring as baking, failure, require, spektrafilm};
-use crate::{Error, photographic};
+use crate::Error;
 use glam::DVec3;
 use std::sync::{
     Arc, OnceLock,
@@ -166,7 +166,11 @@ impl Model {
             self.selection.origin(),
             size,
             cancel,
-            &|rgb| Ok(self.ap1(rgb)?.map(photographic::encode)),
+            &|rgb| {
+                Ok(self
+                    .ap1(rgb)?
+                    .map(crate::photographic::stages::look::encode))
+            },
         )
     }
 }

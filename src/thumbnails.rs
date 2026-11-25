@@ -547,7 +547,7 @@ impl Product {
             }
     }
 
-    pub(crate) fn look_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
+    pub(crate) fn look_resources(&self) -> Vec<Arc<crate::photographic::stages::look::Lut>> {
         self.positive
             .as_ref()
             .map_or_else(|| self.image.look_resources(), |view| view.look_resources())
@@ -629,8 +629,8 @@ impl Proxy {
     pub(crate) async fn image(
         &self,
         evaluation: crate::gpu::evaluation::Context,
-        looks: Arc<crate::gpu::lut3d::Looks>,
-        transform: &crate::gpu::drt::Target,
+        looks: Arc<crate::photographic::stages::look::Looks>,
+        transform: &crate::photographic::stages::display_rendering::Target,
         area: [u32; 4],
     ) -> Result<Arc<GpuImage>, Error> {
         let image = GpuImage::new_continuous_shared(

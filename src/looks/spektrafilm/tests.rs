@@ -1,5 +1,5 @@
 use super::*;
-use crate::photographic;
+use crate::photographic::stages::look;
 use serde::Deserialize;
 #[cfg(feature = "ocio-reference")]
 mod calibration;
@@ -165,10 +165,7 @@ fn paper_only_exposure_and_density_match_executed_source_without_film_formation(
             assert!((paper_luminance(model.paper, h) - case.physical_y[i]).abs() < 2e-14);
             assert!(model.encoded(*input).unwrap().is_finite());
         }
-        let neutral = model
-            .encoded(DVec3::splat(0.18))
-            .unwrap()
-            .map(photographic::decode);
+        let neutral = model.encoded(DVec3::splat(0.18)).unwrap().map(look::decode);
         println!("{} paper-only gray {neutral:?}", case.paper);
         assert!((neutral - DVec3::splat(0.18)).abs().max_element() < 0.001);
     }
@@ -295,7 +292,7 @@ fn cancellation_and_baked_sample_order_are_explicit() {
     let (lo, hi) = lut.domain();
     for (r, g, b) in [(0, 0, 0), (4, 0, 0), (0, 4, 0), (0, 0, 4), (2, 3, 1)] {
         let input = DVec3::new(r as f64, g as f64, b as f64).map(|v| {
-            photographic::decode(f64::from(lo[0]) + (f64::from(hi[0]) - f64::from(lo[0])) * v / 4.)
+            look::decode(f64::from(lo[0]) + (f64::from(hi[0]) - f64::from(lo[0])) * v / 4.)
         });
         let expected = model.encoded(input).unwrap();
         let actual = DVec3::from_array(lut.nodes()[(b * 5 + g) * 5 + r].map(f64::from));
