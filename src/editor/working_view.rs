@@ -117,12 +117,13 @@ impl Frame {
     fn from_images(
         request: Arc<Demand>,
         sequence: u64,
-        mut images: Vec<Arc<ViewImage>>,
+        images: Vec<Arc<ViewImage>>,
         looks: Arc<Looks>,
         targets: Arc<drt::Targets>,
     ) -> Self {
-        let underlay = images.pop();
-        let source = images.pop().expect("detail and underlay image products");
+        let mut images = images.into_iter();
+        let source = images.next().expect("detail image product");
+        let underlay = images.next();
         Self {
             sequence,
             request,
@@ -148,6 +149,8 @@ struct MailboxState {
     sequence: u64,
     demand: Option<Arc<Demand>>,
     completed: Option<Arc<Frame>>,
+    #[cfg(test)]
+    underlay_gate: Option<futures_channel::oneshot::Receiver<()>>,
 }
 #[derive(Default)]
 pub(super) struct Mailbox(Mutex<MailboxState>, pub event_listener::Event);
@@ -348,7 +351,9 @@ impl WorkingView {
         self.frame
             .as_ref()
             .zip(self.wanted.as_ref())
-            .is_some_and(|(frame, wanted)| frame.satisfies(wanted))
+            .is_some_and(|(frame, wanted)| {
+                frame.satisfies(wanted) && (frame.underlay.is_some() || self.task.is_none())
+            })
     }
 
     #[cfg(all(test, feature = "ui-tests"))]
@@ -416,10 +421,16 @@ impl WorkingView {
     pub(super) fn acquisition(&self) -> Option<Acquisition> {
         let state = self.mailbox.0.lock().unwrap();
         let wanted = state.demand.as_ref()?;
-        (self
+        let missing_detail = self
             .frame
             .as_ref()
-            .is_none_or(|frame| !frame.satisfies(wanted))
+            .is_none_or(|frame| !frame.satisfies(wanted));
+        let pending_underlay = wanted.rendering.get().is_some_and(|rendering| {
+            rendering
+                .as_ref()
+                .is_ok_and(|rendering| rendering.underlay_pending())
+        });
+        ((missing_detail || pending_underlay)
             && self
                 .failed
                 .as_ref()
@@ -787,14 +798,62 @@ pub(super) async fn acquire_images(
             let Some(images) = rendering.produce(queue, &cancelled).await? else {
                 return Ok(None);
             };
+            let make_frame = |images| {
+                Arc::new(Frame::from_images(
+                    demand.clone(),
+                    sequence,
+                    images,
+                    looks.clone(),
+                    targets.clone(),
+                ))
+            };
+            trace("detail_ready");
+            if !rendering.underlay_pending() {
+                trace("processed_ready");
+                return Ok(Some(make_frame(images)));
+            }
+
+            let detail = make_frame(images);
+            {
+                let mut state = mailbox.0.lock().unwrap();
+                if state
+                    .demand
+                    .as_ref()
+                    .is_some_and(|latest| demand.same_source(latest) && latest.frame == frame)
+                    && state
+                        .completed
+                        .as_ref()
+                        .is_none_or(|current| current.sequence <= sequence)
+                {
+                    state.completed = Some(detail.clone());
+                }
+            }
+            mailbox.1.notify(usize::MAX);
+            #[cfg(test)]
+            {
+                let gate = mailbox.0.lock().unwrap().underlay_gate.take();
+                if let Some(gate) = gate {
+                    let _ = gate.await;
+                }
+            }
+
+            // Once detail can draw, obsolete navigation work should not delay a new capture.
+            let obsolete = || {
+                mailbox
+                    .0
+                    .lock()
+                    .unwrap()
+                    .demand
+                    .as_ref()
+                    .is_none_or(|latest| !demand.same_calculation(latest))
+            };
+            if !obsolete()
+                && let Err(error) = rendering.produce_underlay(queue, obsolete).await
+            {
+                log::warn!(error = error.to_string().as_str(); "working_underlay_unavailable");
+            }
             trace("processed_ready");
-            Ok(Some(Arc::new(Frame::from_images(
-                demand.clone(),
-                sequence,
-                images,
-                looks.clone(),
-                targets.clone(),
-            ))))
+            Ok(Some(rendering.ready().map_or(detail, make_frame)))
         }
         .await;
         trace("acquisition_finished");

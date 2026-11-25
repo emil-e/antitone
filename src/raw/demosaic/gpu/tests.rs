@@ -1,4 +1,4 @@
-use super::{Demosaicer, Layout};
+use super::{Demosaicer, Layout, TRANSFER_BYTES};
 
 const PATTERNS: [[u8; 4]; 4] = [[0, 1, 1, 2], [2, 1, 1, 0], [1, 0, 2, 1], [1, 2, 0, 1]];
 
@@ -60,6 +60,39 @@ fn working_admission_counts_readback_and_upload_and_respects_device_limits() {
     limits = wgpu::Limits::default();
     assert!(frame.admit(&limits, u64::MAX).is_err());
     assert!(Layout::new(u32::MAX, u32::MAX, 1, PATTERNS[0]).is_err());
+
+    let full_size = Layout::new(8704, 6144, 8704 * 6144, PATTERNS[0]).unwrap();
+    let transfer_allowance = full_size.working_bytes - full_size.sizes.iter().sum::<u64>() - 32;
+    assert_eq!(transfer_allowance, full_size.image_bytes + TRANSFER_BYTES);
+}
+
+#[test]
+fn transfer_splits_preserve_full_frame_pixels() {
+    let gpu = gpu();
+    let programs = gpu.create_programs().unwrap();
+    let (width, height) = (37, 23);
+    for pattern in PATTERNS {
+        let mut input = image(width, height, pattern, [0; 3]);
+        for (i, pixel) in input.iter_mut().enumerate() {
+            let x = i % width as usize;
+            let y = i / width as usize;
+            let channel = pattern[(y % 2) * 2 + x % 2] as usize;
+            pixel[channel] = ((i * 7481 + y * 13) % 4096) as u16;
+        }
+        let layout = Layout::new(width, height, input.len(), pattern).unwrap();
+        let mut whole = input.clone();
+        gpu.execute(&programs, &layout, &input, TRANSFER_BYTES)
+            .unwrap()
+            .copy_into(&mut whole)
+            .unwrap();
+        let mut split = input.clone();
+        gpu.execute(&programs, &layout, &input, 1024)
+            .unwrap()
+            .copy_into(&mut split)
+            .unwrap();
+        assert_ne!(whole, input);
+        assert_eq!(split, whole);
+    }
 }
 
 #[test]
@@ -159,7 +192,9 @@ fn failed_readback_after_submission_preserves_input_and_allows_retry() {
     let original = image.clone();
     let layout = Layout::new(17, 14, image.len(), PATTERNS[0]).unwrap();
     let programs = gpu.create_programs().unwrap();
-    let mut frame = gpu.execute(&programs, &layout, &image).unwrap();
+    let mut frame = gpu
+        .execute(&programs, &layout, &image, TRANSFER_BYTES)
+        .unwrap();
     // Force a real mapped-range error only after GPU execution and map completion.
     frame.readback.unmap();
     frame.mapping = false;

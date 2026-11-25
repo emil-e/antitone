@@ -186,6 +186,43 @@ fn arbitrary_image_endpoints_share_the_recorded_and_produced_view_request() {
     );
     assert!(context.retained_bytes() > 0);
     assert!(context.retained_bytes() <= 1 << 20);
+
+    let cold_context = Context::new(&device, e::CachePolicy { generated_bytes: 0 });
+    let reads = Arc::new(AtomicUsize::new(0));
+    let input = e::source(Arc::new(Coordinates(reads.clone())));
+    let make_cold = |delta| {
+        Request::new(
+            cold_context.clone(),
+            kernels.clone(),
+            vec![
+                ImageRequest::new(
+                    endpoint(input.clone(), delta),
+                    SourceRequest::for_frame(frame).unwrap(),
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap()
+    };
+    let mut view = make_cold(7.);
+    view.underlay = Some(Box::new(make_cold(9.)));
+    assert!(view.underlay_pending());
+    assert!(view.ready().is_none());
+    let detail = pollster::block_on(view.produce(&queue, || false))
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.len(), 1);
+    assert_eq!(e::read_buffer(&device, &queue, &detail[0].pixels)[0][0], 7.);
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+    assert!(
+        view.underlay_pending(),
+        "displayable detail must not require underlay production"
+    );
+    pollster::block_on(view.produce_underlay(&queue, || false)).unwrap();
+    let ready = view.ready().unwrap();
+    assert_eq!(ready.len(), 2);
+    assert!(Arc::ptr_eq(&detail[0], &ready[0]));
+    assert_eq!(e::read_buffer(&device, &queue, &ready[1].pixels)[0][0], 9.);
     assert!(
         scope
             .find_ready::<e::ImageLayout>(&identity, |_| true)

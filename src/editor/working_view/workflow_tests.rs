@@ -463,6 +463,40 @@ fn departed_working_owner_cannot_publish_equal_captured_pixels_or_fail_a_revisit
 }
 
 #[test]
+fn detail_can_present_while_underlay_is_parked() {
+    let (mut e, input, spec, scheduler) = fixture();
+    let (release, gate) = futures_channel::oneshot::channel();
+    let view = &mut e.document.visit.working_view;
+    view.mailbox.0.lock().unwrap().underlay_gate = Some(gate);
+    let evaluation = &e.source_services.as_ref().unwrap().evaluation;
+    evaluation.set_retention_limit(0);
+    with_application(e, |app| {
+        app.enter(|e, access| request_working(e, spec.clone(), input, access));
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working_view.source().is_some()
+        });
+        let detail = app.enter(|e, _| {
+            let view = &mut e.document.visit.working_view;
+            assert!(view.task.is_some());
+            assert!(view.underlay().is_none());
+            view.render(&egui::Context::default()).unwrap();
+            assert!(view.present(spec.frame(), None).unwrap().unwrap().spec == spec);
+            view.source().unwrap().clone()
+        });
+        release.send(()).unwrap();
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working_view.task.is_none()
+        });
+        app.read(|e| {
+            let view = &e.document.visit.working_view;
+            assert!(view.underlay().is_some());
+            assert!(Arc::ptr_eq(view.source().unwrap(), &detail));
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
 fn physical_support_completes_without_backend_or_another_paint() {
     let (e, input, spec, scheduler) = fixture();
     with_application(e, |app| {
