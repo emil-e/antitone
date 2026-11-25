@@ -81,10 +81,9 @@ fn cold_positive_captures_resolved_starting_exposure_before_authoring_its_graph(
             panic!("photographic thumbnail must retain its resolved recipe")
         };
         assert_eq!(captured.neutral.reference.as_ref(), Some(&reference));
-        let program =
-            crate::photographic::graph::PhotographGraph::input_transform(&native.definition)
-                .unwrap()
-                .expect("thumbnail retains one source interpretation");
+        let program = crate::photographic::graph::input_transform(&native.definition)
+            .unwrap()
+            .expect("thumbnail retains one source interpretation");
         assert_eq!(program.matrix(), scan.camera_to_ap1 * ev.exp2());
     }
     loader.close_and_wait().unwrap();

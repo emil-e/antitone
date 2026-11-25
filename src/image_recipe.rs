@@ -13,7 +13,7 @@ use std::sync::Arc;
 pub(crate) mod quality;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct NeutralRecipe {
+pub struct SourceRecipe {
     pub source: SourceId,
     pub source_development: crate::development_metadata::Development,
     pub input: InputSettings,
@@ -25,7 +25,7 @@ pub struct NeutralRecipe {
 /// graph operations capture their arguments rather than following subsequent edits.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImageRecipe {
-    pub neutral: NeutralRecipe,
+    pub neutral: SourceRecipe,
     pub roll: RollSettings,
     pub grade: AdjustmentLayerSnapshot,
     pub composition: Composition,
@@ -35,7 +35,7 @@ pub struct ImageRecipe {
     pub repairs: Vec<Repair>,
 }
 
-impl NeutralRecipe {
+impl SourceRecipe {
     #[cfg(feature = "raw")]
     /// The consumer owns the immutable source lease and freshness fence, not the selected viewer.
     pub fn require_scan(&self, scan: &crate::scan::Scan) -> Result<(), Error> {
@@ -120,7 +120,7 @@ impl Project {
             .repairs
             .validate(source.development.active_area.into())?;
         Ok(ImageRecipe {
-            neutral: NeutralRecipe {
+            neutral: SourceRecipe {
                 source: source.id,
                 source_development: crate::development_metadata::Development::captured(
                     source,

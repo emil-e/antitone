@@ -185,7 +185,7 @@ fn repair_inputs_keep_masked_values_zero_and_saturate_extreme_required_values() 
     let matrix = DMat3::from_diagonal(DVec3::splat(1e33));
     let scalar = crate::processing::InputPipeline::new(input, matrix).unwrap();
     assert!(scalar.apply(DVec3::ZERO).unwrap().rgb.min_element() > f64::from(f32::MAX));
-    let graph = crate::photographic::graph::PhotographGraph::authored_original(
+    let graph = crate::photographic::graph::authoring::PhotographTaps::authored_original(
         &device.limits(),
         crate::gpu::source::camera_source(&scan).unwrap(),
         None,
@@ -329,14 +329,12 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
     }];
     let (scan, mut recipe) = crate::photo_preparation::native_image(&scan, &recipe).unwrap();
     let region = SourceRegion::from([66, 86, 9, 9]);
-    let graph = crate::photographic::graph::RecipeGraph::originals(
-        crate::gpu::source::camera_source(&scan).unwrap(),
-        None,
-        &recipe,
-    )
-    .unwrap();
-    let original = graph.interpreted().unwrap().unrepaired;
-    let photograph = graph.photograph(&device.limits()).unwrap();
+    use crate::photographic::graph::composition::{
+        original_neutral, original_unrepaired, processed_originals,
+    };
+
+    let codes = crate::gpu::source::camera_source(&scan).unwrap();
+    let original = original_unrepaired(codes.clone(), None, &recipe).unwrap();
     let read = |image| {
         Source::from_image(renderer.evaluation(), &queue, image)
             .unwrap()
@@ -359,8 +357,8 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
     assert!(search.image().same_definition(&original));
     let searched = search.read(region, None, &|| false).unwrap().unwrap();
     assert_eq!(searched, read(original));
-    let repaired = read(photograph.neutral);
-    let graded = read(photograph.processed);
+    let repaired = read(original_neutral(codes.clone(), None, &recipe).unwrap());
+    let graded = read(processed_originals(&device.limits(), codes.clone(), None, &recipe).unwrap());
     let different = |a: &Vec<[f32; 3]>, b: &Vec<[f32; 3]>| {
         a.iter()
             .zip(b)
@@ -393,15 +391,7 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
     .unwrap();
     assert_eq!(values.len(), 9);
     assert!(values.iter().flatten().all(|value| value.is_finite()));
-    let repaired = crate::photographic::graph::RecipeGraph::originals(
-        crate::gpu::source::camera_source(&scan).unwrap(),
-        None,
-        &recipe,
-    )
-    .unwrap()
-    .photograph(&device.limits())
-    .unwrap()
-    .neutral;
+    let repaired = original_neutral(codes, None, &recipe).unwrap();
     let fallback = Source::from_image(renderer.evaluation(), &queue, repaired)
         .unwrap()
         .read(edge, None, &|| false)

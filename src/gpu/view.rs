@@ -78,7 +78,7 @@ impl RenderedView {
     #[cfg(test)]
     pub fn has_correction(&self, field: Option<&Arc<GpuFlatField>>) -> bool {
         self.product.as_ref().is_some_and(|graded| {
-            crate::photographic::graph::PhotographGraph::has_correction(&graded.definition, field)
+            crate::photographic::graph::authoring::has_correction(&graded.definition, field)
         })
     }
 
@@ -317,7 +317,7 @@ impl RenderedView {
             return false;
         };
         if a.pixels == b.pixels
-            || crate::photographic::graph::PhotographGraph::shares_resident_camera(
+            || crate::photographic::graph::authoring::shares_resident_camera(
                 &a.definition,
                 &b.definition,
             )

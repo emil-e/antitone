@@ -20,7 +20,7 @@ fn processed_with_flags(
     frame_size: [u32; 2],
 ) -> Vec<[f32; 4]> {
     let pipeline =
-        crate::photographic::graph::assembly::Assembly::film(settings, frame_size, (1 << 60) + 17)
+        crate::photographic::graph::authoring::Assembly::film(settings, frame_size, (1 << 60) + 17)
             .unwrap();
     processed_pipeline(device, queue, bounds, &pipeline, flags)
 }
@@ -29,7 +29,7 @@ fn processed_pipeline(
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
     bounds: SourceRegion,
-    pipeline: &crate::photographic::graph::assembly::Assembly,
+    pipeline: &crate::photographic::graph::authoring::Assembly,
     flags: f32,
 ) -> Vec<[f32; 4]> {
     let values: Vec<_> = (bounds.y..bounds.y + bounds.height)
@@ -51,7 +51,7 @@ fn processed_pixels(
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
     bounds: SourceRegion,
-    pipeline: &crate::photographic::graph::assembly::Assembly,
+    pipeline: &crate::photographic::graph::authoring::Assembly,
     values: &[[f32; 4]],
 ) -> Vec<[f32; 4]> {
     let working = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -167,7 +167,7 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
             composition,
             origin,
             extent,
-            &crate::photographic::graph::assembly::Assembly::film(
+            &crate::photographic::graph::authoring::Assembly::film(
                 settings,
                 composition.crop().size,
                 17,
@@ -274,7 +274,7 @@ fn planned_unequal_gaussians_with_point_grain_match_independent_discrete_convolu
             .into_iter()
             .flatten()
             .reduce(f64::min);
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             image = mtf.compose(image)?;
             image = grain.compose(image, seed);
             image = next_mtf.compose(image)?;

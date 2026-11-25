@@ -3,7 +3,7 @@
 use super::*;
 use crate::gpu::{evaluation::Value, raster::Raster};
 use crate::looks::LutChain;
-use crate::photographic::graph::{PhotographGraph, operations::CameraInput};
+use crate::photographic::graph::resident;
 use crate::photographic::stages::{
     grading::Grading,
     interpretation::{InputTransform, InspectionView},
@@ -22,7 +22,7 @@ impl ImageProcessing {
         if let Some(camera) = camera.as_ref().filter(|camera| camera.domain() == domain) {
             return Ok(camera.clone());
         }
-        let captured = PhotographGraph::resident_codes(&self.source, raster)?;
+        let captured = resident::codes(&self.source, raster)?;
         *camera = Some(captured.clone());
         Ok(captured)
     }
@@ -54,16 +54,16 @@ impl GpuImage {
             .processing
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        let raster = PhotographGraph::resident_raster(&processing.source, self.size())?;
-        Ok(PhotographGraph::resident_photograph(
+        let raster = resident::raster(&processing.source, self.size())?;
+        resident::photograph(
             &self.device_limits,
             processing.camera(raster)?,
-            CameraInput::resident(&processing.source, program, field),
+            &processing.source,
+            field,
             program,
             grading,
-            Default::default(),
-        )?
-        .processed)
+            &[],
+        )
     }
 
     pub fn inspection(
@@ -76,13 +76,8 @@ impl GpuImage {
             .processing
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        let raster = PhotographGraph::resident_raster(&processing.source, self.size())?;
-        PhotographGraph::resident_inspection(
-            processing.camera(raster)?,
-            &processing.source,
-            field,
-            view,
-        )
+        let raster = resident::raster(&processing.source, self.size())?;
+        resident::inspection(processing.camera(raster)?, &processing.source, field, view)
     }
 
     #[cfg(feature = "editor")]
@@ -125,18 +120,16 @@ impl GpuImage {
         let processing = self.processing.as_ref().expect("admitted camera source");
         let image = if let Some(program) = input.source_transform() {
             let stages = input.definition();
-            let raster = PhotographGraph::resident_raster(&processing.source, self.size())?;
-            stages.compose(
-                PhotographGraph::resident_photograph(
-                    &self.device_limits,
-                    processing.camera(raster)?,
-                    CameraInput::resident(&processing.source, *program, input.field.clone()),
-                    *program,
-                    input.grade().expect("admitted photograph").clone(),
-                    input.repairs.clone(),
-                )?
-                .processed,
-            )?
+            let raster = resident::raster(&processing.source, self.size())?;
+            stages.compose(resident::photograph(
+                &self.device_limits,
+                processing.camera(raster)?,
+                &processing.source,
+                input.field.clone(),
+                *program,
+                input.grade().expect("admitted photograph").clone(),
+                &input.repairs,
+            )?)?
         } else {
             self.inspection(input.parameters(), input.field.clone())?
         };

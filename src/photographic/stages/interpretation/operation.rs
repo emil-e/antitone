@@ -12,6 +12,7 @@ use std::hash::{Hash, Hasher};
 pub enum Interpretation {
     Program(InputTransform),
     Packed(ProcessingParameters),
+    #[cfg(test)]
     Unavailable,
 }
 
@@ -20,6 +21,7 @@ impl PartialEq for Interpretation {
         match (self, other) {
             (Self::Program(a), Self::Program(b)) => a == b,
             (Self::Packed(a), Self::Packed(b)) => bytemuck::bytes_of(a) == bytemuck::bytes_of(b),
+            #[cfg(test)]
             (Self::Unavailable, Self::Unavailable) => true,
             _ => false,
         }
@@ -61,6 +63,7 @@ impl Hash for Interpretation {
                 }
             }
             Self::Packed(parameters) => bytemuck::bytes_of(parameters).hash(state),
+            #[cfg(test)]
             Self::Unavailable => {}
         }
     }
@@ -75,6 +78,7 @@ impl Interpretation {
                 glam::DMat3::IDENTITY,
             ),
             Self::Packed(parameters) => Ok(*parameters),
+            #[cfg(test)]
             Self::Unavailable => Err(Error::InvalidParameter(
                 "neutral prefix requires captured input interpretation",
             )),

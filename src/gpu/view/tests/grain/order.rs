@@ -47,7 +47,7 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
             .unwrap(),
         ))
         .with_definition(
-            crate::photographic::graph::assembly::Assembly::emulation(
+            crate::photographic::graph::authoring::Assembly::emulation(
                 settings,
                 Default::default(),
                 source.spec.frame().composition.crop().size,

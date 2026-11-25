@@ -134,21 +134,16 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
             size: proxy.dimensions(),
         })
         .unwrap();
-    let original = RecipeGraph::originals(codes.clone(), None, &recipe).unwrap();
-    let roll = original.roll().unwrap();
-    let native = original.processed(&limits).unwrap();
-    let physical = PhotographGraph::preview(&limits, &scan, None, &recipe, view, None)
-        .unwrap()
-        .0
-        .processed;
-    let sampled = capture
-        .sampled_graph(&limits, &camera, None, thumb.clone())
-        .unwrap()
-        .processed;
-    let navigation = capture
-        .sampled_graph(&limits, &camera, None, spatial.clone())
-        .unwrap()
-        .processed;
+    let roll = || Grading::roll_image(original_neutral(codes.clone(), None, &recipe)?, recipe.roll);
+    let roll_before = roll().unwrap();
+    let native = processed_originals(&limits, codes.clone(), None, &recipe).unwrap();
+    let (physical, _) = preview(&limits, &scan, None, &recipe, view).unwrap();
+    let (sampled, _) = capture
+        .sampled_view(&limits, &camera, None, thumb.clone())
+        .unwrap();
+    let (navigation, _) = capture
+        .sampled_view(&limits, &camera, None, spatial.clone())
+        .unwrap();
     let resident = capture
         .resident_processed(&device.limits(), &camera, proxy.dimensions(), None)
         .unwrap();
@@ -157,21 +152,20 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
     let authored = crate::photographic::graph::authoring::with_suffix(
         |image| Suffix.compose(image),
         || {
-            let graph = RecipeGraph::originals(codes, None, &recipe).unwrap();
-            assert!(roll.same_definition(&graph.roll().unwrap()));
+            assert!(roll_before.same_definition(&roll().unwrap()));
+            let processed = processed_originals(&limits, codes.clone(), None, &recipe).unwrap();
             vec![
-                (
-                    "scene export",
-                    native.clone(),
-                    graph.processed(&limits).unwrap(),
-                    None,
-                ),
+                ("scene export", native.clone(), processed.clone(), None),
                 (
                     "display export",
                     native,
-                    graph
-                        .display(&limits, &renderer.looks, renderer.drt.get(target))
-                        .unwrap(),
+                    display_output(
+                        processed,
+                        &recipe.luts,
+                        &renderer.looks,
+                        renderer.drt.get(target),
+                    )
+                    .unwrap(),
                     display,
                 ),
                 (
@@ -414,8 +408,8 @@ fn preview_and_proxy_layouts_can_be_replanned_with_an_explicit_capture() {
         region: scan.area,
         size: proxy.dimensions(),
     };
-    let sampled = capture
-        .sampled_graph(
+    let (sampled, sampled_spec) = capture
+        .sampled_view(
             &limits,
             &camera,
             None,
@@ -426,7 +420,7 @@ fn preview_and_proxy_layouts_can_be_replanned_with_an_explicit_capture() {
                 .unwrap(),
         )
         .unwrap();
-    check(&sampled.request);
+    check(&sampled_spec);
 
     let acquired = capture
         .plan_sampling(
@@ -437,16 +431,11 @@ fn preview_and_proxy_layouts_can_be_replanned_with_an_explicit_capture() {
             sampling,
         )
         .unwrap();
-    let retained = changed
-        .retained_graph(&limits, &sampled.processed, None, &acquired)
+    let (_, retained) = changed
+        .retained_view(&limits, &sampled, None, &acquired)
         .unwrap();
-    assert!(retained.request.same_source(&sampled.request));
-    assert_eq!(retained.request.frame(), full);
-    assert!(
-        retained
-            .request
-            .plan()
-            .same_acquisition_layout(acquired.plan())
-    );
-    check(&retained.request);
+    assert!(retained.same_source(&sampled_spec));
+    assert_eq!(retained.frame(), full);
+    assert!(retained.plan().same_acquisition_layout(acquired.plan()));
+    check(&retained);
 }

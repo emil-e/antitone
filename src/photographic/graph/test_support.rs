@@ -45,7 +45,7 @@ pub fn settings(area: CellRegion) -> (RollSettings, AdjustmentLayerSnapshot) {
     (roll, snapshot)
 }
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::photographic::graph::PhotographGraph;
+use crate::photographic::graph::authoring::PhotographTaps;
 
 pub(crate) struct CameraFixture {
     context: Context,
@@ -111,17 +111,12 @@ impl CameraFixture {
                 continuous: source.continuous,
             },
         );
-        let captured = Captured::new(
-            CameraInput {
-                matrix: source.camera_matrix(),
-                field,
-                continuous: source.continuous,
-                mapping: Mapping::Resident(source.geometry()),
-            },
-            Interpretation::Packed(parameters),
-        )
-        .unwrap();
-        let image = Assembly::captured(captured).neutral(camera).unwrap();
+        let matrix = source.camera_matrix();
+        validate_camera_range(matrix, field.as_deref(), source.continuous).unwrap();
+        let corrected = camera_image(camera, field, Mapping::Resident(source.geometry()));
+        let image =
+            composition::interpret_camera(corrected, Interpretation::Packed(parameters), matrix)
+                .unwrap();
         self.record(device, encoder, source, output, image).unwrap();
     }
 
@@ -134,7 +129,7 @@ impl CameraFixture {
         output: &wgpu::Buffer,
         input: &AuthoredPhotograph,
     ) -> Result<(), Error> {
-        let image = PhotographGraph::from_resident_fixture(
+        let image = PhotographTaps::from_resident_fixture(
             &device.limits(),
             source,
             input,

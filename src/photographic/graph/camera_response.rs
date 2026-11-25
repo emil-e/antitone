@@ -1,7 +1,6 @@
 //! Pointwise native-camera response, shared by gamma picking and statistical model evaluation.
 
 use super::*;
-use crate::photographic::graph::PhotographGraph;
 use crate::{
     photographic::stages::display_rendering as drt,
     photographic::stages::interpretation::InputTransform,
@@ -14,7 +13,7 @@ mod tests;
 
 pub(crate) fn normalized(camera: Value, negative: NegativeInput) -> Result<Value, Error> {
     let program = InputTransform::new(negative, glam::DMat3::IDENTITY)?;
-    PhotographGraph::native_positive(camera, program)
+    composition::native_image(camera, Interpretation::Program(program))
 }
 
 /// Provisional positive for semantic sampling: fixed sRGB DRT, no creative output stages.

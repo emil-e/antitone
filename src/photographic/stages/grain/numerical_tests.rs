@@ -165,7 +165,7 @@ fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_rang
     let raster = Raster::native([1000, 1000, 16, 16].into());
     let plan = {
         let grain = parameters.grain();
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             if let Some(output) = output {
                 image = output.compose(image)?;
             }

@@ -7,12 +7,7 @@ use crate::{
     frame_raster::FrameRaster,
 };
 
-/// Refinement allowance including real-neighbour padding. A larger presentation keeps its
-/// requested cells, subject to the independent active-input and evaluator scratch limits.
-// A quality/cost choice for acquisition, not a native-kernel parameter.
-// Integral presentation subdivisions also constrain the actual working pitch.
-pub(super) const GAUSSIAN_VIEW_CELLS: f64 = 0.6;
-
+// Refinement allowance including real-neighbour padding.
 const REFINED_CELLS: u64 = 5 * 1024 * 1024;
 const ACTIVE_CELLS: u64 = 16 * 1024 * 1024;
 
@@ -132,7 +127,7 @@ impl ViewSampling {
         })
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "editor"))]
     pub fn with_native_grid(
         mut self,
         grid: Option<FrameRaster>,
@@ -168,6 +163,32 @@ impl ViewSampling {
     }
 }
 
+#[cfg(feature = "editor")]
+pub(super) fn processing_plan(
+    source: &super::view_source::SourceRequest,
+    pitch: Option<f64>,
+    compose: impl Fn(Value) -> Result<Value, Error>,
+) -> Result<Plan, Error> {
+    let available = source.plan();
+    let sampling = available.sampling();
+    let wanted = ViewSampling::new(source.frame(), pitch, sampling, &compose);
+    if !wanted.is_ok_and(|wanted| {
+        (0..2).all(|i| available.output().output[i] >= wanted.plan.output().output[i])
+    }) {
+        return Err(Error::InvalidParameter(
+            "acquired view grid is too coarse for processing",
+        ));
+    }
+    Plan::for_graph(
+        Request {
+            output: available.output(),
+            sampling,
+        },
+        compose,
+    )?
+    .using_input(available)
+}
+
 fn cells(plan: &Plan) -> Result<u64, Error> {
     let size = plan.processing_frame()?.output;
     Ok(u64::from(size[0]) * u64::from(size[1]))
@@ -178,8 +199,7 @@ mod tests {
     use super::*;
     use crate::{
         geometry::{Composition, FramePoint},
-        photographic::graph::assembly::Assembly,
-        photographic::stages::image_mtf::ImageMtfParameters,
+        photographic::{graph::authoring::Assembly, stages::image_mtf::ImageMtfParameters},
     };
 
     fn frame(side: u32, output: [u32; 2]) -> FrameRaster {
@@ -209,7 +229,7 @@ mod tests {
                     .into_iter()
                     .flatten()
                     .reduce(f64::min);
-                crate::photographic::graph::assembly::Assembly::authored(
+                crate::photographic::graph::authoring::Assembly::authored(
                     move |mut image, output| {
                         image = mtf.compose(image)?;
                         if let Some(output) = output {
@@ -248,7 +268,7 @@ mod tests {
                 .into_iter()
                 .flatten()
                 .reduce(f64::min);
-            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
                 image = mtf.compose(image)?;
                 if let Some(output) = output {
                     image = output.compose(image)?;
@@ -283,7 +303,7 @@ mod tests {
                 .into_iter()
                 .flatten()
                 .reduce(f64::min);
-            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
                 image = mtf.compose(image)?;
                 if let Some(output) = output {
                     image = output.compose(image)?;
@@ -349,7 +369,7 @@ mod tests {
                     .into_iter()
                     .flatten()
                     .reduce(f64::min);
-                crate::photographic::graph::assembly::Assembly::authored(
+                crate::photographic::graph::authoring::Assembly::authored(
                     move |mut image, output| {
                         image = mtf.compose(image)?;
                         if let Some(output) = output {

@@ -8,7 +8,7 @@ use crate::gpu::evaluation::Region;
 use crate::gpu::evaluation::Tiling;
 use crate::gpu::evaluation::Value;
 use crate::gpu::flat::GpuFlatField;
-use crate::photographic::graph::PhotographGraph;
+use crate::photographic::graph::camera_light;
 use crate::scan::Scan;
 use glam::DVec3;
 use std::sync::Arc;
@@ -90,7 +90,7 @@ impl<'a> Samples<'a> {
     }
 
     pub(in crate::editor) fn camera_light(&self) -> Result<Value, Error> {
-        PhotographGraph::camera_light(self.source.clone(), self.field.clone())
+        camera_light(self.source.clone(), self.field.clone())
     }
 
     pub(in crate::editor) fn require_precision(
@@ -113,17 +113,30 @@ impl<'a> Samples<'a> {
         })
     }
 
-    pub(in crate::editor) fn pipeline<'r>(
+    pub(in crate::editor) fn roll(
         &self,
-        recipe: &'r crate::image_recipe::ImageRecipe,
-    ) -> Result<crate::photographic::graph::RecipeGraph<'r>, Error> {
+        recipe: &crate::image_recipe::ImageRecipe,
+    ) -> Result<Value, Error> {
         recipe.neutral.require_scan(self.scan)?;
-        Ok(crate::photographic::graph::RecipeGraph::originals(
+        crate::photographic::graph::composition::measured_roll(
             self.source.clone(),
             self.field.clone(),
             recipe,
-        )?
-        .measurement())
+        )
+    }
+
+    pub(in crate::editor) fn graded(
+        &self,
+        limits: &wgpu::Limits,
+        recipe: &crate::image_recipe::ImageRecipe,
+    ) -> Result<Value, Error> {
+        recipe.neutral.require_scan(self.scan)?;
+        crate::photographic::graph::composition::measured_grade(
+            limits,
+            self.source.clone(),
+            self.field.clone(),
+            recipe,
+        )
     }
 
     pub(in crate::editor) fn mean(

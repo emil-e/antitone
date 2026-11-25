@@ -43,10 +43,13 @@ fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
     let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let plain_recipe = Arc::new(project.image_recipe(id).unwrap());
     let codes = evaluation::source(Arc::new(CameraCodes));
-    let plain = RecipeGraph::originals(codes.clone(), None, &plain_recipe)
-        .unwrap()
-        .photograph(&device.limits())
-        .unwrap();
+    let plain = authoring::PhotographTaps::from_recipe(
+        &device.limits(),
+        codes.clone(),
+        None,
+        &plain_recipe,
+    )
+    .unwrap();
     let scope = renderer.evaluation().test_materializations(false);
     let bounds = plain.processed.domain().finite().unwrap();
     let first = materialize(&renderer, &queue, &scope, plain.processed.clone(), bounds);
@@ -59,10 +62,13 @@ fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
     let looked_recipe = Arc::new(project.image_recipe(id).unwrap());
     let request = PhotographRequest::Recipe(looked_recipe.clone());
     assert!(PhotographRequest::Recipe(plain_recipe.clone()) != request);
-    let looked = RecipeGraph::originals(codes.clone(), None, &looked_recipe)
-        .unwrap()
-        .photograph(&device.limits())
-        .unwrap();
+    let looked = authoring::PhotographTaps::from_recipe(
+        &device.limits(),
+        codes.clone(),
+        None,
+        &looked_recipe,
+    )
+    .unwrap();
     let upstream = materialize(&renderer, &queue, &scope, looked.processed.clone(), bounds);
     assert!(Arc::ptr_eq(&first.image, &upstream.image));
 
@@ -86,10 +92,9 @@ fn changed_looks_request_a_new_photograph_but_reuse_the_upstream_gpu_product() {
     // Control: upstream changes must not inherit the downstream-only reuse above.
     project.roll.exposure = 1.;
     let changed_recipe = project.image_recipe(id).unwrap();
-    let changed = RecipeGraph::originals(codes, None, &changed_recipe)
-        .unwrap()
-        .photograph(&device.limits())
-        .unwrap();
+    let changed =
+        authoring::PhotographTaps::from_recipe(&device.limits(), codes, None, &changed_recipe)
+            .unwrap();
     assert!(plain.neutral.same_definition(&changed.neutral));
     let changed = materialize(&renderer, &queue, &scope, changed.processed, bounds);
     assert!(!Arc::ptr_eq(&first.image, &changed.image));
@@ -107,10 +112,13 @@ fn disabled_effect_edits_are_captured_without_replacing_an_unchanged_gpu_calcula
     let (mut project, id) = project(crate::processing::InputSettings::Digital);
     let before_recipe = project.image_recipe(id).unwrap();
     let codes = evaluation::source(Arc::new(CameraCodes));
-    let before = RecipeGraph::originals(codes.clone(), None, &before_recipe)
-        .unwrap()
-        .photograph(&device.limits())
-        .unwrap();
+    let before = authoring::PhotographTaps::from_recipe(
+        &device.limits(),
+        codes.clone(),
+        None,
+        &before_recipe,
+    )
+    .unwrap();
     let scope = renderer.evaluation().test_materializations(false);
     let bounds = before.processed.domain().finite().unwrap();
     let before = materialize(&renderer, &queue, &scope, before.processed, bounds);
@@ -118,10 +126,9 @@ fn disabled_effect_edits_are_captured_without_replacing_an_unchanged_gpu_calcula
     project.output.grain.amount = 0.1;
     let after_recipe = project.image_recipe(id).unwrap();
     assert_ne!(before_recipe, after_recipe);
-    let after = RecipeGraph::originals(codes, None, &after_recipe)
-        .unwrap()
-        .photograph(&device.limits())
-        .unwrap();
+    let after =
+        authoring::PhotographTaps::from_recipe(&device.limits(), codes, None, &after_recipe)
+            .unwrap();
     let after = materialize(&renderer, &queue, &scope, after.processed, bounds);
     assert!(Arc::ptr_eq(&before.image, &after.image));
 }

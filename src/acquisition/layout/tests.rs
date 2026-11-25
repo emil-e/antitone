@@ -16,7 +16,7 @@ fn stages(sigma: f64, amount: f64, seed: u64) -> Assembly {
             .into_iter()
             .flatten()
             .reduce(f64::min);
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             image = mtf.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;

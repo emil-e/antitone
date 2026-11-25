@@ -3,7 +3,7 @@ use crate::gpu::flat::GpuFlatField;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::photographic::graph::PhotographGraph;
+use crate::photographic::graph::authoring::PhotographTaps;
 
 #[test]
 fn cropped_resident_codes_keep_full_stride_and_integer_nearest_centre_correction() {
@@ -61,7 +61,7 @@ fn cropped_resident_codes_keep_full_stride_and_integer_nearest_centre_correction
         )
         .unwrap();
         let input = input.with_flat_field(Some(gpu_field.clone()));
-        let photo = PhotographGraph::from_resident_fixture(
+        let photo = PhotographTaps::from_resident_fixture(
             &device.limits(),
             &source,
             &input,

@@ -47,7 +47,7 @@ fn original_units_cover_demand_once_and_fetch_neighbours_beyond_reconstruction_e
             .into_iter()
             .flatten()
             .reduce(f64::min);
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             image = mtf.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;
@@ -101,7 +101,7 @@ fn original_batch_captures_stage_values_and_rejects_nonprogressing_or_exterior_d
             .into_iter()
             .flatten()
             .reduce(f64::min);
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             image = mtf.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;

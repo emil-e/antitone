@@ -1,6 +1,6 @@
 //! Read-only photographic source-development diagnostic; outputs stay in .cache.
 use crate::gpu::evaluation::*;
-use crate::photographic::graph::PhotographGraph;
+use crate::photographic::graph::original_image;
 use crate::photographic::stages::grading::Grading;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
@@ -156,7 +156,7 @@ fn supplied_early_highlights_source_observation() {
                 scan.area,
             )
             .unwrap();
-            let image = PhotographGraph::original_image(
+            let image = original_image(
                 &device.limits(),
                 crate::gpu::source::camera_source(&scan).unwrap(),
                 None,

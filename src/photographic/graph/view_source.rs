@@ -1,7 +1,7 @@
 //! Source identity, presentation framing and acquisition geometry.
 
 #[cfg(test)]
-use super::assembly::Assembly;
+use super::authoring::Assembly;
 use crate::acquisition::{Plan, Request as AcquisitionRequest, Sampling};
 #[cfg(test)]
 use crate::photographic::stages::interpretation::InputTransform;

@@ -25,6 +25,11 @@ impl std::hash::Hash for HalationParameters {
 }
 
 impl HalationParameters {
+    #[cfg(feature = "gpu")]
+    pub(crate) fn preferred_view_pitch(self) -> Option<f64> {
+        (self.strength > 0.).then(|| self.sigma / 0.6)
+    }
+
     pub fn validate(self) -> Result<(), Error> {
         if !self.sigma.is_finite()
             || self.sigma <= 0.

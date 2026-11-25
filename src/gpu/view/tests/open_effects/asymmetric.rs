@@ -98,7 +98,7 @@ fn asymmetric_frame_reads_acquire_real_neighbours_and_preserve_output_addressing
     .unwrap()
     .with_definition({
         let operation = ShiftBlend;
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             image = operation.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;

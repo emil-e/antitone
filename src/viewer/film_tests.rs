@@ -10,7 +10,7 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         geometry::Composition,
         gpu::test_inputs::AuthoredPhotograph,
         gpu_scopes::{GpuScopes, ScopePaint},
-        photographic::stages::grain::GrainPreset,
+        grain::GrainPreset,
         processing::InputSettings,
     };
     pollster::block_on(async {
@@ -43,7 +43,7 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         .unwrap();
         let clean = AuthoredPhotograph::from(Arc::new(grade));
         let film = clean.clone().with_definition(
-            crate::photographic::graph::assembly::Assembly::emulation(
+            crate::photographic::graph::authoring::Assembly::emulation(
                 GrainPreset::ThirtyFiveMm.settings(),
                 Default::default(),
                 [1200; 2],
@@ -176,7 +176,7 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
             )
             .unwrap();
             let input = AuthoredPhotograph::from(Arc::new(pipeline)).with_definition(
-                crate::photographic::graph::assembly::Assembly::emulation(
+                crate::photographic::graph::authoring::Assembly::emulation(
                     crate::photographic::stages::grain::GrainSettings {
                         enabled: true,
                         size: 0.065,

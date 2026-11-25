@@ -3,7 +3,7 @@ use super::*;
 
 #[derive(Clone, PartialEq)]
 struct Request {
-    neutral: crate::image_recipe::NeutralRecipe,
+    neutral: crate::image_recipe::SourceRecipe,
     repairs: Vec<Repair>,
 }
 

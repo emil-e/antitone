@@ -18,7 +18,7 @@ use std::sync::Arc;
 pub struct AuthoredPhotograph {
     processing: Processing,
     luts: crate::looks::LutChain,
-    definition: Arc<crate::photographic::graph::assembly::Assembly>,
+    definition: Arc<crate::photographic::graph::authoring::Assembly>,
     pub(crate) repairs: Vec<crate::dust_repair::Repair>,
     pub(crate) replacements: Vec<super::repairs::fixtures::Replacement>,
     pub(crate) field: Option<Arc<super::flat::GpuFlatField>>,
@@ -211,7 +211,7 @@ impl AuthoredPhotograph {
         )?
         .with_luts(recipe.luts.clone())
         .with_definition({
-            let mut definition = crate::photographic::graph::assembly::Assembly::default();
+            let mut definition = crate::photographic::graph::authoring::Assembly::default();
             definition.resolve_source_scale(recipe)?;
             definition
         });
@@ -240,7 +240,7 @@ impl AuthoredPhotograph {
 
     pub fn with_definition(
         mut self,
-        pipeline: crate::photographic::graph::assembly::Assembly,
+        pipeline: crate::photographic::graph::authoring::Assembly,
     ) -> Self {
         self.definition = Arc::new(if self.is_positive() {
             pipeline
@@ -250,7 +250,7 @@ impl AuthoredPhotograph {
         self
     }
 
-    pub(crate) fn definition(&self) -> crate::photographic::graph::assembly::Assembly {
+    pub(crate) fn definition(&self) -> crate::photographic::graph::authoring::Assembly {
         self.definition.as_ref().clone()
     }
 }
@@ -381,8 +381,8 @@ mod halation_tests;
 mod tests {
     use super::*;
     use crate::{
-        photographic::graph::assembly::Assembly,
-        photographic::stages::grain::{GrainPreset, GrainSettings},
+        grain::{GrainPreset, GrainSettings},
+        photographic::graph::authoring::Assembly,
     };
 
     #[cfg(all(

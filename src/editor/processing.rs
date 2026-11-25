@@ -91,7 +91,7 @@ impl Editor {
             .filter(|repair| repair.enabled)
             .collect();
         Ok(crate::image_recipe::ImageRecipe {
-            neutral: crate::image_recipe::NeutralRecipe {
+            neutral: crate::image_recipe::SourceRecipe {
                 source: source.id,
                 source_development: self.document.development_for(source, input),
                 input,

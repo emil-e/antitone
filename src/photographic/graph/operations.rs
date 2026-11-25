@@ -3,7 +3,6 @@
 use crate::Error;
 use crate::gpu::evaluation::*;
 use crate::gpu::{flat::GpuFlatField, source::SourceGeometry};
-use crate::photographic::stages::interpretation::{InputTransform, operation::Interpretation};
 use std::{
     hash::{Hash, Hasher},
     sync::Arc,
@@ -28,68 +27,27 @@ impl Mapping {
     }
 }
 
-#[derive(Clone)]
-pub struct CameraInput {
-    pub matrix: glam::DMat3,
-    pub field: Option<Arc<GpuFlatField>>,
-    pub continuous: bool,
-    pub mapping: Mapping,
-}
-
-impl CameraInput {
-    pub(crate) fn resident(
-        source: &crate::gpu::source::ProcessingSource,
-        program: InputTransform,
-        field: Option<Arc<GpuFlatField>>,
-    ) -> Self {
-        Self {
-            matrix: program.matrix(),
-            field,
-            continuous: source.continuous,
-            mapping: Mapping::Resident(source.geometry()),
-        }
+pub(super) fn validate_camera_range(
+    matrix: glam::DMat3,
+    field: Option<&GpuFlatField>,
+    continuous: bool,
+) -> Result<(), Error> {
+    let source_gain = if continuous {
+        crate::processing::MAX_SOURCE_GAIN
+    } else {
+        1.
+    };
+    crate::gpu::parameters::CameraMatrix::new(matrix * source_gain)?;
+    if let Some(field) = field {
+        field.validate_matrix(matrix, source_gain)?;
     }
+    crate::gpu::parameters::CameraMatrix::new(matrix)?;
+    Ok(())
 }
 
-pub struct Captured {
-    pub interpretation: Interpretation,
-    pub matrix: glam::DMat3,
+pub struct CameraCorrection {
     pub field: Option<Arc<GpuFlatField>>,
     pub mapping: Mapping,
-}
-
-impl Captured {
-    pub fn new(
-        definition: CameraInput,
-        interpretation: Interpretation,
-    ) -> Result<Arc<Self>, Error> {
-        let CameraInput {
-            matrix,
-            field,
-            continuous,
-            mapping,
-        } = definition;
-        let source_gain = if continuous {
-            crate::processing::MAX_SOURCE_GAIN
-        } else {
-            1.
-        };
-        crate::gpu::parameters::CameraMatrix::new(matrix * source_gain)?;
-        if let Some(field) = &field {
-            field.validate_matrix(matrix, source_gain)?;
-        }
-        crate::gpu::parameters::CameraMatrix::new(matrix)?;
-        Ok(Arc::new(Self {
-            interpretation,
-            matrix,
-            field,
-            mapping,
-        }))
-    }
-}
-
-pub struct Camera {
-    pub captured: Arc<Captured>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -111,24 +69,20 @@ impl Hash for CameraIdentity {
     }
 }
 
-impl Camera {
+impl CameraCorrection {
     fn identity(&self) -> CameraIdentity {
-        let (original_mapping, geometry) = match self.captured.mapping {
+        let (original_mapping, geometry) = match self.mapping {
             Mapping::Originals => (true, None),
             Mapping::Resident(geometry) => (false, geometry),
         };
         CameraIdentity {
-            field: self
-                .captured
-                .field
-                .as_ref()
-                .map(|field| field.field().clone()),
+            field: self.field.as_ref().map(|field| field.field().clone()),
             original_mapping,
             geometry,
         }
     }
 }
-impl Operation for Camera {
+impl Operation for CameraCorrection {
     fn key(&self) -> Option<RetainedKey> {
         Some(RetainedKey::new(self.identity()))
     }
@@ -143,16 +97,14 @@ impl Operation for Camera {
         _budget: crate::gpu::evaluation::Tiling,
     ) -> Result<Option<crate::gpu::evaluation::value::Calculation>, Error> {
         let inputs = crate::gpu::evaluation::value::Calculation::references(inputs);
-        let capture = &self.captured;
-        let original = matches!(capture.mapping, Mapping::Originals);
+        let original = matches!(self.mapping, Mapping::Originals);
         let geometry = if original {
-            capture
-                .field
+            self.field
                 .as_ref()
                 .map(|field| SourceGeometry::new(field.field().area(), [1, 1]))
                 .transpose()?
         } else {
-            capture.mapping.geometry(output)?
+            self.mapping.geometry(output)?
         };
         let source = if original {
             "source=vec2u(floor(position));"
@@ -164,7 +116,7 @@ impl Operation for Camera {
             crate::photographic::stages::shader::functions()
         );
         let bindings = GpuFlatField::bind(
-            capture.field.as_deref(),
+            self.field.as_deref(),
             geometry,
             Function::new(code.clone(), "pixel"),
         )?

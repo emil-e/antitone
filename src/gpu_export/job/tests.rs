@@ -150,7 +150,7 @@ fn repair_demand(
     index: usize,
 ) -> Vec<crate::gpu::evaluation::CellRegion> {
     use crate::gpu::evaluation::{CellRegion, Domain, Grid, Tiling};
-    let photo = crate::photographic::graph::PhotographGraph::from_recipe(
+    let photo = crate::photographic::graph::authoring::PhotographTaps::from_recipe(
         &device.limits(),
         crate::gpu::source::camera_source(scan).unwrap(),
         None,

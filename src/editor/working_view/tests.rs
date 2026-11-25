@@ -152,7 +152,7 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
                                 .into_iter()
                                 .flatten()
                                 .reduce(f64::min);
-                            crate::photographic::graph::assembly::Assembly::authored(
+                            crate::photographic::graph::authoring::Assembly::authored(
                                 move |mut image, output| {
                                     image = mtf.compose(image)?;
                                     if let Some(output) = output {

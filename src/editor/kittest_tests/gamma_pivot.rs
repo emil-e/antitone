@@ -206,7 +206,7 @@ fn roll_colour(h: &Harness<'_, Editor>, patch: Rect) -> DVec3 {
             &|| false,
         )
         .unwrap();
-        let roll = samples.pipeline(&recipe).unwrap().roll().unwrap();
+        let roll = samples.roll(&recipe).unwrap();
         let mean = samples.mean(roll, &|| false).unwrap();
         let cones = crate::color::ap1_to_cones() * mean;
         cones / cones.y

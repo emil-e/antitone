@@ -124,7 +124,7 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
     graded_key.target = OutputTarget::Srgb;
     let graded = complete(&mut thumbnails, &document, graded_key.clone()).unwrap();
     assert!(
-        crate::photographic::graph::PhotographGraph::shares_resident_camera(
+        crate::photographic::graph::authoring::shares_resident_camera(
             &neutral.definition,
             &graded
                 .positive
@@ -185,7 +185,7 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
         .exposure = 0.25;
     let readmitted = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
     assert!(
-        crate::photographic::graph::PhotographGraph::shares_resident_camera(
+        crate::photographic::graph::authoring::shares_resident_camera(
             &neutral.definition,
             &readmitted
                 .positive
@@ -245,7 +245,7 @@ fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_r
         .exposure = 0.5;
     let graded = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
     assert!(
-        crate::photographic::graph::PhotographGraph::shares_resident_camera(
+        crate::photographic::graph::authoring::shares_resident_camera(
             &plain
                 .positive
                 .as_ref()
@@ -320,7 +320,7 @@ fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
     let view = &looked.positive.as_ref().unwrap();
     assert_eq!(view.processing().look_id(), Some(lut.id()));
     assert!(
-        crate::photographic::graph::PhotographGraph::shares_resident_camera(
+        crate::photographic::graph::authoring::shares_resident_camera(
             &neutral.definition,
             &looked
                 .positive
@@ -339,7 +339,7 @@ fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
     assert!(!key.current_recipe(&document));
     let restored = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
     assert!(
-        crate::photographic::graph::PhotographGraph::shares_resident_camera(
+        crate::photographic::graph::authoring::shares_resident_camera(
             &neutral.definition,
             &restored
                 .positive

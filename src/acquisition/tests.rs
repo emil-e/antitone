@@ -18,7 +18,7 @@ fn pipeline() -> Assembly {
             .into_iter()
             .flatten()
             .reduce(f64::min);
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             image = mtf.compose(image)?;
             image = grain.compose(image, 17);
             image = next_mtf.compose(image)?;

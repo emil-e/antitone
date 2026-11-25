@@ -31,7 +31,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
                 .into_iter()
                 .flatten()
                 .reduce(f64::min);
-            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
                 image = mtf.compose(image)?;
                 if let Some(output) = output {
                     image = output.compose(image)?;
@@ -49,7 +49,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
                 .into_iter()
                 .flatten()
                 .reduce(f64::min);
-            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
                 image = mtf.compose(image)?;
                 if let Some(output) = output {
                     image = output.compose(image)?;
@@ -71,7 +71,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
                 .into_iter()
                 .flatten()
                 .reduce(f64::min);
-            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
                 image = mtf.compose(image)?;
                 if let Some(output) = output {
                     image = output.compose(image)?;

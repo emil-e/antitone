@@ -252,7 +252,7 @@ fn a_convolution_definition_owns_two_passes_and_halos_across_tiled_rotated_grid_
         let pipeline = {
             let curve = SignedCurve::new(1.2, 0.15).unwrap();
             let convolution = TentConvolution::new(2.2).unwrap();
-            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
                 image = curve.compose(image)?;
                 image = convolution.compose(image)?;
                 if let Some(output) = output {
@@ -376,7 +376,7 @@ fn uniform_fusion_keeps_private_captures_and_rejects_invalid_authoring_inputs() 
         let second = SignedCurve::new(gain, curvature).unwrap();
         let first = SignedCurve::new(1.2, 0.15).unwrap();
         let pipeline = {
-            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
                 image = first.compose(image)?;
                 image = second.compose(image)?;
                 if let Some(output) = output {
