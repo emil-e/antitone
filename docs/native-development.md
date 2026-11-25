@@ -27,7 +27,9 @@ Normal native setup runs authored sample/curve/ownership checks and actual LibRa
 
 The editor supplies [DHT](../native/dht/README.md) with the host's device and guarded queue. LibRaw lends a prepared Bayer RGBG image only during synchronous development; the callback is cleared before return, including exceptional exits. Successful GPU work replaces the image after completed readback, then existing native highlights and Sony reconstruction continue. Unsupported layouts and unavailable acceleration retain LibRaw development. Standalone native APIs without a supplied accelerator remain CPU-only; SDK DNG and non-Bayer paths are unchanged.
 
-One shared loader serializes GPU demosaicing. Its current working allowance is the smaller of one quarter of physical RAM and 3 GiB, including buffers, readback and input-upload staging. Device limits, warning/critical memory pressure or GPU failures select CPU DHT without publishing partial output. Pipelines survive calls, but scratch allocations do not remain as an idle multi-gigabyte cache. This trades allocation cost for bounded, call-owned working storage independently of optional image retention. `gpu_bayer_demosaic` debug events identify successful acceleration; rejection events explain CPU fallback.
+One shared loader serializes GPU demosaicing. The [accelerator](../src/raw/demosaic/gpu.rs) runs the compute passes over the whole frame, but batches upload, buffer initialization and readback separately. The worker completes each batch before submitting the next, using callbacks and nonblocking device polls: a blocking wgpu poll can hold a device lock needed by presentation.
+
+The working allowance is the smaller of one quarter of physical RAM and 3 GiB, including full-frame buffers, readback and one upload staging batch. Pipelines survive calls; scratch is call-owned and independent of optional image retention. Device limits, warning/critical memory pressure or GPU failures select CPU DHT without publishing partial output. `gpu_bayer_demosaic` debug events identify successful acceleration; rejection events explain CPU fallback.
 
 ## Interpreting hardware scaling
 

@@ -1,8 +1,10 @@
 //! Bayer development on the caller's device, returning packed camera RGBG to LibRaw.
 
 use std::sync::{Mutex, OnceLock, mpsc};
+use std::time::Duration;
 use wgpu::util::DeviceExt;
 
+const TRANSFER_BYTES: u64 = 128 << 20;
 const STAGES: &[&str] = &[
     "prepare",
     "reduce_bounds",
@@ -80,8 +82,8 @@ impl Layout {
             gx * gy * 32,
             32,
         ];
-        // Include readback, uniform and the queue's full input-upload staging allowance.
-        let working_bytes = sizes.iter().sum::<u64>() + image_bytes * 2 + 32;
+        let working_bytes =
+            sizes.iter().sum::<u64>() + image_bytes + image_bytes.min(TRANSFER_BYTES) + 32;
         Ok(Self {
             parameters: [
                 width as u32,
@@ -174,7 +176,7 @@ impl Demosaicer {
             wgpu::ErrorFilter::Internal,
         ]
         .map(|filter| self.device.push_error_scope(filter));
-        let result = self.execute(programs, &layout, image);
+        let result = self.execute(programs, &layout, image, TRANSFER_BYTES);
         let mut error = None;
         for scope in scopes.into_iter().rev() {
             if let Some(found) = pollster::block_on(scope.pop()) {
@@ -264,6 +266,7 @@ impl Demosaicer {
         programs: &Programs,
         layout: &Layout,
         image: &[[u16; 4]],
+        transfer_bytes: u64,
     ) -> Result<Frame, String> {
         let uniform = self
             .device
@@ -314,8 +317,39 @@ impl Demosaicer {
             readback,
             mapping: false,
         };
-        self.queue
-            .write_buffer(&buffers[0], 0, bytemuck::cast_slice(image));
+        let input = bytemuck::cast_slice::<_, u8>(image);
+        self.transfer_batches(
+            layout.image_bytes,
+            transfer_bytes,
+            |encoder, offset, size| {
+                // Explicit staging keeps this copy off wgpu's pending-write list, where it could
+                // otherwise become part of an unrelated window submission.
+                let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("DHT upload staging"),
+                    size,
+                    usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: true,
+                });
+                staging
+                    .slice(..)
+                    .get_mapped_range_mut()
+                    .map_err(|error| error.to_string())?
+                    .copy_from_slice(&input[offset as usize..(offset + size) as usize]);
+                staging.unmap();
+                encoder.copy_buffer_to_buffer(&staging, 0, &buffers[0], offset, size);
+                Ok(())
+            },
+        )?;
+
+        // The full bind group would otherwise trigger lazy initialization of all scratch
+        // buffers in the first compute submission.
+        for buffer in &buffers[1..] {
+            self.transfer_batches(buffer.size(), transfer_bytes, |encoder, offset, size| {
+                encoder.clear_buffer(buffer, offset, Some(size));
+                Ok(())
+            })?;
+        }
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -335,12 +369,18 @@ impl Demosaicer {
             };
             pass.dispatch_workgroups(x, y, 1);
         }
-        encoder.copy_buffer_to_buffer(&buffers[7], 0, &frame.readback, 0, layout.image_bytes);
-        #[cfg(any(feature = "ui", test))]
-        let _pending = self.queue.track();
-        let submission = self.queue.submit([encoder.finish()]);
+        self.submit_batch(encoder)?;
+
+        self.transfer_batches(
+            layout.image_bytes,
+            transfer_bytes,
+            |encoder, offset, size| {
+                encoder.copy_buffer_to_buffer(&buffers[7], offset, &frame.readback, offset, size);
+                Ok(())
+            },
+        )?;
         let mut frame = frame;
-        let (send, receive) = mpsc::channel();
+        let (send, receive) = mpsc::sync_channel(1);
         frame
             .readback
             .slice(..)
@@ -348,17 +388,52 @@ impl Demosaicer {
                 let _ = send.send(result);
             });
         frame.mapping = true;
-        self.device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(submission),
-                timeout: None,
-            })
-            .map_err(|e| e.to_string())?;
-        receive
-            .recv()
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
+        self.await_callback(receive)?
+            .map_err(|error| error.to_string())?;
         Ok(frame)
+    }
+
+    fn transfer_batches(
+        &self,
+        bytes: u64,
+        batch_bytes: u64,
+        mut record: impl FnMut(&mut wgpu::CommandEncoder, u64, u64) -> Result<(), String>,
+    ) -> Result<(), String> {
+        for offset in (0..bytes).step_by(batch_bytes as usize) {
+            let size = (bytes - offset).min(batch_bytes);
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("DHT transfer"),
+                });
+            record(&mut encoder, offset, size)?;
+            self.submit_batch(encoder)?;
+        }
+        Ok(())
+    }
+
+    fn submit_batch(&self, encoder: wgpu::CommandEncoder) -> Result<(), String> {
+        let (send, receive) = mpsc::sync_channel(1);
+        self.queue
+            .submit_with_completion([encoder.finish()], move || {
+                let _ = send.send(());
+            });
+        self.await_callback(receive)
+    }
+
+    fn await_callback<T>(&self, receive: mpsc::Receiver<T>) -> Result<T, String> {
+        // A blocking wgpu poll can hold a device lock needed by surface presentation.
+        // Drive callbacks here as well as in the host so DHT does not depend on redraws.
+        loop {
+            self.device
+                .poll(wgpu::PollType::Poll)
+                .map_err(|error| error.to_string())?;
+            match receive.recv_timeout(Duration::from_millis(1)) {
+                Ok(result) => return Ok(result),
+                Err(mpsc::RecvTimeoutError::Timeout) => (),
+                Err(error) => return Err(error.to_string()),
+            }
+        }
     }
 }
 
