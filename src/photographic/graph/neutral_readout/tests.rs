@@ -43,17 +43,13 @@ fn neutral_readout_bounds_extreme_samples_and_keeps_representable_hdr_and_floor_
             value: [codes.x, codes.y, codes.z, 0.],
         }));
         let program = InputTransform::new(input, matrix).unwrap();
-        let capture = Captured::new(
-            CameraInput {
-                matrix: program.matrix(),
-                field: None,
-                continuous: true,
-                mapping: Mapping::Originals,
-            },
+        let corrected = camera_image(camera, None, Mapping::Originals);
+        let image = composition::interpret_camera(
+            corrected,
             Interpretation::Program(program),
+            program.matrix(),
         )
         .unwrap();
-        let image = Assembly::captured(capture).unrepaired(camera).unwrap();
         let expected = scalar.apply(codes.as_dvec3() / 65535.).unwrap();
         let mut sum = DVec3::ZERO;
         let mut cells = 0;

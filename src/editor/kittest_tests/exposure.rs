@@ -35,7 +35,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         h.render().unwrap();
         let image = h.read(|editor| {
             assert!(!editor.document.source);
-            let effects = crate::photographic::graph::assembly::Assembly::film(
+            let effects = crate::photographic::graph::authoring::Assembly::film(
                 editor.document.project.output.grain,
                 editor
                     .source_composition(

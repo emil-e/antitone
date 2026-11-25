@@ -23,7 +23,7 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
     let pipeline = {
         let curve = SignedCurve::new(1.2, 0.15).unwrap();
         let convolution = TentConvolution::new(0.8).unwrap();
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             image = curve.compose(image)?;
             image = convolution.compose(image)?;
             if let Some(output) = output {
@@ -73,7 +73,7 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
     );
     let only_curve = native(&device, &queue, &renderer, &scan, {
         let curve = SignedCurve::new(1.2, 0.15).unwrap();
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             image = curve.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;

@@ -4,21 +4,12 @@
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Quality {
     Originals,
-    #[cfg(feature = "editor")]
-    PhysicalView,
     CameraProxy,
-    #[cfg(feature = "editor")]
-    Measurement,
 }
 
 #[cfg(feature = "gpu")]
 impl Quality {
     pub fn includes_repairs(self) -> bool {
-        match self {
-            Self::Originals => true,
-            #[cfg(feature = "editor")]
-            Self::PhysicalView => true,
-            _ => false,
-        }
+        self == Self::Originals
     }
 }

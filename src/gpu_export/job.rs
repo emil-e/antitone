@@ -61,19 +61,24 @@ pub(crate) fn write(
     check()?;
 
     let (scan, recipe) = crate::photo_preparation::native_image(job.scan, job.recipe)?;
-    let pipeline = crate::photographic::graph::RecipeGraph::originals(
+    let image = crate::photographic::graph::composition::processed_originals(
+        &context.device().limits(),
         crate::gpu::source::camera_source(&scan)?,
         job.field,
         &recipe,
     )?;
-    let limits = context.device().limits();
     let definition = match job.render.display {
         Some(Display {
             looks,
             targets,
             target,
-        }) => pipeline.display(&limits, looks, targets.get(target))?,
-        None => pipeline.processed(&limits)?,
+        }) => crate::photographic::graph::display_output(
+            image,
+            &recipe.luts,
+            looks,
+            targets.get(target),
+        )?,
+        None => image,
     };
     super::area::write_calculation(
         context,

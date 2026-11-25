@@ -1,5 +1,5 @@
 use super::*;
-use crate::photographic::graph::PhotographGraph;
+use crate::photographic::graph::authoring::PhotographTaps;
 
 mod regions;
 use crate::adjustment_layers::AdjustmentLayer;
@@ -209,7 +209,7 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                             .unwrap();
                 }
                 let raster = crate::gpu::raster::Raster::region(region, size);
-                let photo = PhotographGraph::from_resident_fixture(
+                let photo = PhotographTaps::from_resident_fixture(
                     &device.limits(),
                     &source,
                     &input,
@@ -382,7 +382,7 @@ fn resident_camera_execution_resources() {
             .unwrap(),
         );
         let input = AuthoredPhotograph::from(pipeline.clone())
-            .with_definition(crate::photographic::graph::assembly::Assembly::emulation(crate::photographic::stages::grain::GrainPreset::ThirtyFiveMm.settings(),Default::default(),[side; 2],17).unwrap());
+            .with_definition(crate::photographic::graph::authoring::Assembly::emulation(crate::photographic::stages::grain::GrainPreset::ThirtyFiveMm.settings(),Default::default(),[side; 2],17).unwrap());
         let plan = crate::gpu::execution::raster::resident_plan(&source, &input)
             .unwrap()
             .unwrap();

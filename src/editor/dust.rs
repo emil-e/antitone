@@ -1736,7 +1736,7 @@ pub(super) struct PendingStroke {
     pub source: SourceId,
     pub support: SupportMask,
     previous: Option<Repair>,
-    neutral: crate::image_recipe::NeutralRecipe,
+    neutral: crate::image_recipe::SourceRecipe,
     released: std::time::Instant,
     select: Cell<bool>,
 }

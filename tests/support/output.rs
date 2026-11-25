@@ -1,6 +1,6 @@
 //! Test-side operation authoring; the production file writer receives only the resulting node.
 #![allow(dead_code)]
-use antitone::photographic::graph::{PhotographGraph, display_output};
+use antitone::photographic::graph::{display_output, original_image};
 use antitone::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
@@ -57,7 +57,7 @@ impl Request<'_> {
         {
             return Err(Error::Gpu("authored source/geometry mismatch".into()));
         }
-        let photograph = PhotographGraph::original_image(
+        let photograph = original_image(
             &device.limits(),
             camera_source(self.scan)?,
             self.field,

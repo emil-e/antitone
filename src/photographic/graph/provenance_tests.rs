@@ -51,7 +51,7 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
         offset: [16, 0],
     }];
     let graph = |camera: &ProcessingSource| {
-        PhotographGraph::from_resident_fixture(
+        authoring::PhotographTaps::from_resident_fixture(
             &device.limits(),
             camera,
             &input,
@@ -61,15 +61,10 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
     };
     let first = graph(&camera);
     assert_eq!(first.neutral.inputs().len(), 2);
-    assert!(PhotographGraph::has_correction(
-        &first.neutral,
-        Some(&field)
-    ));
-    assert!(!PhotographGraph::has_correction(&first.neutral, None));
+    assert!(authoring::has_correction(&first.neutral, Some(&field)));
+    assert!(!authoring::has_correction(&first.neutral, None));
     assert_eq!(
-        PhotographGraph::input_transform(&first.neutral)
-            .unwrap()
-            .as_ref(),
+        input_transform(&first.neutral).unwrap().as_ref(),
         input.source_transform()
     );
     let alias = graph(&camera);
@@ -88,7 +83,7 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
         "the charge control must include distinct nodes over one allocation"
     );
     assert_eq!(
-        PhotographGraph::resident_camera_bytes(&shared),
+        authoring::resident_camera_bytes(&shared),
         camera.input.size()
     );
     let second = source();
@@ -98,30 +93,31 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
     )
     .unwrap();
     assert_eq!(
-        PhotographGraph::resident_camera_bytes(&mixed),
+        authoring::resident_camera_bytes(&mixed),
         camera.input.size() + second.input.size()
     );
-    let arguments = NeutralInput {
-        interpretation:
-            crate::photographic::stages::interpretation::SourceInterpretation::Photograph(
-                *input.source_transform().unwrap(),
-            ),
-        field: Some(field.clone()),
-        repairs: input.repairs.clone(),
-        replacements: Vec::new(),
-    };
-    let rebound = arguments.recompose_resident(&shared).unwrap();
+    let (codes, mapping, continuous) = resident_camera_argument(&shared).unwrap();
+    let program = *input.source_transform().unwrap();
+    validate_camera_range(program.matrix(), Some(&field), continuous).unwrap();
+    let corrected = camera_image(codes.clone(), Some(field.clone()), mapping);
+    let unrepaired = composition::interpret_camera(
+        corrected,
+        Interpretation::Program(program),
+        program.matrix(),
+    )
+    .unwrap();
+    let rebound = composition::repair_neutral(unrepaired, mapping, &input.repairs, &[]).unwrap();
     assert_eq!(rebound.domain(), shared.domain());
     assert_eq!(
-        PhotographGraph::input_transform(&rebound).unwrap().as_ref(),
+        input_transform(&rebound).unwrap().as_ref(),
         input.source_transform()
     );
     assert_eq!(
-        PhotographGraph::resident_camera_bytes(&rebound),
+        authoring::resident_camera_bytes(&rebound),
         camera.input.size()
     );
     assert!(matches!(
-        arguments.recompose_resident(&mixed),
+        resident_camera_argument(&mixed),
         Err(Error::InvalidParameter(
             "calculation mixes resident camera arguments"
         ))
@@ -142,7 +138,7 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
         .unwrap(),
     );
     let different = input.clone().with_flat_field(Some(other_field.clone()));
-    let other = PhotographGraph::from_resident_fixture(
+    let other = authoring::PhotographTaps::from_resident_fixture(
         &device.limits(),
         &camera,
         &different,
@@ -158,11 +154,8 @@ fn branched_neutral_graphs_keep_correction_and_charge_each_resident_buffer_once(
     )
     .unwrap();
     assert!(
-        !PhotographGraph::has_correction(&conflicting, Some(&field)),
+        !authoring::has_correction(&conflicting, Some(&field)),
         "a matching first camera cannot hide a differently corrected branch"
     );
-    assert!(!PhotographGraph::has_correction(
-        &conflicting,
-        Some(&other_field)
-    ));
+    assert!(!authoring::has_correction(&conflicting, Some(&other_field)));
 }

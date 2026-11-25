@@ -36,7 +36,7 @@ pub(in crate::editor) fn roll_from_samples(
     input: &crate::image_recipe::ImageRecipe,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Balance, Error> {
-    let roll = samples.pipeline(input)?.roll()?;
+    let roll = samples.roll(input)?;
     crate::color::neutral_roll_wb(samples.mean(roll, cancelled)?)
 }
 
@@ -88,9 +88,7 @@ pub(super) fn layer(
             layers.push(selected);
             let mut candidate = recipe.clone();
             candidate.grade = AdjustmentLayerSnapshot::new(layers)?;
-            let graded = samples
-                .pipeline(&candidate)?
-                .graded(&gpu.0.device().limits())?;
+            let graded = samples.graded(&gpu.0.device().limits(), &candidate)?;
 
             let response = cones * samples.mean(graded, cancelled)?;
             if !response.is_finite() || response.min_element() <= 0. {

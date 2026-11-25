@@ -108,7 +108,7 @@ fn definition(before: [u32; 2], after: [u32; 2]) -> Declared {
 }
 fn pipeline(definition: Declared) -> Assembly {
     {
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             image = definition.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;
@@ -287,7 +287,7 @@ impl Operation for Merge {
 fn acquisition_follows_both_parents_of_a_composed_effect_dag() {
     let pipeline = {
         let split = Split;
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             image = split.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;

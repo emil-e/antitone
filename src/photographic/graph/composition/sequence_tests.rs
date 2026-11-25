@@ -3,6 +3,7 @@ use crate::adjustment_layers::AdjustmentLayer;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::adjustment_layers::AdjustmentLayerSnapshot;
 use crate::color::Balance;
+use crate::photographic::graph::authoring::{Assembly, SourceImages};
 use crate::photographic::stages::grading::Grading;
 use crate::photographic::stages::interpretation::InputTransform;
 use crate::processing::Calibration;
@@ -68,20 +69,8 @@ fn repair_dag_provenance_is_described_without_pixels_and_rejects_mixed_interpret
     let source = e::source(Arc::new(Unread));
     let program = InputTransform::new(InputSettings::Digital, DMat3::IDENTITY).unwrap();
     let neutral = |program: InputTransform| {
-        Assembly::captured(
-            Captured::new(
-                CameraInput {
-                    matrix: program.matrix(),
-                    field: None,
-                    continuous: false,
-                    mapping: Mapping::Originals,
-                },
-                Interpretation::Program(program),
-            )
-            .unwrap(),
-        )
-        .unrepaired(source.clone())
-        .unwrap()
+        let camera = camera_image(source.clone(), None, Mapping::Originals);
+        interpret_camera(camera, Interpretation::Program(program), program.matrix()).unwrap()
     };
     let base = neutral(program);
     let support = SupportMask::new([30, 30], [3, 3], vec![true; 9]).unwrap();
@@ -101,8 +90,8 @@ fn repair_dag_provenance_is_described_without_pixels_and_rejects_mixed_interpret
         2,
         "the control must not be a unary graph"
     );
-    assert_eq!(Assembly::input_transform(&repaired).unwrap(), Some(program));
-    assert!(PhotographGraph::has_correction(&repaired, None));
+    assert_eq!(input_transform(&repaired).unwrap(), Some(program));
+    assert!(authoring::has_correction(&repaired, None));
     let changed = InputTransform::new(InputSettings::Digital, DMat3::IDENTITY * 2.).unwrap();
     let foreign_heal = definition::healing_image(
         &neutral(changed),
@@ -116,18 +105,18 @@ fn repair_dag_provenance_is_described_without_pixels_and_rejects_mixed_interpret
     )
     .unwrap();
     assert!(
-        PhotographGraph::has_correction(&foreign_heal, None),
+        authoring::has_correction(&foreign_heal, None),
         "lowered CPU dependencies must still describe their correction choice without acquiring pixels"
     );
     let foreign_repair =
         definition::compose_images(base.clone(), vec![(support.clone(), foreign_heal)]).unwrap();
     assert!(
-        Assembly::input_transform(&foreign_repair).is_err(),
+        input_transform(&foreign_repair).is_err(),
         "a lowered whole CPU value must retain its upstream interpretation facts"
     );
     let conflicting = definition::compose_images(base, vec![(support, neutral(changed))]).unwrap();
     assert!(
-        Assembly::input_transform(&conflicting).is_err(),
+        input_transform(&conflicting).is_err(),
         "one photographic input must not claim conflicting branch interpretations"
     );
 }
@@ -294,18 +283,15 @@ fn original_endpoints_preserve_interpretation_and_order_post_grade_operations() 
         })])
         .unwrap();
     let grade = Arc::new(Grading::new(&device.limits(), roll, layers.clone(), area).unwrap());
-    let captured = Captured::new(
-        CameraInput {
-            matrix,
-            field: None,
-            continuous: true,
-            mapping: Mapping::Originals,
-        },
+    let images = SourceImages::from_codes(
+        codes,
+        None,
+        Mapping::Originals,
+        matrix,
+        true,
         Interpretation::Program(program),
     )
     .unwrap();
-    let mut assembly = Assembly::captured(captured);
-    assembly.grading = Some(grade.for_grid(0));
 
     // Gamma-one, unshaped inversion reduces to a ratio, and the two exposures give 2 × ¼.
     // This fixture checks operation placement without a second photographic evaluator.
@@ -318,7 +304,7 @@ fn original_endpoints_preserve_interpretation_and_order_post_grade_operations() 
     let scale = Scale(DVec3::new(0.75, 1.25, 0.9));
     let effects = {
         let square = Square;
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             image = square.compose(image)?;
             image = scale.compose(image)?;
             if let Some(output) = output {
@@ -327,11 +313,13 @@ fn original_endpoints_preserve_interpretation_and_order_post_grade_operations() 
             Ok(image)
         })
     };
-    let mut complete = assembly.clone();
-    complete.author = effects.author;
-    let graph = complete.photograph(codes.clone()).unwrap();
-    let prefix = assembly.neutral(codes).unwrap();
-    let native = Assembly::native(program).interpret(normalized).unwrap();
+    let fixture = Assembly {
+        grading: Some(grade.for_grid(0)),
+        ..effects
+    };
+    let prefix = images.unrepaired.clone();
+    let graph = fixture.photograph(images, Mapping::Originals).unwrap();
+    let native = native_image(normalized, Interpretation::Program(program)).unwrap();
     let actual = read(context, &queue, graph.processed);
     let neutral = read(context, &queue, prefix);
     let native = read(context, &queue, native);
@@ -383,7 +371,7 @@ fn filtered_output_keeps_upstream_nodes_and_explicit_reconstruction_order() {
     .unwrap();
     let effects = {
         let footprint_scale = FootprintScale;
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             if let Some(output) = output {
                 image = output.compose(image)?;
             }
@@ -394,24 +382,24 @@ fn filtered_output_keeps_upstream_nodes_and_explicit_reconstruction_order() {
     let upstream = DVec3::new(0.75, 1.25, 0.9);
     let input = Square.compose(input).unwrap();
     let input = Scale(upstream).compose(input).unwrap();
-    let mut assembly = Assembly::filtered(grading);
-    assembly.author = effects.author;
-    let mut output = domain;
-    output.bounds = Some([0, 0, 2, 1].into());
-    output.grid = Grid::axis_aligned([0.; 2], [2., 1.]);
-    let (_, graded) = assembly.grade(input.clone()).unwrap();
+    let output = PresentationMapping {
+        domain: Domain {
+            bounds: Some([0, 0, 2, 1].into()),
+            grid: Grid::axis_aligned([0.; 2], [2., 1.]),
+        },
+        scale: [2., 1.],
+    };
+    let graded = grading.compose(input).unwrap();
     assert!(
         graded.domain().same_grid(domain),
         "grading retains its supplied native grid"
     );
-    let prefix = read(renderer.evaluation(), &queue, graded);
+    let prefix = read(renderer.evaluation(), &queue, graded.clone());
     for (value, original) in prefix.into_iter().zip(values) {
         close(value, upstream * f64::from(original).powi(2) * 0.5);
     }
-    let image = assembly
-        .filtered_image(input, output, [0; 2], [2., 1.])
-        .unwrap();
-    assert!(image.domain().same_grid(output));
+    let image = effects.processed(graded, Some(output)).unwrap();
+    assert!(image.domain().same_grid(output.domain));
     let actual = read(renderer.evaluation(), &queue, image);
     for (pair, actual) in values.as_chunks::<2>().0.iter().zip(actual) {
         // Squaring precedes averaging, so the result contains the mean of squares,
@@ -453,12 +441,11 @@ fn recipe_operations_preserve_original_order_and_explicit_view_reconstruction_be
             .same_definition(&original)
     );
 
-    let output = ViewOutput {
+    let output = PresentationMapping {
         domain: Domain {
             bounds: Some(CellRegion::new([0; 2], [8, 4])),
             grid: Grid::axis_aligned([0.; 2], [10., 16.]),
         },
-        offset: [0; 2],
         scale: [10., 16.],
     };
     let reconstructed = output.compose(halated).unwrap();

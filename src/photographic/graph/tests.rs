@@ -5,7 +5,7 @@ use crate::geometry::SourceRegion;
 use crate::gpu::evaluation::numeric_fixture::NumericKey;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::photographic::graph::PhotographGraph;
+use crate::photographic::graph::authoring::PhotographTaps;
 use crate::processing::Calibration;
 use crate::processing::InputPipeline;
 use crate::processing::InputSettings;
@@ -107,7 +107,7 @@ fn repaired_spatial_composition_matches_host_and_image_delivery() {
             .into_iter()
             .flatten()
             .reduce(f64::min);
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             image = mtf.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;
@@ -123,8 +123,8 @@ fn repaired_spatial_composition_matches_host_and_image_delivery() {
             ..Grid::axis_aligned([0., 48.], [128., 8.])
         },
     };
-    let compose = |stages: &crate::photographic::graph::assembly::Assembly| {
-        let photograph = PhotographGraph::authored(
+    let compose = |stages: &crate::photographic::graph::authoring::Assembly| {
+        let photograph = PhotographTaps::authored(
             &device.limits(),
             source(codes.clone()),
             None,
@@ -230,7 +230,7 @@ fn photographic_identities_follow_captured_operations_not_physical_fusion() {
             area,
         )
         .unwrap();
-        PhotographGraph::new(
+        PhotographTaps::new(
             &device.limits(),
             source(codes.clone()),
             None,
@@ -310,7 +310,7 @@ fn camera_light_uses_original_coordinates_and_shared_correction_before_interpret
         .unwrap(),
     );
     let region = SourceRegion::from([12, 18, 10, 7]);
-    let root = PhotographGraph::camera_light(
+    let root = camera_light(
         source(Arc::new(Codes {
             area,
             pixels: pixels.clone(),
@@ -443,7 +443,7 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
         let scalar_input = InputPipeline::new(settings, matrix).unwrap();
         let mut input = AuthoredPhotograph::from(pipeline);
         input.replacements = snapshot.clone();
-        let photo = PhotographGraph::new(
+        let photo = PhotographTaps::new(
             &device.limits(),
             source(codes.clone()),
             Some(gpu_field.clone()),
@@ -647,7 +647,7 @@ fn keeping_a_neutral_image_does_not_retain_its_downstream_grade() {
     let grade = Arc::downgrade(pipeline.grade_shared().unwrap());
     let input = AuthoredPhotograph::from(pipeline);
     let pixels = vec![[0.25 * 65535., 0.5 * 65535., 1.5 * 65535., 0.]; 6];
-    let photo = PhotographGraph::new(
+    let photo = PhotographTaps::new(
         &device.limits(),
         source(Arc::new(Codes { area, pixels })),
         None,

@@ -290,25 +290,20 @@ fn correction_acceptance_is_independent_of_photographic_overflow_which_fails_at_
     );
     let id = document.project.order[0];
     let recipe = document.image_recipe(id).unwrap();
-    let small = crate::photographic::graph::RecipeGraph::originals(
+    let small = crate::photographic::graph::composition::original_camera(
         codes.clone(),
         Some(prepared.gpu.clone()),
         &recipe,
-    )
-    .unwrap();
-    assert!(
-        small.camera().is_ok(),
-        "the large matrix alone is executable"
     );
+    assert!(small.is_ok(), "the large matrix alone is executable");
     let mut recipe = candidate.image_recipe(id).unwrap();
-    let overflow = crate::photographic::graph::RecipeGraph::originals(
+    let overflow = crate::photographic::graph::composition::original_camera(
         codes.clone(),
         Some(large_map.clone()),
         &recipe,
-    )
-    .unwrap();
+    );
     assert!(
-        matches!(overflow.camera(), Err(Error::Gpu(_))),
+        matches!(overflow, Err(Error::Gpu(_))),
         "photographic execution rejects the overflowing combination"
     );
     let mut ordinary = document.clone();
@@ -321,9 +316,7 @@ fn correction_acceptance_is_independent_of_photographic_overflow_which_fails_at_
         .neutral
         .source_development;
     assert!(
-        crate::photographic::graph::RecipeGraph::originals(codes, Some(large_map), &recipe)
-            .unwrap()
-            .camera()
+        crate::photographic::graph::composition::original_camera(codes, Some(large_map), &recipe)
             .is_ok(),
         "the large map alone is executable"
     );

@@ -100,26 +100,9 @@ pub struct InputTransform {
     matrix: DMat3,
 }
 
-#[cfg(feature = "editor")]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum SourceInterpretation {
-    Photograph(InputTransform),
-    Inspection(DMat3),
-}
-
-#[cfg(feature = "editor")]
-impl SourceInterpretation {
-    pub(crate) fn matrix(self) -> DMat3 {
-        match self {
-            Self::Photograph(program) => program.matrix,
-            Self::Inspection(matrix) => matrix,
-        }
-    }
-}
-
 impl InputTransform {
     #[cfg(feature = "project")]
-    pub(crate) fn from_recipe(recipe: &crate::image_recipe::NeutralRecipe) -> Result<Self, Error> {
+    pub(crate) fn from_recipe(recipe: &crate::image_recipe::SourceRecipe) -> Result<Self, Error> {
         let (input, matrix) = recipe.processing_transform()?;
         Self::new(input, matrix)
     }

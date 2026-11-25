@@ -54,13 +54,11 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
             .unwrap();
             let capture = crate::photographic::graph::request::PhotographRequest::Fixture(input);
             let original = capture
-                .neutral_input(
+                .original_neutral(
+                    crate::gpu::source::camera_source(&scan).unwrap(),
                     None,
                     scan.camera_to_ap1,
-                    crate::image_recipe::quality::Quality::Originals,
                 )
-                .unwrap()
-                .originals(crate::gpu::source::camera_source(&scan).unwrap())
                 .unwrap();
             let proxy = crate::scan::CameraProxy::from_scan(&scan).unwrap();
             let camera = crate::gpu::source::ProcessingSource::new_continuous(
@@ -88,21 +86,20 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
                 size: proxy.dimensions(),
             })
             .unwrap();
-            let (_, baseline) = capture.sampled_prefix(&camera, None, spec.clone()).unwrap();
-            let graph = capture
-                .sampled_graph(&device.limits(), &camera, None, spec)
+            let baseline = capture.sampled_prefix(&camera, None, &spec).unwrap();
+            let (processed, _) = capture
+                .sampled_view(&device.limits(), &camera, None, spec)
                 .unwrap();
             assert!(
-                graph
-                    .processed
-                    .region_for(&baseline, graph.processed.domain().finite().unwrap())
+                processed
+                    .region_for(&baseline, processed.domain().finite().unwrap())
                     .unwrap()
                     .is_some()
             );
             for (image, expected) in [
                 (original, expected),
                 (baseline, expected),
-                (graph.processed, expected * 2.),
+                (processed, expected * 2.),
             ] {
                 let domain = image.domain();
                 let region = domain.finite().unwrap();

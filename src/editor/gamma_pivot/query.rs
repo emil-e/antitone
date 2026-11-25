@@ -126,7 +126,7 @@ fn camera_samples(
         .iter()
         .map(|point| source.pixel_samples(point[0], point[1]))
         .collect::<Result<Vec<_>, _>>()?;
-    let camera = crate::photographic::graph::PhotographGraph::camera_samples(
+    let camera = crate::photographic::graph::camera_samples(
         evaluation::source(Arc::new(Pixels { pixels: codes })),
         field,
         &positions,

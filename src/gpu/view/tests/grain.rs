@@ -123,7 +123,7 @@ fn configured_probe(
     let spec = SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None)
         .unwrap()
         .with_definition(
-            crate::photographic::graph::assembly::Assembly::film(
+            crate::photographic::graph::authoring::Assembly::film(
                 acquisition,
                 [config.frame_extent; 2],
                 seed,
@@ -173,7 +173,7 @@ fn configured_probe(
         .unwrap(),
     );
     let input = AuthoredPhotograph::from(grade).with_definition(
-        crate::photographic::graph::assembly::Assembly::emulation(
+        crate::photographic::graph::authoring::Assembly::emulation(
             settings,
             Default::default(),
             composition.crop().size,

@@ -32,7 +32,7 @@ fn neutral_definitions_and_live_values_do_not_change_with_processing_padding() {
                             radius,
                         )
                         .unwrap();
-                    crate::photographic::graph::assembly::Assembly::authored(
+                    crate::photographic::graph::authoring::Assembly::authored(
                         move |mut image, output| {
                             image = operation_0.compose(image)?;
                             if let Some(output) = output {

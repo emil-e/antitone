@@ -36,7 +36,7 @@ impl ImageSource<'_> {
     #[cfg(feature = "project")]
     pub fn from_recipe<'a>(
         scan: &'a Scan,
-        recipe: &crate::image_recipe::NeutralRecipe,
+        recipe: &crate::image_recipe::SourceRecipe,
     ) -> Result<ImageSource<'a>> {
         recipe.require_scan(scan)?;
         let (input, matrix) = recipe.processing_transform()?;

@@ -38,7 +38,7 @@ fn rotated_rasters_preserve_declared_pitch_and_finite_dependencies_through_paddi
                 .into_iter()
                 .flatten()
                 .reduce(f64::min);
-            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
                 image = mtf.compose(image)?;
                 if let Some(output) = output {
                     image = output.compose(image)?;
@@ -82,7 +82,7 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
             .unwrap(),
         ))
         .with_definition(
-            crate::photographic::graph::assembly::Assembly::emulation(
+            crate::photographic::graph::authoring::Assembly::emulation(
                 crate::photographic::stages::grain::GrainSettings {
                     enabled: true,
                     size: 0.1,

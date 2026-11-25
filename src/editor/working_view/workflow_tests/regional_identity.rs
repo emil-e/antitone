@@ -68,22 +68,24 @@ fn repaired_previews_keep_the_neutral_dependency_when_pans_exclude_other_repairs
             .set_test_pressure(pressure);
         let pixels = editor.source_context().unwrap();
         let scan = pixels.scan().unwrap();
-        let (graph, _) = crate::photographic::graph::PhotographGraph::preview(
+        let (_, plan) = crate::photographic::graph::composition::preview(
             &device.limits(),
             &scan,
             None,
             &recipe,
             left,
-            None,
         )
         .unwrap();
+        let codes = crate::gpu::source::camera_source(&scan).unwrap();
+        let neutral =
+            crate::photographic::graph::composition::original_neutral(codes, None, &recipe)
+                .unwrap();
+        let neutral =
+            crate::photographic::graph::composition::reconstruct_neutral(neutral, plan.output())
+                .unwrap();
         assert_ne!(
-            graph.neutral.identity(),
-            graph
-                .neutral
-                .request([0, 0, 96, 64].into())
-                .unwrap()
-                .identity(),
+            neutral.identity(),
+            neutral.request([0, 0, 96, 64].into()).unwrap().identity(),
             "this viewport must actually omit the other repair from its content description"
         );
         let services = editor.source_services.as_ref().unwrap().clone();

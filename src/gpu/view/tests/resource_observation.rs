@@ -90,7 +90,7 @@ fn acquisition_execution_resources() {
                 )
                 .unwrap(),
             ))
-            .with_definition(crate::photographic::graph::assembly::Assembly::emulation(settings,Default::default(),composition.crop().size,17).unwrap())
+            .with_definition(crate::photographic::graph::authoring::Assembly::emulation(settings,Default::default(),composition.crop().size,17).unwrap())
         };
         let input = make_input(0.);
         let spec = SourceRequest::new( frame, InputSettings::Digital, matrix, None)

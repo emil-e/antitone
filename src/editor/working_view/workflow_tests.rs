@@ -144,7 +144,7 @@ fn positive_spec(frame: FrameRaster, input: &source::Context, sigma: f64) -> Sou
             .into_iter()
             .flatten()
             .reduce(f64::min);
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             image = mtf.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;

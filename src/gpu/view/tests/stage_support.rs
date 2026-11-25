@@ -52,7 +52,7 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
                 .into_iter()
                 .flatten()
                 .reduce(f64::min);
-            crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+            crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
                 image = mtf.compose(image)?;
                 if let Some(output) = output {
                     image = output.compose(image)?;

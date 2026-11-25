@@ -1,14 +1,16 @@
 //! Authored original-cell arguments retained by fixtures for independent controls and comparisons.
 
 use super::*;
-use crate::photographic::graph::PhotographGraph;
+use crate::photographic::graph::authoring::PhotographTaps;
 use crate::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
     geometry::Composition,
     gpu::flat::GpuFlatField,
-    photographic::graph::assembly::Assembly,
-    photographic::stages::{grading::Grading, interpretation::InputTransform},
+    photographic::{
+        graph::authoring::Assembly,
+        stages::{grading::Grading, interpretation::InputTransform},
+    },
     processing::{InputSettings, RollSettings},
     rendering::OutputTarget,
     scan::Scan,
@@ -57,7 +59,7 @@ impl OriginalControls<'_> {
         {
             return Err(Error::Gpu("fixture source/photograph mismatch".into()));
         }
-        let photograph = PhotographGraph::authored_original(
+        let photograph = PhotographTaps::authored_original(
             &device.limits(),
             crate::gpu::source::camera_source(self.scan)?,
             self.field,

@@ -29,7 +29,7 @@ use crate::gpu::execution::test_support::OutputReference;
 #[cfg(feature = "ocio-reference")]
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::test_inputs::AuthoredPhotograph;
-use crate::photographic::graph::assembly::Assembly;
+use crate::photographic::graph::authoring::Assembly;
 use crate::photographic::graph::test_effects::NeighbourEffect;
 use crate::processing::InputSettings;
 use crate::rendering::OutputTarget;
@@ -42,7 +42,7 @@ fn recipe() -> Assembly {
             radius: 0.8,
             gain: 1.4,
         };
-        crate::photographic::graph::assembly::Assembly::authored(move |mut image, output| {
+        crate::photographic::graph::authoring::Assembly::authored(move |mut image, output| {
             image = neighbour.compose(image)?;
             if let Some(output) = output {
                 image = output.compose(image)?;

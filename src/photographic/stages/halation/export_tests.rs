@@ -143,13 +143,14 @@ fn reopened_tiff_and_ap0_exr_include_independent_halation_after_the_full_grade()
                     format,
                     luts: look.into(),
                     calculation: Some(std::sync::Arc::new({
-                        let definition = crate::photographic::graph::assembly::Assembly::emulation(
-                            Default::default(),
-                            settings,
-                            composition.crop().size,
-                            17,
-                        )
-                        .unwrap();
+                        let definition =
+                            crate::photographic::graph::authoring::Assembly::emulation(
+                                Default::default(),
+                                settings,
+                                composition.crop().size,
+                                17,
+                            )
+                            .unwrap();
                         move |input| definition.compose(input)
                     })),
                 },

@@ -67,7 +67,7 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
             .unwrap(),
         ))
         .with_definition(
-            crate::photographic::graph::assembly::Assembly::emulation(
+            crate::photographic::graph::authoring::Assembly::emulation(
                 crate::photographic::stages::grain::GrainPreset::ThirtyFiveMm.settings(),
                 crate::photographic::stages::halation::HalationSettings {
                     enabled: true,

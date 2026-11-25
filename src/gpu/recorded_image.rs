@@ -3,7 +3,7 @@
 use super::{evaluation, raster::Raster};
 use crate::Error;
 #[cfg(test)]
-use crate::photographic::graph::assembly::Assembly;
+use crate::photographic::graph::authoring::Assembly;
 
 pub(crate) struct Prepared {
     execution: Option<evaluation::Recorded>,

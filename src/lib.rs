@@ -1,3 +1,6 @@
+// Debug test codegen can exhaust the default budget tracing wgpu's recursive resource types.
+#![cfg_attr(test, recursion_limit = "256")]
+
 #[cfg(test)]
 extern crate self as antitone;
 

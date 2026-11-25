@@ -26,7 +26,7 @@ fn capture(
         .unwrap(),
     ))
     .with_definition(
-        crate::photographic::graph::assembly::Assembly::emulation(
+        crate::photographic::graph::authoring::Assembly::emulation(
             film,
             Default::default(),
             frame_size,

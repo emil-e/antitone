@@ -10,7 +10,9 @@ use crate::render_fixture::RenderFixture;
 #[test]
 fn proxy_products_share_immutable_input_without_retaining_each_other_or_the_proxy() {
     use crate::gpu::view::{RenderedView, ViewKernels};
-    use crate::photographic::graph::{PhotographGraph, request::PhotographRequest};
+    use crate::photographic::graph::{
+        authoring::shares_resident_camera, request::PhotographRequest,
+    };
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
     let size = [32, 16];
@@ -57,7 +59,7 @@ fn proxy_products_share_immutable_input_without_retaining_each_other_or_the_prox
         OutputTarget::DisplayP3,
         ProcessingParameters::source_inspection(1.).unwrap(),
     );
-    assert!(PhotographGraph::shares_resident_camera(
+    assert!(shares_resident_camera(
         &srgb.product().unwrap().definition,
         &p3.product().unwrap().definition
     ));

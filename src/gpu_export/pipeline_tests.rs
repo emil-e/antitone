@@ -131,7 +131,7 @@ fn supplied_pipeline_uses_original_neighbours_before_rotated_output_reconstructi
                         gain: 1.,
                     };
                     let square = Square;
-                    crate::photographic::graph::assembly::Assembly::authored(
+                    crate::photographic::graph::authoring::Assembly::authored(
                         move |mut image, output| {
                             image = neighbour.compose(image)?;
                             image = square.compose(image)?;

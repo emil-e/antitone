@@ -44,7 +44,7 @@ fn independent_halation_acquires_real_neighbours_beyond_a_rotated_physical_view(
     )
     .unwrap()
     .with_definition(
-        crate::photographic::graph::assembly::Assembly::emulation(
+        crate::photographic::graph::authoring::Assembly::emulation(
             Default::default(),
             halo,
             composition.crop().size,

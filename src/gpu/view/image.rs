@@ -173,9 +173,7 @@ impl ViewImage {
     pub(crate) fn byte_len(&self) -> u64 {
         let mut allocations = e::Allocations::default();
         allocations.buffer(&self.pixels);
-        for camera in
-            crate::photographic::graph::PhotographGraph::resident_camera_buffers(&self.definition)
-        {
+        for camera in crate::photographic::graph::resident_camera_buffers(&self.definition) {
             allocations.buffer(&camera);
         }
         if let Some(commands) = self.recording().as_ref() {

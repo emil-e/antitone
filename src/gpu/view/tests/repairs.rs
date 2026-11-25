@@ -492,15 +492,16 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
             let acquired = &first.product.as_ref().unwrap().fixture_input();
             let mut captured = acquired.spec.processing_fixture();
             captured.replacements = patches.clone();
-            let (definition, _) = crate::photographic::graph::PhotographGraph::preview_with_input(
-                &device.limits(),
-                crate::gpu::source::camera_source(&scan).unwrap(),
-                None,
-                &captured,
-                acquired.spec.frame(),
-                None,
-            )
-            .unwrap();
+            let (definition, _) =
+                crate::photographic::graph::authoring::PhotographTaps::preview_with_input(
+                    &device.limits(),
+                    crate::gpu::source::camera_source(&scan).unwrap(),
+                    None,
+                    &captured,
+                    acquired.spec.frame(),
+                    None,
+                )
+                .unwrap();
             assert!(
                 acquired.definition.same_definition(&definition.neutral),
                 "sparse production supplies the native value named by the complete graph"

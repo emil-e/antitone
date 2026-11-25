@@ -83,27 +83,28 @@ fn native_output_resources() {
                 let plan = format.plan();
                 let encoding = super::area::sample_encoding(plan);
                 let layout = block_layout(composition, plan);
-                let photograph = crate::photographic::graph::PhotographGraph::authored_original(
-                    &device.limits(),
-                    crate::gpu::source::camera_source(&scan)?,
-                    None,
-                    crate::photographic::stages::interpretation::InputTransform::for_scan(
-                        &scan,
-                        crate::processing::InputSettings::Digital,
-                    )?,
-                    crate::photographic::stages::grading::Grading::new(
+                let photograph =
+                    crate::photographic::graph::authoring::PhotographTaps::authored_original(
                         &device.limits(),
+                        crate::gpu::source::camera_source(&scan)?,
+                        None,
+                        crate::photographic::stages::interpretation::InputTransform::for_scan(
+                            &scan,
+                            crate::processing::InputSettings::Digital,
+                        )?,
+                        crate::photographic::stages::grading::Grading::new(
+                            &device.limits(),
+                            Default::default(),
+                            grade.clone(),
+                            scan.area,
+                        )?,
                         Default::default(),
-                        grade.clone(),
-                        scan.area,
-                    )?,
-                    Default::default(),
-                    &crate::photographic::graph::assembly::Assembly::film(
-                        film,
-                        composition.size(),
-                        (1 << 60) + 17,
-                    )?,
-                )?;
+                        &crate::photographic::graph::authoring::Assembly::film(
+                            film,
+                            composition.size(),
+                            (1 << 60) + 17,
+                        )?,
+                    )?;
                 let definition = match plan.target() {
                     RenderTarget::Display(target) => {
                         renderer.drt.get(target).apply(photograph.processed)?
@@ -145,7 +146,7 @@ fn native_output_resources() {
                     composition,
                     format,
                     calculation: Some(std::sync::Arc::new({
-                        let definition = crate::photographic::graph::assembly::Assembly::film(
+                        let definition = crate::photographic::graph::authoring::Assembly::film(
                             film,
                             composition.crop().size,
                             (1 << 60) + 17,

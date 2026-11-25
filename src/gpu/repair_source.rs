@@ -28,12 +28,12 @@ impl<'a> Source<'a> {
         recipe: &crate::image_recipe::ImageRecipe,
     ) -> Result<Self, Error> {
         recipe.neutral.require_scan(scan)?;
-        let graph = crate::photographic::graph::RecipeGraph::originals(
+        let unrepaired = crate::photographic::graph::composition::original_unrepaired(
             crate::gpu::source::camera_source(scan)?,
             field,
             recipe,
         )?;
-        Self::from_image(context, gpu, graph.unrepaired()?)
+        Self::from_image(context, gpu, unrepaired)
     }
 
     pub(crate) fn from_image(

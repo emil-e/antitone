@@ -24,7 +24,7 @@ fn resident_cells_keep_native_flags_and_reject_a_same_sized_but_relabelled_sourc
     )
     .unwrap()
     .with_definition(
-        crate::photographic::graph::assembly::Assembly::emulation(
+        crate::photographic::graph::authoring::Assembly::emulation(
             GrainPreset::ThirtyFiveMm.settings(),
             Default::default(),
             [2000; 2],

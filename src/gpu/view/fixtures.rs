@@ -148,7 +148,7 @@ impl ViewImage {
         let device = context.device().clone();
         let capture = PhotographRequest::Fixture(input.clone());
         let spec = Self::proxy_request(&source, &capture, spec)?;
-        let (spec, root) = capture.sampled_prefix(&source, input.field.clone(), spec)?;
+        let root = capture.sampled_prefix(&source, input.field.clone(), &spec)?;
         let region = spec.input_region()?;
         let evaluation = context.request(
             root.clone(),
@@ -387,9 +387,11 @@ pub(super) fn prefix_definitions(
     specs
         .iter()
         .map(|spec| {
-            PhotographRequest::Fixture(spec.processing_fixture())
-                .source_graphs(scan, field.clone(), std::slice::from_ref(spec))
-                .map(|mut roots| roots.remove(0))
+            PhotographRequest::Fixture(spec.processing_fixture()).source_view(
+                scan,
+                field.clone(),
+                spec,
+            )
         })
         .collect()
 }

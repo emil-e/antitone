@@ -10,7 +10,7 @@ pub(crate) mod operation;
 mod transform;
 #[cfg(all(test, feature = "editor"))]
 pub(crate) use transform::has_filtered_inspection;
+#[cfg(feature = "editor")]
+pub(crate) use transform::inspect_filtered;
 #[cfg(feature = "gpu")]
 pub use transform::{InputTransform, InspectionView};
-#[cfg(feature = "editor")]
-pub(crate) use transform::{SourceInterpretation, inspect_filtered};
