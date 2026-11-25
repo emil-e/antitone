@@ -1,12 +1,65 @@
-use super::{Action, Entry, State, WINDOWS_MENUS};
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
+
 use muda::accelerator::{Accelerator, Code, Modifiers};
 use muda::{CheckMenuItem, Menu, MenuId, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
+use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::UI::{
+    Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL},
+    WindowsAndMessaging::{MSG, TranslateAcceleratorW, WM_KEYDOWN, WM_SYSKEYDOWN},
+};
+use winit::event_loop::EventLoopBuilder;
+use winit::platform::windows::EventLoopBuilderExtWindows;
+
+use super::{Action, Entry, State, WINDOWS_MENUS};
 
 /// Windows draws the menu bar inside the window, as its photographs editors do.
 pub(crate) const SUPPORTED: bool = true;
 
-pub(crate) struct NativeMenu {
+pub(crate) struct MenuAccelerators(Rc<RefCell<Weak<AttachedMenu>>>);
+
+impl MenuAccelerators {
+    pub(crate) fn install<T>(builder: &mut EventLoopBuilder<T>) -> Self {
+        let target = Rc::new(RefCell::new(Weak::<AttachedMenu>::new()));
+        let lookup = target.clone();
+        builder.with_msg_hook(move |message| {
+            // Winit supplies a valid MSG on its window thread for this call.
+            let message = unsafe { &*message.cast::<MSG>() };
+            let target = lookup.borrow().upgrade();
+            target.is_some_and(|menu| menu.translate(message))
+        });
+        Self(target)
+    }
+
+    pub(crate) fn attach(&self, menu: &NativeMenu) {
+        self.0.replace(Rc::downgrade(&menu.attached));
+    }
+}
+
+struct AttachedMenu {
     root: Menu,
+    hwnd: HWND,
+}
+
+impl AttachedMenu {
+    fn translate(&self, message: &MSG) -> bool {
+        if message.hwnd != self.hwnd || !matches!(message.message, WM_KEYDOWN | WM_SYSKEYDOWN) {
+            return false;
+        }
+        // Leave unmodified shortcuts to the editor's focus and popup rules. Windows
+        // can consume a keystroke even when its menu action is disabled.
+        if unsafe { GetKeyState(VK_CONTROL.into()) } >= 0 {
+            return false;
+        }
+
+        // muda owns the table. Translating sends WM_COMMAND to the menu subclass,
+        // which posts the same event as a click; winit skips dispatching the key.
+        unsafe { TranslateAcceleratorW(self.hwnd, self.root.haccel() as _, message) != 0 }
+    }
+}
+
+pub(crate) struct NativeMenu {
+    attached: Rc<AttachedMenu>,
     items: Vec<(Action, MenuItemKind)>,
     state: State,
 }
@@ -18,23 +71,26 @@ impl NativeMenu {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
+        let handle = window.window_handle()?;
+        let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+            return Err("the Windows menu needs a Win32 window handle".into());
+        };
         let mut native = Self {
-            root: Menu::new(),
+            attached: Rc::new(AttachedMenu {
+                root: Menu::new(),
+                hwnd: handle.hwnd.get() as HWND,
+            }),
             items: Vec::new(),
             state: state.clone(),
         };
         for &(title, entries) in WINDOWS_MENUS {
             let submenu = Submenu::new(title, true);
             native.populate(&submenu, entries, state)?;
-            native.root.append(&submenu)?;
+            native.attached.root.append(&submenu)?;
         }
-        let handle = window.window_handle()?;
-        let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-            return Err("the Windows menu needs a Win32 window handle".into());
-        };
         // The host initializes the menu on the window's own thread, and the tree is complete
         // before attachment: growing it afterwards would leave the attached menu stale.
-        unsafe { native.root.init_for_hwnd(handle.hwnd.get()) }?;
+        unsafe { native.attached.root.init_for_hwnd(handle.hwnd.get()) }?;
         Ok(native)
     }
 

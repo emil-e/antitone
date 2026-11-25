@@ -65,7 +65,10 @@ pub fn run<A: App>(
         UiContext<'scope, A>,
     ) -> Result<A>,
 ) -> Result<u64> {
-    let event_loop = EventLoop::<HostEvent>::with_user_event().build()?;
+    let mut builder = EventLoop::<HostEvent>::with_user_event();
+    #[cfg(windows)]
+    let menu_accelerators = menu::native::MenuAccelerators::install(&mut builder);
+    let event_loop = builder.build()?;
     let context = egui::Context::default();
     context.set_embed_viewports(true);
     if super::MENU_STRIP_IS_LIGHT {
@@ -103,6 +106,8 @@ pub fn run<A: App>(
         proxy: quit_proxy,
         application,
         app: &app,
+        #[cfg(windows)]
+        menu_accelerators,
         state: None,
         finishing: None,
         next_repaint: None,
@@ -154,6 +159,8 @@ struct Host<'scope, A, F> {
     proxy: EventLoopProxy<HostEvent>,
     application: Application<'scope>,
     app: &'scope RefCell<Option<A>>,
+    #[cfg(windows)]
+    menu_accelerators: menu::native::MenuAccelerators,
     state: Option<State<'scope, A>>,
     finishing: Option<QuitGuard>,
     next_repaint: Option<Instant>,
@@ -253,6 +260,10 @@ impl<
                     .filter(|_| menu::native::SUPPORTED)
                     .map(|state| menu::native::NativeMenu::new(&state, &window))
                     .transpose()?;
+                #[cfg(windows)]
+                if let Some(menus) = &menus {
+                    self.menu_accelerators.attach(menus);
+                }
                 if menus.is_some() {
                     access.with_mut(App::native_menu_installed);
                 }
@@ -278,12 +289,12 @@ impl<
             egui_winit::update_viewport_info(&mut viewport, &self.context, &window, true);
             window.request_redraw();
             Ok(State {
+                menus,
                 gpu,
                 app: access,
                 input,
                 viewport,
                 fullscreen: PhotoFullscreen::default(),
-                menus,
                 termination,
             })
         };
@@ -421,12 +432,13 @@ impl<
 }
 
 struct State<'scope, A> {
+    // Retire native menu message handling before releasing the window.
+    menus: Option<menu::native::NativeMenu>,
     gpu: Gpu,
     app: UiContext<'scope, A>,
     input: egui_winit::State,
     viewport: egui::ViewportInfo,
     fullscreen: PhotoFullscreen,
-    menus: Option<menu::native::NativeMenu>,
     termination: Option<QuitGuard>,
 }
 
