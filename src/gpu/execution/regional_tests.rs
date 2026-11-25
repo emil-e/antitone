@@ -300,7 +300,7 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
     );
     let input = AuthoredPhotograph::from(gpu).with_definition(
         crate::photographic::graph::assembly::Assembly::emulation(
-            crate::grain::GrainSettings {
+            crate::photographic::stages::grain::GrainSettings {
                 enabled: true,
                 size: 0.1,
                 image_sigma: 0.1,

@@ -42,7 +42,7 @@ fn original_units_cover_demand_once_and_fetch_neighbours_beyond_reconstruction_e
     let source: SourceRegion = [100, 80, 40, 30].into();
     let output: SourceRegion = [108, 88, 24, 16].into();
     let pipeline = {
-        let mtf = crate::image_mtf::ImageMtfParameters { sigma: 1. };
+        let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 1. };
         let pitch = [Some(mtf.sigma / 0.6)]
             .into_iter()
             .flatten()
@@ -96,7 +96,7 @@ fn original_units_cover_demand_once_and_fetch_neighbours_beyond_reconstruction_e
 fn original_batch_captures_stage_values_and_rejects_nonprogressing_or_exterior_demands() {
     let source: SourceRegion = [100, 80, 40, 30].into();
     let mut pipeline = {
-        let mtf = crate::image_mtf::ImageMtfParameters { sigma: 1. };
+        let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 1. };
         let pitch = [Some(mtf.sigma / 0.6)]
             .into_iter()
             .flatten()

@@ -4,7 +4,7 @@ use super::*;
 fn a_tighter_crop_reduces_the_source_gaussian_instead_of_magnifying_uncropped_blur() {
     pollster::block_on(async {
         let (device, queue, _, _) = context().await;
-        let settings = crate::grain::GrainSettings {
+        let settings = crate::photographic::stages::grain::GrainSettings {
             enabled: true,
             amount: 0.,
             size: 0.040,

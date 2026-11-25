@@ -5,15 +5,15 @@ use crate::geometry::{Composition, FramePoint};
 
 #[cfg(feature = "gpu")]
 fn pipeline() -> Assembly {
-    use crate::grain::GrainParameters;
+    use crate::photographic::stages::grain::GrainParameters;
     {
-        let mtf = crate::image_mtf::ImageMtfParameters { sigma: 2. };
+        let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 2. };
         let grain = GrainParameters {
             grain_size: 2.,
             amplitude: 0.055,
             colour: 0.5,
         };
-        let next_mtf = crate::image_mtf::ImageMtfParameters { sigma: 7.5 };
+        let next_mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 7.5 };
         let pitch = [Some(mtf.sigma / 0.6), Some(next_mtf.sigma / 0.6)]
             .into_iter()
             .flatten()

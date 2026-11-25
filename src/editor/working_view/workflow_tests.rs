@@ -139,7 +139,7 @@ fn positive_spec(frame: FrameRaster, input: &source::Context, sigma: f64) -> Sou
     )
     .unwrap()
     .with_definition({
-        let mtf = crate::image_mtf::ImageMtfParameters { sigma };
+        let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma };
         let pitch = [Some(mtf.sigma / 0.6)]
             .into_iter()
             .flatten()

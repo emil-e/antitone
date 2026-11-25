@@ -276,8 +276,8 @@ impl Source {
 pub struct Output {
     pub contract: OutputContract,
     pub display_target: crate::color::OutputTarget,
-    pub grain: crate::grain::GrainSettings,
-    pub halation: crate::halation::HalationSettings,
+    pub grain: crate::photographic::stages::grain::GrainSettings,
+    pub halation: crate::photographic::stages::halation::HalationSettings,
     pub lut: Option<std::sync::Arc<crate::looks::LookAsset>>,
     pub film_and_paper: Option<std::sync::Arc<crate::looks::LookAsset>>,
 }

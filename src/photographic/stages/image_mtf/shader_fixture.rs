@@ -1,21 +1,17 @@
-//! Gaussian image-response stage. Its input is an AP1 raster, not a photographic recipe.
-use super::raster::Raster;
+//! Standalone shader fixture for image-response numerical checks.
 #[cfg(all(test, feature = "editor"))]
 use crate::Error;
+use crate::gpu::raster::Raster;
 
 pub(crate) fn shader() -> String {
-    [
-        sample_shader(),
-        include_str!("image_mtf/kernels.wgsl").to_owned(),
-    ]
-    .join("\n")
+    [sample_shader(), include_str!("kernels.wgsl").to_owned()].join("\n")
 }
 
 pub(crate) fn sample_shader() -> String {
     [
-        include_str!("raster.wgsl"),
-        include_str!("image_mtf/bindings.wgsl"),
-        include_str!("image_mtf/sampling.wgsl"),
+        include_str!("../../../gpu/raster.wgsl"),
+        include_str!("bindings.wgsl"),
+        include_str!("sampling.wgsl"),
     ]
     .join("\n")
 }
@@ -31,7 +27,7 @@ impl Parameters {
     pub fn new(raster: Raster, sigma: f64) -> Self {
         let pitch = raster.pitch().map(|value| value.max(1e-6));
         // Prepare the finite dependency once; shader arithmetic must not enlarge it.
-        let support = crate::image_mtf::ImageMtfParameters { sigma }.support(pitch.map(f64::from));
+        let support = super::ImageMtfParameters { sigma }.support(pitch.map(f64::from));
         Self {
             raster,
             raster_sigma: [sigma as f32 / pitch[0], sigma as f32 / pitch[1], 0., 0.],

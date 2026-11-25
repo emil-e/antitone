@@ -12,8 +12,10 @@ use crate::geometry::PhotoOrientation;
 use crate::geometry::RollOrientation;
 #[cfg(test)]
 use crate::gpu_export::authored::Format as OutputFormat;
-use crate::grain::GrainPreset;
-use crate::grain::GrainSettings;
+use crate::photographic::stages::{
+    grain::{self, GrainPreset, GrainSettings},
+    halation,
+};
 use crate::platform::host;
 use crate::processing::Calibration;
 use crate::processing::InputSettings;
@@ -555,7 +557,7 @@ impl Editor {
                         enabled: output.grain.enabled,
                         ..preset.settings()
                     };
-                    output.halation = crate::halation::HalationSettings {
+                    output.halation = halation::HalationSettings {
                         enabled: output.halation.enabled,
                         ..preset.halation()
                     };
@@ -566,7 +568,7 @@ impl Editor {
 
     fn halation_controls(&mut self, ui: &mut egui::Ui) {
         let mut settings = self.document.project_snapshot().output.halation;
-        let changed = settings != crate::halation::HalationSettings::default();
+        let changed = settings != halation::HalationSettings::default();
         let summary = if settings.active() {
             format!("{:.3}%", settings.size)
         } else {
@@ -591,9 +593,9 @@ impl Editor {
                 let response = ui::ParameterRow::new(
                     "halation-strength",
                     "Strength",
-                    0.0..=crate::halation::MAX_STRENGTH,
+                    0.0..=halation::MAX_STRENGTH,
                 )
-                .default_value(crate::halation::DEFAULT_STRENGTH)
+                .default_value(halation::DEFAULT_STRENGTH)
                 .help("Redistribute positive light into a warm halo; 0 leaves the image unchanged.")
                 .show(ui, &mut settings.strength)
                 .edit;
@@ -603,10 +605,10 @@ impl Editor {
                 let response = ui::ParameterRow::new(
                     "halation-size",
                     "Core size",
-                    crate::halation::MIN_SIZE..=crate::halation::MAX_SIZE,
+                    halation::MIN_SIZE..=halation::MAX_SIZE,
                 )
-                .default_value(crate::halation::DEFAULT_SIZE)
-                .slider_range(crate::halation::MIN_SIZE..=0.21)
+                .default_value(halation::DEFAULT_SIZE)
+                .slider_range(halation::MIN_SIZE..=0.21)
                 .step(0.001)
                 .decimals(3)
                 .unit("%")
@@ -652,36 +654,35 @@ impl Editor {
                 let response = ui::ParameterRow::new(
                     "grain-amount",
                     "Amount",
-                    crate::grain::MIN_AMOUNT..=crate::grain::MAX_AMOUNT,
+                    grain::MIN_AMOUNT..=grain::MAX_AMOUNT,
                 )
-                .default_value(crate::grain::DEFAULT_AMOUNT)
+                .default_value(grain::DEFAULT_AMOUNT)
                 .step(0.001)
                 .decimals(3)
                 .help("Grain contrast before pixel averaging; 0 removes grain.")
                 .show(ui, &mut settings.amount)
                 .edit;
                 self.output_control(response, |output| output.grain.amount = settings.amount);
-                let response = ui::ParameterRow::new(
-                    "grain-size",
-                    "Size",
-                    crate::grain::MIN_SIZE..=crate::grain::MAX_SIZE,
-                )
-                .default_value(crate::grain::DEFAULT_SIZE)
-                .step(0.001)
-                .decimals(3)
-                .unit("%")
-                .help("Scale grain and image softness together in fixed crop-relative units.")
-                .show(ui, &mut settings.size)
-                .edit;
+                let response =
+                    ui::ParameterRow::new("grain-size", "Size", grain::MIN_SIZE..=grain::MAX_SIZE)
+                        .default_value(grain::DEFAULT_SIZE)
+                        .step(0.001)
+                        .decimals(3)
+                        .unit("%")
+                        .help(
+                            "Scale grain and image softness together in fixed crop-relative units.",
+                        )
+                        .show(ui, &mut settings.size)
+                        .edit;
                 self.output_control(response, |output| {
                     output.grain = output.grain.resized(settings.size)
                 });
                 let response = ui::ParameterRow::new(
                     "grain-colour",
                     "Colour",
-                    crate::grain::MIN_COLOUR..=crate::grain::MAX_COLOUR,
+                    grain::MIN_COLOUR..=grain::MAX_COLOUR,
                 )
-                .default_value(crate::grain::DEFAULT_COLOUR)
+                .default_value(grain::DEFAULT_COLOUR)
                 .help(
                     "0 is monochrome; 0.5 matches the reference colour grain; 1 increases chroma.",
                 )

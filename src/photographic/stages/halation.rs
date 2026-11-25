@@ -1,5 +1,7 @@
 //! Constant-field-preserving, threshold-free redistribution of positive AP1 light.
 use crate::{Error, processing_support::Support};
+#[cfg(feature = "gpu")]
+mod operation;
 mod settings;
 pub use settings::*;
 

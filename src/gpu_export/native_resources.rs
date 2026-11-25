@@ -53,7 +53,7 @@ fn native_output_resources() {
         ),
     ])
     .unwrap();
-    let film = crate::grain::GrainSettings {
+    let film = crate::photographic::stages::grain::GrainSettings {
         enabled: true,
         size: 0.1,
         image_sigma: 0.1,

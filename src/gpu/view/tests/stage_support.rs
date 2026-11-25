@@ -47,7 +47,7 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
         );
         // Resolve sigma directly to isolate boundary handling from crop-relative recipe assembly.
         let input = AuthoredPhotograph::from(grade).with_definition({
-            let mtf = crate::image_mtf::ImageMtfParameters { sigma: 2. };
+            let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 2. };
             let pitch = [Some(mtf.sigma / 0.6)]
                 .into_iter()
                 .flatten()

@@ -3,7 +3,7 @@ use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::photographic::graph::view_source::SourceRequest;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
-    halation::{HalationSettings, reference},
+    photographic::stages::halation::{HalationSettings, reference},
 };
 use wgpu::util::DeviceExt;
 

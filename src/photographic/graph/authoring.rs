@@ -48,7 +48,7 @@ impl Assembly {
     }
 
     pub(crate) fn film(
-        settings: crate::grain::GrainSettings,
+        settings: crate::photographic::stages::grain::GrainSettings,
         frame: [u32; 2],
         seed: u64,
     ) -> Result<Self, Error> {
@@ -56,8 +56,8 @@ impl Assembly {
     }
 
     pub(crate) fn emulation(
-        film: crate::grain::GrainSettings,
-        halation: crate::halation::HalationSettings,
+        film: crate::photographic::stages::grain::GrainSettings,
+        halation: crate::photographic::stages::halation::HalationSettings,
         frame: [u32; 2],
         seed: u64,
     ) -> Result<Self, Error> {
@@ -100,12 +100,6 @@ impl Assembly {
             && self.halation == other.halation
             && (self.grain.is_none_or(|grain| grain.amplitude <= 0.) || self.seed == other.seed)
             && same_author
-    }
-}
-
-impl crate::image_mtf::ImageMtfParameters {
-    pub(crate) fn compose(&self, input: Value) -> Result<Value, Error> {
-        crate::gpu::gaussian::blur(input, self.sigma)
     }
 }
 

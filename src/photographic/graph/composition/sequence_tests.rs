@@ -430,8 +430,8 @@ fn recipe_operations_preserve_original_order_and_explicit_view_reconstruction_be
         bounds: Some(CellRegion::new([0; 2], [80, 64])),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
     });
-    let film = crate::grain::GrainPreset::ThirtyFiveMm.settings();
-    let halo = crate::halation::HalationSettings {
+    let film = crate::photographic::stages::grain::GrainPreset::ThirtyFiveMm.settings();
+    let halo = crate::photographic::stages::halation::HalationSettings {
         enabled: true,
         ..Default::default()
     };

@@ -703,7 +703,7 @@ fn grain_controls_are_saved_dirty_and_undoable_rendering_state() {
     let before = editor.history_snapshot();
     let mut edit = editor.edit_project("Rendering settings").unwrap();
     let mut values = edit.values();
-    values.output.grain = crate::grain::GrainSettings {
+    values.output.grain = crate::photographic::stages::grain::GrainSettings {
         enabled: true,
         size: 0.025,
         image_sigma: 0.025,
@@ -734,7 +734,7 @@ fn grain_controls_are_saved_dirty_and_undoable_rendering_state() {
     editor = accept_history(editor, Direction::Redo);
     assert_eq!(
         editor.document.project.output.grain,
-        crate::grain::GrainSettings {
+        crate::photographic::stages::grain::GrainSettings {
             enabled: true,
             size: 0.025,
             image_sigma: 0.025,

@@ -1,5 +1,5 @@
 use super::*;
-use crate::grain::{GrainPreset, GrainSettings};
+use crate::photographic::stages::grain::{GrainPreset, GrainSettings};
 
 fn processed(
     device: &wgpu::Device,
@@ -248,7 +248,7 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
 
 #[test]
 fn planned_unequal_gaussians_with_point_grain_match_independent_discrete_convolution() {
-    use crate::grain::GrainParameters;
+    use crate::photographic::stages::grain::GrainParameters;
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let composition = Composition::with_crop(
         [100, 80, 6000, 4000].into(),
@@ -262,14 +262,14 @@ fn planned_unequal_gaussians_with_point_grain_match_independent_discrete_convolu
     )
     .unwrap();
     let pipeline = {
-        let mtf = crate::image_mtf::ImageMtfParameters { sigma: 1.5 };
+        let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 1.5 };
         let grain = GrainParameters {
             grain_size: 2.,
             amplitude: 0.,
             colour: 0.5,
         };
         let seed = (1 << 60) + 17;
-        let next_mtf = crate::image_mtf::ImageMtfParameters { sigma: 2.25 };
+        let next_mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 2.25 };
         let pitch = [Some(mtf.sigma / 0.6), Some(next_mtf.sigma / 0.6)]
             .into_iter()
             .flatten()

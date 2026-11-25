@@ -102,7 +102,7 @@ fn repaired_spatial_composition_matches_host_and_image_delivery() {
     .unwrap();
     input.replacements = crate::gpu::repairs::fixtures::replacements(&[evaluated]).unwrap();
     let stages = {
-        let mtf = crate::image_mtf::ImageMtfParameters { sigma: 1. };
+        let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 1. };
         let pitch = [Some(mtf.sigma / 0.6)]
             .into_iter()
             .flatten()

@@ -10,8 +10,8 @@ pub(crate) struct Assembly {
     pub grading: Option<Grading>,
     pub interpretation: Interpretation,
     pub repairs: Vec<crate::dust_repair::Repair>,
-    pub grain: Option<crate::grain::GrainResponse>,
-    pub halation: Option<crate::halation::HalationParameters>,
+    pub grain: Option<crate::photographic::stages::grain::GrainResponse>,
+    pub halation: Option<crate::photographic::stages::halation::HalationParameters>,
     pub seed: u64,
     #[cfg(test)]
     pub(crate) author: Option<Arc<super::authoring::Author>>,

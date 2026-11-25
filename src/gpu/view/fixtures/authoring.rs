@@ -170,7 +170,7 @@ fn native_view_regions_follow_the_graphs_neighbourhood_contracts() {
         let mut input = input(&limits, 2.);
         if sigma > 0. {
             input = input.with_definition({
-                let mtf = crate::image_mtf::ImageMtfParameters { sigma };
+                let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma };
                 let pitch = [Some(mtf.sigma / 0.6)]
                     .into_iter()
                     .flatten()

@@ -1,12 +1,12 @@
 use super::*;
 use crate::{
     geometry::{Composition, FramePoint},
-    grain::GrainParameters,
+    photographic::stages::grain::GrainParameters,
 };
 
 fn stages(sigma: f64, amount: f64, seed: u64) -> Assembly {
     {
-        let mtf = crate::image_mtf::ImageMtfParameters { sigma };
+        let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma };
         let grain = GrainParameters {
             grain_size: 2.,
             amplitude: amount,

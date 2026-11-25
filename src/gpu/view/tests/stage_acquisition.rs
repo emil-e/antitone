@@ -4,7 +4,7 @@ use crate::photographic::graph::view_source::SourceRequest;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
-    grain::{GrainPreset, GrainSettings},
+    photographic::stages::grain::{GrainPreset, GrainSettings},
     processing::InputPipeline,
 };
 

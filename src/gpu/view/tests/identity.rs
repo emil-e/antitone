@@ -26,7 +26,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
     let small = base
         .clone()
         .with_definition({
-            let mtf = crate::image_mtf::ImageMtfParameters { sigma: 2. };
+            let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 2. };
             let pitch = [Some(mtf.sigma / 0.6)]
                 .into_iter()
                 .flatten()
@@ -44,7 +44,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
     let large = base
         .clone()
         .with_definition({
-            let mtf = crate::image_mtf::ImageMtfParameters { sigma: 3. };
+            let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 3. };
             let pitch = [Some(mtf.sigma / 0.6)]
                 .into_iter()
                 .flatten()
@@ -66,7 +66,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
     let finer = base
         .clone()
         .with_definition({
-            let mtf = crate::image_mtf::ImageMtfParameters { sigma: 0.6 };
+            let mtf = crate::photographic::stages::image_mtf::ImageMtfParameters { sigma: 0.6 };
             let pitch = [Some(mtf.sigma / 0.6)]
                 .into_iter()
                 .flatten()

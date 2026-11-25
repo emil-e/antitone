@@ -382,7 +382,7 @@ fn resident_camera_execution_resources() {
             .unwrap(),
         );
         let input = AuthoredPhotograph::from(pipeline.clone())
-            .with_definition(crate::photographic::graph::assembly::Assembly::emulation(crate::grain::GrainPreset::ThirtyFiveMm.settings(),Default::default(),[side; 2],17).unwrap());
+            .with_definition(crate::photographic::graph::assembly::Assembly::emulation(crate::photographic::stages::grain::GrainPreset::ThirtyFiveMm.settings(),Default::default(),[side; 2],17).unwrap());
         let plan = crate::gpu::execution::raster::resident_plan(&source, &input)
             .unwrap()
             .unwrap();

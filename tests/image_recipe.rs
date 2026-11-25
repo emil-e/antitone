@@ -157,7 +157,7 @@ fn recipe_capture_uses_the_requested_photo_and_deleted_photos_leave_only_correct
 fn halation_is_captured_without_repair_invalidation_or_grain_enablement() {
     let (mut project, id) = project();
     let clean = project.image_recipe(id).unwrap();
-    project.output.halation = antitone::halation::HalationSettings {
+    project.output.halation = antitone::photographic::stages::halation::HalationSettings {
         enabled: true,
         size: 0.125,
         strength: 0.3,
@@ -188,7 +188,7 @@ fn halation_is_captured_without_repair_invalidation_or_grain_enablement() {
 fn grain_is_captured_immutably_without_changing_neutral_repair_identity() {
     let (mut project, id) = project();
     let clean = project.image_recipe(id).unwrap();
-    let film = antitone::grain::GrainPreset::ThirtyFiveMm.settings();
+    let film = antitone::photographic::stages::grain::GrainPreset::ThirtyFiveMm.settings();
     project.output.grain = film;
     let captured = project.image_recipe(id).unwrap();
     assert_eq!(captured.grain, film);
@@ -212,7 +212,7 @@ fn grain_is_captured_immutably_without_changing_neutral_repair_identity() {
 
 #[test]
 fn emulation_resolves_from_the_captured_crop_not_its_source_bounds_or_orientation() {
-    use antitone::grain::GrainSettings;
+    use antitone::photographic::stages::grain::GrainSettings;
     let (mut project, id) = project();
     project.output.grain = GrainSettings {
         enabled: true,

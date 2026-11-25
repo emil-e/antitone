@@ -1,13 +1,14 @@
 //! Source-anchored grain owns field generation and its photographic application.
 
-use super::{
+use super::GrainParameters;
+use crate::Error;
+use crate::gpu::{
     evaluation::{
         CellRegion, Domain, Operation, Read, RetainedKey, Tiling, Value,
         value::{self, Access, Calculation},
     },
     raster::Raster,
 };
-use crate::{Error, grain::GrainParameters};
 use std::sync::Arc;
 
 impl GrainParameters {
@@ -82,7 +83,7 @@ impl Operation for Field {
         };
         let code = format!(
             "{}\nstruct FieldParameters {{ shape:vec4f, seed:vec4u }}\nfn pixel(cell:vec2i,position:vec2f,p:FieldParameters)->vec4f {{ return vec4f(grain_field(position,p.shape.x,p.shape.y,p.seed.x),0.0); }}",
-            include_str!("grain/field.wgsl")
+            include_str!("field.wgsl")
         );
         Calculation::new(
             domain,
@@ -120,10 +121,10 @@ impl Operation for GrainOperation {
         let inputs = Calculation::references(inputs);
         let raster = domain.grid.raster(output);
         let code = [
-            include_str!("raster.wgsl"),
-            include_str!("working_range.wgsl"),
-            include_str!("grain/parameters.wgsl"),
-            include_str!("grain/apply.wgsl"),
+            include_str!("../../../gpu/raster.wgsl"),
+            include_str!("../../../gpu/working_range.wgsl"),
+            include_str!("parameters.wgsl"),
+            include_str!("apply.wgsl"),
             "fn pixel(cell:vec2i,position:vec2f,source:vec4f,p:Grain)->vec4f { return apply_grain(source,input_1(cell).rgb,p); }"
         ]
         .join("\n");
@@ -155,13 +156,13 @@ pub(crate) fn is_field_key(key: &RetainedKey) -> bool {
 #[cfg(test)]
 pub(crate) fn shader() -> String {
     [
-        include_str!("raster.wgsl"),
-        include_str!("working_range.wgsl"),
-        include_str!("grain/parameters.wgsl"),
-        include_str!("grain/bindings.wgsl"),
-        include_str!("grain/apply.wgsl"),
-        include_str!("grain/field.wgsl"),
-        include_str!("grain/kernels.wgsl"),
+        include_str!("../../../gpu/raster.wgsl"),
+        include_str!("../../../gpu/working_range.wgsl"),
+        include_str!("parameters.wgsl"),
+        include_str!("bindings.wgsl"),
+        include_str!("apply.wgsl"),
+        include_str!("field.wgsl"),
+        include_str!("kernels.wgsl"),
     ]
     .join("\n")
 }

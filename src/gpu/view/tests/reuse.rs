@@ -68,10 +68,10 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
         ))
         .with_definition(
             crate::photographic::graph::assembly::Assembly::emulation(
-                crate::grain::GrainPreset::ThirtyFiveMm.settings(),
-                crate::halation::HalationSettings {
+                crate::photographic::stages::grain::GrainPreset::ThirtyFiveMm.settings(),
+                crate::photographic::stages::halation::HalationSettings {
                     enabled: true,
-                    size: crate::halation::MAX_SIZE,
+                    size: crate::photographic::stages::halation::MAX_SIZE,
                     ..Default::default()
                 },
                 frame(&scan).composition.crop().size,

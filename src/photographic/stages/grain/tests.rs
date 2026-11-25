@@ -1,5 +1,4 @@
 use super::*;
-use crate::grain::{DEFAULT_SIZE, GrainSettings, MAX_SIZE, MIN_SIZE};
 
 #[test]
 fn pixel_integration_attenuates_intrinsic_green_contrast() {

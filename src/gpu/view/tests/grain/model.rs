@@ -37,7 +37,7 @@ fn study_spectrum(footprint_per_scale: f64) -> Vec<f64> {
                 for ix in -4..=4 {
                     let r2 = (x + ix as f64).powi(2) + (y + iy as f64).powi(2);
                     let f2 = r2 / footprint_per_scale.powi(2);
-                    let psd: f64 = crate::grain::GRAIN_BASIS
+                    let psd: f64 = crate::photographic::stages::grain::GRAIN_BASIS
                         .iter()
                         .map(|basis| {
                             let variance = basis.sigma.powi(2);
@@ -117,7 +117,10 @@ fn grain_gpu_psd_and_autocorrelation_track_the_covariance_model() {
                     &queue,
                     &renderer,
                     &kernels,
-                    [2. / crate::grain::GRAIN_SCALE, 2. * footprint_per_scale],
+                    [
+                        2. / crate::photographic::stages::grain::GRAIN_SCALE,
+                        2. * footprint_per_scale,
+                    ],
                     true,
                     seed,
                 );
@@ -169,9 +172,9 @@ fn grain_gpu_grain_matches_at_fixed_frame_sampling_across_source_resolutions() {
         let mut maximum_binary_error = 0_f64;
         for output in [512, 1024] {
             for size in [
-                crate::grain::MIN_SIZE,
-                crate::grain::DEFAULT_SIZE,
-                crate::grain::MAX_SIZE,
+                crate::photographic::stages::grain::MIN_SIZE,
+                crate::photographic::stages::grain::DEFAULT_SIZE,
+                crate::photographic::stages::grain::MAX_SIZE,
             ] {
                 for colour in [0., 0.5, 1.] {
                     for seed in [17, 1234] {
@@ -257,7 +260,7 @@ fn grain_gpu_amount_is_preintegration_rms_with_sampling_loss() {
                         side: 512,
                         frame_extent: 4096,
                         // This frame admits the authored field scales within the Size bounds.
-                        scale: scale / crate::grain::GRAIN_SCALE,
+                        scale: scale / crate::photographic::stages::grain::GRAIN_SCALE,
                         ..Default::default()
                     },
                     seed,

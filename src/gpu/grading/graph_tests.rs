@@ -43,7 +43,7 @@ fn retained_grading_arguments_follow_branches_and_count_each_shared_definition_o
         bytes > 0,
         "the fixture must actually retain grading arguments"
     );
-    let halo = crate::halation::HalationParameters {
+    let halo = crate::photographic::stages::halation::HalationParameters {
         sigma: 0.25,
         strength: 0.54,
     }
@@ -499,7 +499,7 @@ fn extreme_grading_stays_finite_through_actual_grain_generation_and_application(
     )
     .unwrap();
     let base = grading.compose(borrowed_input(domain)).unwrap();
-    let model = crate::grain::GrainParameters {
+    let model = crate::photographic::stages::grain::GrainParameters {
         grain_size: 3.,
         amplitude: 0.2,
         colour: 1.,

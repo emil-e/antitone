@@ -372,8 +372,8 @@ mod halation_tests;
 mod tests {
     use super::*;
     use crate::{
-        grain::{GrainPreset, GrainSettings},
         photographic::graph::assembly::Assembly,
+        photographic::stages::grain::{GrainPreset, GrainSettings},
     };
 
     #[cfg(all(
@@ -419,7 +419,7 @@ mod tests {
             })
             .unwrap();
         project.roll.exposure = 0.35;
-        project.output.grain = crate::grain::GrainSettings {
+        project.output.grain = crate::photographic::stages::grain::GrainSettings {
             enabled: true,
             size: 0.04,
             image_sigma: 0.04,

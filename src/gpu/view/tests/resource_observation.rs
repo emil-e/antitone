@@ -29,7 +29,7 @@ fn acquisition_execution_resources() {
         )
         .unwrap();
         let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
-        let settings = crate::grain::GrainPreset::ThirtyFiveMm.settings();
+        let settings = crate::photographic::stages::grain::GrainPreset::ThirtyFiveMm.settings();
         let gate = queue.clone();
         let peak = Arc::new(AtomicU64::new(0));
         let (observed, observed_device) = (peak.clone(), device.clone());

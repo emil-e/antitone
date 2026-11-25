@@ -42,9 +42,6 @@ pub mod geometry;
 pub mod gpu;
 #[cfg(all(feature = "gpu", feature = "export", feature = "raw"))]
 pub mod gpu_export;
-pub mod grain;
-pub mod halation;
-pub mod image_mtf;
 #[cfg(feature = "project")]
 pub mod image_recipe;
 pub mod lens;
@@ -57,6 +54,8 @@ mod native_logging;
 #[cfg(all(feature = "raw", feature = "project"))]
 pub(crate) mod photo_preparation;
 pub mod photographic;
+// Preserve the original public paths for the film-texture models.
+pub use photographic::stages::{grain, halation, image_mtf};
 #[cfg(feature = "ui")]
 pub mod platform;
 pub mod processing;
