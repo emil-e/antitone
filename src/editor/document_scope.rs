@@ -104,6 +104,9 @@ pub(super) struct DocumentScope {
     pub source: bool,
     pub roll_selection: super::RollSelection,
     pub roll_order: super::roll_order::View,
+    pub viewer_mode: super::viewer_ui::Mode,
+    pub lightbox: super::lightbox::View,
+    pub filmstrip: super::filmstrip::State,
 
     pub export: super::export::State,
     pub importing: Option<async_executor::Task<()>>,
@@ -344,6 +347,9 @@ impl From<Document> for DocumentScope {
             hosted_tool: Default::default(),
             roll_selection: super::RollSelection::default(),
             roll_order: Default::default(),
+            viewer_mode: Default::default(),
+            lightbox: Default::default(),
+            filmstrip: Default::default(),
 
             export: Default::default(),
             importing: None,

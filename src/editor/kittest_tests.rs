@@ -25,6 +25,7 @@ mod grain;
 mod guide_shots;
 mod halation;
 mod history;
+mod lightbox;
 mod lightroom;
 mod looks;
 mod masks;

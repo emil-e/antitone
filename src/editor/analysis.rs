@@ -492,12 +492,11 @@ impl tool::Tool for AnalyzeTool {
             },
         )
     }
-    fn filmstrip(&mut self, ui: &mut egui::Ui, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
+    fn roll_preview(&self, editor: &Editor) -> tool::RollPreview {
+        let mut preview = tool::RollPreview::default();
         let Some(review) = &self.review else {
-            editor.filmstrip(ui, cx);
-            return;
+            return preview;
         };
-        let mut preview = filmstrip::Preview::default();
         for row in &review.approved.entries {
             let Ok(source) = review.document.project.source(row.source) else {
                 continue;
@@ -528,7 +527,7 @@ impl tool::Tool for AnalyzeTool {
                 preview.warnings.push((row.source, warning.into()));
             }
         }
-        crate::editor::filmstrip::show_preview(editor, ui, preview, cx);
+        preview
     }
     fn action(&mut self, action: tool::Action, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
         match action {

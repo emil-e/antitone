@@ -8,6 +8,7 @@ pub(in crate::editor) enum Icon {
     Edit,
     Power,
     Fit,
+    Lightbox,
     Fullscreen,
     ExitFullscreen,
     ZoomOut,
@@ -59,6 +60,16 @@ impl Icon {
             ));
         };
         match self {
+            Self::Lightbox => {
+                for (x, y) in [(1.5, 1.5), (9., 1.5), (1.5, 9.), (9., 9.)] {
+                    ui.painter().rect_stroke(
+                        Rect::from_min_max(point(x, y), point(x + 5.5, y + 5.5)),
+                        0.5,
+                        stroke,
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
             Self::Sort => {
                 line(&[[2., 4.], [8., 4.]]);
                 line(&[[2., 8.], [6., 8.]]);

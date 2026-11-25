@@ -167,8 +167,8 @@ impl tool::Tool for AutoCropTool {
         }
     }
 
-    fn filmstrip(&mut self, ui: &mut egui::Ui, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
-        let mut preview = filmstrip::Preview::default();
+    fn roll_preview(&self, editor: &Editor) -> tool::RollPreview {
+        let mut preview = tool::RollPreview::default();
         if let Some(draft) = self.review.borrow().as_ref() {
             let inputs = review_inputs(editor);
             let project = &inputs.document.project;
@@ -195,7 +195,7 @@ impl tool::Tool for AutoCropTool {
                 }
             }
         }
-        crate::editor::filmstrip::show_preview(editor, ui, preview, cx);
+        preview
     }
 
     fn drawer(&mut self, ui: &mut egui::Ui, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {

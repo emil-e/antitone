@@ -19,6 +19,8 @@ pub enum Action {
     Copy,
     Paste,
     SelectAll,
+    Lightbox,
+    SinglePhoto,
     Fit,
     ActualSize,
     ZoomIn,
@@ -49,6 +51,8 @@ impl Action {
             Self::Copy => "Copy",
             Self::Paste => "Paste",
             Self::SelectAll => "Select All",
+            Self::Lightbox => "Lightbox",
+            Self::SinglePhoto => "Single Photo",
             Self::Fit => "Fit Image",
             Self::ActualSize => "Actual Size",
             Self::ZoomIn => "Zoom In",
@@ -78,6 +82,8 @@ impl Action {
             Self::Copy => (Modifiers::COMMAND, Key::C),
             Self::Paste => (Modifiers::COMMAND, Key::V),
             Self::SelectAll => (Modifiers::COMMAND, Key::A),
+            Self::Lightbox => (Modifiers::NONE, Key::G),
+            Self::SinglePhoto => (Modifiers::NONE, Key::E),
             Self::Fit => (Modifiers::COMMAND, Key::Num0),
             Self::ActualSize => (Modifiers::COMMAND, Key::Num1),
             Self::Minimize => (Modifiers::COMMAND, Key::M),
@@ -99,6 +105,20 @@ pub enum Entry {
 
 use Action::*;
 use Entry::{Action as Item, Separator as Sep};
+
+const VIEW: &[Entry] = &[
+    Item(Lightbox),
+    Item(SinglePhoto),
+    Sep,
+    Item(Fit),
+    Item(ActualSize),
+    Item(ZoomIn),
+    Item(ZoomOut),
+    Sep,
+    Item(PhotoInspection),
+    Sep,
+    Item(Scopes),
+];
 
 pub const MENUS: &[(&str, &[Entry])] = &[
     (
@@ -133,19 +153,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             Item(SelectAll),
         ],
     ),
-    (
-        "View",
-        &[
-            Item(Fit),
-            Item(ActualSize),
-            Item(ZoomIn),
-            Item(ZoomOut),
-            Sep,
-            Item(PhotoInspection),
-            Sep,
-            Item(Scopes),
-        ],
-    ),
+    ("View", VIEW),
     ("Window", &[Item(Minimize), Item(ZoomWindow)]),
     ("Help", &[Item(Help)]),
 ];
@@ -185,19 +193,7 @@ pub const WINDOWS_MENUS: &[(&str, &[Entry])] = &[
             Item(SelectAll),
         ],
     ),
-    (
-        "View",
-        &[
-            Item(Fit),
-            Item(ActualSize),
-            Item(ZoomIn),
-            Item(ZoomOut),
-            Sep,
-            Item(PhotoInspection),
-            Sep,
-            Item(Scopes),
-        ],
-    ),
+    ("View", VIEW),
     ("Window", &[Item(Minimize), Item(ZoomWindow)]),
     ("Help", &[Item(Help), Sep, Item(About)]),
 ];
@@ -207,6 +203,7 @@ pub struct State {
     pub enabled: BTreeSet<Action>,
     pub undo_label: Option<String>,
     pub redo_label: Option<String>,
+    pub lightbox: bool,
     pub scopes_visible: bool,
     pub photo_inspection: bool,
 }
@@ -227,6 +224,8 @@ impl State {
 
     pub fn checked(&self, action: Action) -> Option<bool> {
         match action {
+            Lightbox => Some(self.lightbox),
+            SinglePhoto => Some(!self.lightbox),
             Scopes => Some(self.scopes_visible),
             PhotoInspection => Some(self.photo_inspection),
             _ => None,

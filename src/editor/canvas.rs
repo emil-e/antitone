@@ -303,7 +303,7 @@ impl Editor {
         ui: &mut egui::Ui,
         menu_zoom: Option<f32>,
         cx: &UiContext<'_, Self>,
-    ) {
+    ) -> super::thumbnails::ThumbnailProvider {
         self.canvas_frame.original_requested = false;
         if self.has_hosted_tool() {
             let mut viewer = Viewer {
@@ -317,6 +317,14 @@ impl Editor {
             }
         } else {
             let bar = self.viewer_bar(ui, Editor::photograph_controls);
+            if bar.fullscreen {
+                self.toggle_fullscreen(ui.ctx());
+            }
+            let fullscreen = self.fullscreen.is_some();
+            if self.showing_lightbox() {
+                self.observe_original(None);
+                return ui::viewer_surface(ui, fullscreen, |ui| self.show_lightbox(ui, cx));
+            }
             if bar.fit {
                 self.document.visit.canvas.viewport.fit();
             }
@@ -326,10 +334,6 @@ impl Editor {
                     tool::Action::Dismiss => self.finish_pick(cx),
                 }
             }
-            if bar.fullscreen {
-                self.toggle_fullscreen(ui.ctx());
-            }
-            let fullscreen = self.fullscreen.is_some();
             ui::viewer_surface(ui, fullscreen, |ui| {
                 self.viewer_canvas(ui, bar.zoom.or(menu_zoom), cx)
             });
@@ -337,6 +341,7 @@ impl Editor {
         if !self.canvas_frame.original_requested {
             self.observe_original(None);
         }
+        super::thumbnails::ThumbnailProvider::default()
     }
 
     #[cfg(test)]

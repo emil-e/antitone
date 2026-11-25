@@ -95,6 +95,7 @@ impl Editor {
     pub(super) fn application_menu_state(&self) -> State {
         use Action::*;
         let mut state = State {
+            lightbox: self.showing_lightbox(),
             scopes_visible: self.scopes.visible,
             photo_inspection: self.fullscreen.is_some(),
             ..Default::default()
@@ -147,13 +148,17 @@ impl Editor {
                 state.enabled.insert(Export);
             }
         }
-        if self.selected_area().is_some() && !self.interaction_blocked() {
+        if self.selected_area().is_some() && !self.interaction_blocked() && !self.showing_lightbox()
+        {
             state.enabled.extend([Fit, ActualSize, ZoomIn, ZoomOut]);
+        }
+        if self.view_mode_available() && !self.menus.text_focused {
+            state.enabled.extend([Lightbox, SinglePhoto]);
         }
         if self.fullscreen_available() {
             state.enabled.insert(PhotoInspection);
         }
-        if self.fullscreen.is_none() {
+        if self.fullscreen.is_none() && !self.showing_lightbox() {
             state.enabled.insert(Scopes);
         }
         state
@@ -233,10 +238,26 @@ impl Editor {
     }
 
     fn menu_shortcut(&self, ui: &egui::Ui) -> Option<Action> {
+        let state = self.application_menu_state();
+        // Bare letters can arrive as window input even with a native menu installed.
+        if !ui.ctx().text_edit_focused()
+            && !egui::Popup::is_any_open(ui.ctx())
+            && let Some(action) =
+                [Action::Lightbox, Action::SinglePhoto]
+                    .into_iter()
+                    .find(|&action| {
+                        state.enabled(action)
+                            && ui.input_mut(|input| {
+                                input.modifiers.is_none()
+                                    && input.consume_shortcut(&action.shortcut().unwrap())
+                            })
+                    })
+        {
+            return Some(action);
+        }
         if self.menus.native {
             return None;
         }
-        let state = self.application_menu_state();
         // Shifted shortcuts must precede their unshifted alternatives.
         [
             Action::Redo,
@@ -346,6 +367,8 @@ impl Editor {
                 self.menus.pending.push_front(Quit);
             }
             Export => return self.open_export_dialog(),
+            Lightbox => self.set_view_mode(viewer_ui::Mode::Lightbox),
+            SinglePhoto => self.set_view_mode(viewer_ui::Mode::Photo),
             Fit => self.with_tool_viewport(Viewport::fit),
             Scopes => {
                 self.scopes.visible = !self.scopes.visible;

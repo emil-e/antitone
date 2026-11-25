@@ -78,10 +78,15 @@ impl NativeMenu {
                         };
                         // AppKit matches shifted letters against uppercase character
                         // equivalents. Physical accelerators leave them lowercase.
-                        let (key, modifiers) = if shortcut.modifiers.shift {
-                            (key.to_uppercase(), Modifiers::META | Modifiers::SHIFT)
+                        let mut modifiers = Modifiers::empty();
+                        if shortcut.modifiers.command {
+                            modifiers |= Modifiers::META;
+                        }
+                        let key = if shortcut.modifiers.shift {
+                            modifiers |= Modifiers::SHIFT;
+                            key.to_uppercase()
                         } else {
-                            (key.to_lowercase(), Modifiers::META)
+                            key.to_lowercase()
                         };
                         KeyAccelerator::new(modifiers, Key::Character(key))
                     });

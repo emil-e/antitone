@@ -1,9 +1,6 @@
-use super::super::{
-    thumbnails::{NavigationImage, NavigationPhotograph},
-    ui,
-};
+use super::{NavigationImage, NavigationPhotograph, ui};
 
-pub(super) struct Card<'a> {
+pub(in crate::editor) struct Card<'a> {
     pub image: NavigationImage<'a>,
     pub warning: Option<String>,
     pub outline: Option<(&'a [[f64; 2]; 4], [u32; 4])>,
@@ -12,6 +9,7 @@ pub(super) struct Card<'a> {
 impl Card<'_> {
     pub fn show(self, ui: &egui::Ui, card: &ui::ContactSheetCard, name: &str) -> Option<String> {
         use ui::{ContextualStatus, StatusLevel};
+        let has_image = self.image.photograph.is_some();
         let error = match self.image.photograph {
             Some(Ok(photo)) => draw_photo(photo, self.outline, ui, card.image_rect).err(),
             Some(Err(error)) => Some(error),
@@ -38,7 +36,11 @@ impl Card<'_> {
         } else if self.image.updating {
             Some(ContextualStatus::new(
                 StatusLevel::Activity,
-                "Preparing thumbnail; navigation preview may differ.",
+                if has_image {
+                    "Updating preview; showing the previous image."
+                } else {
+                    "Preparing preview."
+                },
             ))
         } else {
             None

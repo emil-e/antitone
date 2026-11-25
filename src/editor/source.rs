@@ -483,6 +483,7 @@ impl Editor {
             return;
         }
         let Some(selected) = selected else {
+            self.set_view_mode(super::viewer_ui::Mode::Photo);
             self.document.visit.working_view.clear();
             self.replace_photo_scope(None);
             self.document
