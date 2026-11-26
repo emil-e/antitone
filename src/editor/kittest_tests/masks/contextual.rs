@@ -120,25 +120,27 @@ fn grading_and_mask_refinement_share_one_tool_and_undo_independently() {
                 history(&mut h, false);
                 h.read(|editor| assert_eq!(&editor.document.state.project, expected));
             }
+            mask_mode(&h);
             let start = h.read(handle);
             let end = start + egui::vec2(14., 10.);
             hold_drag(&mut h, start, end);
             h.read(|editor| assert!(editor.mask_dragging()));
-            h.key_press(egui::Key::Escape);
+            h.key_press(egui::Key::Enter);
             h.step();
             pointer(&mut h, end, false);
+            no_mode(&h);
             h.read(|editor| assert_eq!(editor.document.state.project, graded));
             for expected in [&refined, &regraded, &refined_again] {
                 history(&mut h, true);
                 h.read(|editor| assert_eq!(&editor.document.state.project, expected));
             }
-            mask_mode(&h);
+            no_mode(&h);
         });
     }
 }
 
 #[test]
-fn refinement_paints_its_current_draft_and_escape_restores_accepted_geometry() {
+fn refinement_paints_its_draft_and_escape_closes_without_accepting_it() {
     workflow::calibrated_workflow(|mut h, _, _directory| {
         arm(&mut h, false);
         let image = h.read(|editor| editor.active_canvas().last_layout.unwrap().0.image);
@@ -208,6 +210,7 @@ fn refinement_paints_its_current_draft_and_escape_restores_accepted_geometry() {
         h.step();
         pointer(&mut h, end, false);
         workflow::wait_settled(&mut h);
+        no_mode(&h);
         h.read(|editor| {
             assert_eq!(editor.document.state.project, before);
         });

@@ -160,11 +160,10 @@ impl tool::Tool for PickTool {
                 },
                 title: state.display.label,
             },
-            primary: Some(tool::Primary {
+            actions: tool::Actions::Confirm(tool::Primary {
                 label: "Apply",
                 enabled: state.region.is_some() && !editor.interaction_blocked(),
             }),
-            dismiss: "Cancel",
             warning: None,
             help: state
                 .display

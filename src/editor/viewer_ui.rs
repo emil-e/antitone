@@ -171,6 +171,8 @@ impl Editor {
         let show_view_selector = hosted.is_none() && !self.picking();
         let can_switch_view = self.view_mode_available();
         let fit_label = hosted.as_ref().map_or("Fit", |tool| tool.fit_label);
+        let primary = hosted.as_ref().and_then(|tool| tool.actions.primary());
+        let primary_label = primary.map(|primary| primary.label);
         let tool = hosted
             .as_ref()
             .map(|tool| (tool.identity.icon, tool.identity.title));
@@ -195,9 +197,8 @@ impl Editor {
             identity: ToolIdentity { icon, title },
             busy: self.interaction_blocked(),
             cancel_enabled: !self.interaction_blocked(),
-            apply_enabled: hosted.as_ref().is_some_and(|tool| {
-                !self.interaction_blocked() && tool.primary.is_some_and(|primary| primary.enabled)
-            }),
+            apply_enabled: !self.interaction_blocked()
+                && primary.is_some_and(|primary| primary.enabled),
         });
 
         let warning = hosted
@@ -284,11 +285,7 @@ impl Editor {
                 let trailing_width = ui::CONTROL_HEIGHT
                     + VIEWER_ITEM_GAP
                     + if let Some((group, tool)) = tool_group.zip(hosted.as_ref()) {
-                        group.width_actions(
-                            ui,
-                            tool.primary.map(|primary| primary.label),
-                            tool.dismiss,
-                        )
+                        group.width_actions(ui, primary_label, tool.actions.dismiss_label())
                     } else {
                         ui.painter()
                             .layout_no_wrap(
@@ -325,8 +322,8 @@ impl Editor {
                     .is_some_and(|(group, tool)| {
                         let actions = group.minimum_width_actions(
                             ui,
-                            tool.primary.map(|primary| primary.label),
-                            tool.dismiss,
+                            primary_label,
+                            tool.actions.dismiss_label(),
                         );
                         ui.available_width()
                             < actions + 5. * icon_slot + readout_slot + divider_slot
@@ -421,14 +418,11 @@ impl Editor {
                         if let Some(tool) = &hosted {
                             ui.separator();
                             ui.small(tool.help);
-                            if tool.primary.is_some() {
-                                ui.small(if fullscreen {
-                                    "Enter: primary action"
-                                } else {
-                                    "Enter: primary action · Escape: cancel / dismiss"
-                                });
-                            } else if !fullscreen {
-                                ui.small("Escape: cancel / dismiss");
+                            if let Some((_, label)) = tool.actions.enter() {
+                                ui.small(format!("Enter: {label}"));
+                            }
+                            if !fullscreen {
+                                ui.small(format!("Escape: {}", tool.actions.dismiss_label()));
                             }
                         }
                     });
@@ -437,8 +431,8 @@ impl Editor {
                         let actions = group
                             .show_actions(
                                 ui,
-                                tool.primary.map(|primary| primary.label),
-                                tool.dismiss,
+                                primary_label,
+                                tool.actions.dismiss_label(),
                                 warning.as_deref(),
                             )
                             .inner;

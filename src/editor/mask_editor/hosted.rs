@@ -69,8 +69,11 @@ impl tool::Tool for MaskTool {
         let edit = self.edit.borrow();
         tool::Presentation {
             identity: self.identity(),
-            primary: None,
-            dismiss: if edit.creating() { "Cancel" } else { "Done" },
+            actions: if edit.creating() {
+                tool::Actions::Cancel
+            } else {
+                tool::Actions::Done
+            },
             warning: edit.error.clone(),
             help: if editor.tab != 1 {
                 "Return to Photo to edit the gradient. Grading remains available on each stage."
@@ -213,17 +216,6 @@ impl tool::Tool for MaskTool {
                 Some(layout)
             },
         )
-    }
-
-    fn shortcuts(&mut self, ui: &mut egui::Ui, editor: &mut Editor) {
-        if self.edit.borrow().dragging()
-            && !self.edit.borrow().creating()
-            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
-            self.edit.borrow_mut().cancel_gesture();
-            editor.status = "Mask gesture cancelled".into();
-            ui.ctx().request_repaint();
-        }
     }
 
     fn action(&mut self, action: tool::Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {

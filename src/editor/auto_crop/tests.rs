@@ -291,7 +291,8 @@ fn all_failed_attempts_stay_selected_with_reasons_but_cannot_apply_or_edit_crops
         !e.current_tool()
             .unwrap()
             .presentation()
-            .primary
+            .actions
+            .primary()
             .unwrap()
             .enabled
     );

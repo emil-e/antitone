@@ -135,6 +135,40 @@ fn leaving_the_photo_discards_pending_artwork_and_returning_can_apply_a_fresh_st
 }
 
 #[test]
+fn dust_done_keys_keep_accepted_repairs_and_retire_pending_searches() {
+    tools::calibrated_harness(|mut h| {
+        stage(&mut h, "Photo");
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+            .click();
+        h.step();
+        click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
+        ready(&mut h, 1);
+        let accepted = h.read(|editor| editor.document.state.project.clone());
+
+        for shortcut in [egui::Key::Enter, egui::Key::Escape] {
+            let done = h.get_by_role_and_label(egui::accesskit::Role::Button, "Done");
+            assert!(!done.accesskit_node().is_disabled());
+            let admission = crate::background::testing::pause();
+            click(&mut h, egui::pos2(144., 64.), egui::Modifiers::NONE);
+            h.read(|editor| assert!(editor.dust_search_pending()));
+
+            key(&mut h, shortcut);
+            h.read(|editor| {
+                assert!(!editor.dusting(), "{shortcut:?} must invoke Done");
+                assert!(!editor.dust_search_pending());
+                assert_eq!(editor.document.state.project, accepted);
+            });
+
+            drop(admission);
+            h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+                .click();
+            h.step();
+            ready(&mut h, 1);
+        }
+    });
+}
+
+#[test]
 fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() {
     tools::calibrated_harness_with_thumbnails(true, |mut h| {
         stage(&mut h, "Photo");

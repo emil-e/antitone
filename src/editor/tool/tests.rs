@@ -35,8 +35,7 @@ impl Tool for Probe {
                 icon: ui::icons::Icon::Crop,
                 title: "Probe",
             },
-            primary: None,
-            dismiss: "Done",
+            actions: Actions::Done,
             fit_label: "Fit",
             warning: None,
             help: "",
@@ -186,6 +185,91 @@ fn tool_composes_its_drawer_and_handles_enabled_header_actions() {
     }
 }
 
+struct ShortcutProbe {
+    actions: Actions,
+    dispatched: Rc<Cell<Option<Action>>>,
+    intercept_once: Option<egui::Key>,
+}
+
+impl Tool for ShortcutProbe {
+    fn presentation(&self, _editor: &Editor) -> Presentation {
+        Presentation {
+            identity: ui::ToolIdentity {
+                icon: ui::icons::Icon::Pick,
+                title: "Shortcut probe",
+            },
+            actions: self.actions,
+            fit_label: "Fit",
+            warning: None,
+            help: "",
+            navigation_help: None,
+        }
+    }
+
+    fn shortcuts(&mut self, ui: &mut egui::Ui, _editor: &mut Editor) {
+        if let Some(key) = self.intercept_once
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, key))
+        {
+            self.intercept_once = None;
+        }
+    }
+
+    fn action(&mut self, action: Action, _editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
+        self.dispatched.set(Some(action));
+    }
+}
+
+#[test]
+fn standard_tool_keys_follow_declared_actions_unless_the_tool_consumes_the_key() {
+    let confirm = Actions::Confirm("Measure".into());
+    let disabled = Actions::Confirm(Primary {
+        label: "Measure",
+        enabled: false,
+    });
+    for (actions, enter, escape) in [
+        (confirm, Some(Action::Primary), Some(Action::Dismiss)),
+        (disabled, None, Some(Action::Dismiss)),
+        (Actions::Cancel, None, Some(Action::Dismiss)),
+        (Actions::Done, Some(Action::Dismiss), Some(Action::Dismiss)),
+    ] {
+        for (key, expected) in [(egui::Key::Enter, enter), (egui::Key::Escape, escape)] {
+            let mut editor = Editor::state();
+            let dispatched = Rc::new(Cell::new(None));
+            assert!(editor.activate_tool(
+                Placement::Photo,
+                Box::new(ShortcutProbe {
+                    actions,
+                    dispatched: dispatched.clone(),
+                    intercept_once: expected.map(|_| key),
+                }),
+            ));
+            let context = egui::Context::default();
+            let mut press = || {
+                let mut output = context.run_ui(
+                    egui::RawInput {
+                        events: [true, false]
+                            .map(|pressed| egui::Event::Key {
+                                key,
+                                physical_key: None,
+                                pressed,
+                                repeat: false,
+                                modifiers: egui::Modifiers::NONE,
+                            })
+                            .into(),
+                        ..Default::default()
+                    },
+                    |ui| editor.tool_shortcuts(ui, &UiContext::render_only()),
+                );
+                output.textures_delta.clear();
+            };
+            press();
+            assert_eq!(dispatched.get(), None, "{key:?} must not dispatch here");
+            press();
+            assert_eq!(dispatched.get(), expected, "standard action for {key:?}");
+        }
+    }
+}
+
 struct Candidate(Crop);
 impl Tool for Candidate {
     fn presentation(&self, _editor: &Editor) -> Presentation {
@@ -194,8 +278,7 @@ impl Tool for Candidate {
                 icon: ui::icons::Icon::Crop,
                 title: "Candidate",
             },
-            primary: Some("Accept".into()),
-            dismiss: "Discard",
+            actions: Actions::Confirm("Accept".into()),
             fit_label: "Fit",
             warning: None,
             help: "",

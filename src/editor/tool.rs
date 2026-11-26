@@ -10,7 +10,7 @@ pub(super) enum Placement {
     Document,
     Photo,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Action {
     Primary,
     Dismiss,
@@ -31,11 +31,41 @@ impl From<&'static str> for Primary {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum Actions {
+    Confirm(Primary),
+    Cancel,
+    Done,
+}
+
+impl Actions {
+    pub(super) fn primary(self) -> Option<Primary> {
+        match self {
+            Self::Confirm(primary) => Some(primary),
+            Self::Cancel | Self::Done => None,
+        }
+    }
+
+    pub(super) fn dismiss_label(self) -> &'static str {
+        match self {
+            Self::Confirm(_) | Self::Cancel => "Cancel",
+            Self::Done => "Done",
+        }
+    }
+
+    pub(super) fn enter(self) -> Option<(Action, &'static str)> {
+        match self {
+            Self::Confirm(primary) if primary.enabled => Some((Action::Primary, primary.label)),
+            Self::Done => Some((Action::Dismiss, self.dismiss_label())),
+            Self::Confirm(_) | Self::Cancel => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct Presentation {
     pub identity: ui::ToolIdentity<'static>,
-    pub primary: Option<Primary>,
-    pub dismiss: &'static str,
+    pub actions: Actions,
     pub warning: Option<String>,
     pub help: &'static str,
     pub navigation_help: Option<&'static str>,
@@ -93,6 +123,7 @@ pub(super) trait Tool: Any {
             },
         )
     }
+    /// Tool-specific input may consume keys before the host's standard actions.
     fn shortcuts(&mut self, _ui: &mut egui::Ui, _editor: &mut Editor) {}
     fn action(&mut self, action: Action, editor: &mut Editor, cx: &UiContext<'_, Editor>);
 }
@@ -262,20 +293,23 @@ impl Editor {
     }
     pub(super) fn tool_shortcuts(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         self.with_current_tool(|tool, editor| tool.shortcuts(ui, editor));
-        if let Some(tool) = self.current_tool() {
-            let primary = tool
-                .presentation()
-                .primary
-                .is_some_and(|primary| primary.enabled);
-            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-                self.dispatch_tool(Action::Dismiss, cx);
-                ui.ctx().request_repaint();
-            } else if primary
-                && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
-            {
-                self.dispatch_tool(Action::Primary, cx);
-                ui.ctx().request_repaint();
+        let Some(tool) = self.current_tool() else {
+            return;
+        };
+        let actions = tool.presentation.actions;
+        let action = ui.input_mut(|input| {
+            if input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+                Some(Action::Dismiss)
+            } else {
+                let (action, _) = actions.enter()?;
+                input
+                    .consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                    .then_some(action)
             }
+        });
+        if let Some(action) = action {
+            self.dispatch_tool(action, cx);
+            ui.ctx().request_repaint();
         }
     }
 
