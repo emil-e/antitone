@@ -87,15 +87,12 @@ impl Editor {
         } else {
             let request = self.document.spatial.begin()?;
             let cancelled = Cancellation::default();
-            let activity = self.activities.start(
-                ActivityOptions::new("Preparing film and picture regions…")
-                    .modal()
-                    .cancellable(
-                        "Cancel region preparation",
-                        "Cancelling region preparation…",
-                        cancelled.clone(),
-                    ),
+            let options = ActivityOptions::new("Loading photos…").modal().cancellable(
+                "Cancel region preparation",
+                "Cancelling region preparation…",
+                cancelled.clone(),
             );
+            let activity = self.activities.start(options);
             let progress = activity.reporter();
             self.document.spatial_preparing = Some(Pending {
                 #[cfg(test)]
@@ -137,7 +134,14 @@ impl Editor {
                         sampling_inputs,
                         initialization,
                         cancelled.clone(),
-                        move |done, total| progress.progress(done, total),
+                        move |phase| match phase {
+                            preparation::Progress::Loading { completed, total } => {
+                                progress.progress(completed, total);
+                            }
+                            preparation::Progress::Detecting => {
+                                progress.indeterminate("Detecting film and picture regions…");
+                            }
+                        },
                     )
                     .await
                     .map_err(|error| error.to_string())

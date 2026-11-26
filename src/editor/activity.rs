@@ -307,6 +307,16 @@ impl Reporter {
         }
     }
 
+    pub fn indeterminate(&self, title: impl Into<String>) {
+        if let Some(entry) = self.entry().filter(|entry| !entry.cancelling()) {
+            *entry.display.lock().unwrap() = Display {
+                title: title.into(),
+                measured: None,
+            };
+            entry.repaint();
+        }
+    }
+
     pub fn progress(&self, completed: usize, total: usize) {
         if let Some(entry) = self.entry().filter(|entry| !entry.cancelling()) {
             // A completed counted phase can still have validation/publication ahead of it.

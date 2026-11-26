@@ -110,7 +110,7 @@ fn acquired_rasters_establish_facts_before_matching_captured_region_evidence() {
         Default::default(),
         initialization.clone(),
         Cancellation::default(),
-        |_, _| {},
+        |_| {},
     ))
     .unwrap()
     .unwrap();
