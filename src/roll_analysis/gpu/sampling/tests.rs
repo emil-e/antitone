@@ -108,6 +108,32 @@ fn cached_camera_sampling_preserves_original_correction_coordinates_and_omits_re
 }
 
 #[test]
+fn roll_sampling_rejects_an_oversized_request_even_if_no_sites_would_pass() {
+    let (_device, queue, renderer) = crate::photographic::test_support::render_context();
+    let file = crate::raw::fixture::bayer_dng_with_rgb([6000, 12000, 9000]);
+    let source = DevelopedSource::open(file.path(), None).unwrap();
+    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &source, None).unwrap();
+    let area = source.area();
+    let limit = crate::roll_analysis::MAX_SAMPLES_PER_FRAME;
+
+    let selected = sampler
+        .input
+        .select(area, limit + 1, |_| true, &mut || false)
+        .unwrap()
+        .unwrap();
+    assert!(!selected.is_empty());
+    let empty = sampler
+        .sample(area, limit, |_| false, || false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(empty.attempted, 0);
+    assert!(matches!(
+        sampler.sample(area, limit + 1, |_| false, || false),
+        Err(Error::InvalidParameter(_))
+    ));
+}
+
+#[test]
 fn gathered_work_reads_only_selected_cached_centres_after_the_original_is_released() {
     let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([6000, 12000, 9000]);

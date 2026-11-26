@@ -121,6 +121,10 @@ impl<'a> CameraSampler<'a> {
         inside: impl FnMut(crate::geometry::SourceRegion) -> bool,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<Option<AnalysisSamples>, Error> {
+        if budget > crate::roll_analysis::MAX_SAMPLES_PER_FRAME {
+            return Err(Error::InvalidParameter("invalid camera sampling request"));
+        }
+
         let Some(selected) = self.input.select(area, budget, inside, &mut cancelled)? else {
             return Ok(None);
         };
