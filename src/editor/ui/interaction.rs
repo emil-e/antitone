@@ -1,3 +1,4 @@
+use crate::editor::workspace_input::WorkspaceInput;
 use egui::{Context, Key, Modifiers, Response, Ui};
 
 pub(in crate::editor) fn surrender_keyboard_focus(context: &Context) {
@@ -8,8 +9,8 @@ pub(in crate::editor) fn surrender_keyboard_focus(context: &Context) {
     });
 }
 
-pub(in crate::editor) fn focused_delete(response: &Response) -> bool {
-    if !response.enabled() || !response.has_focus() || egui::Popup::is_any_open(&response.ctx) {
+pub(in crate::editor) fn focused_delete(response: &Response, workspace: &WorkspaceInput) -> bool {
+    if !response.enabled() || !response.has_focus() || !workspace.shortcuts_allowed(&response.ctx) {
         return false;
     }
     response.ctx.input_mut(|input| {

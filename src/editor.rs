@@ -1623,6 +1623,10 @@ impl Editor {
             ui.disable();
         }
         let scope_slot = self.show_inspector(ui, cx);
+        self.correction_feedback();
+        if !self.input().ready() {
+            self.document.source = true;
+        }
         let menu_zoom = command.and_then(|command| viewer_ui::menu_zoom(command.action));
         let mut demand = self.show_viewer(ui, menu_zoom, cx);
         demand.append(strip_demand);
@@ -1671,14 +1675,12 @@ impl Editor {
 
         let fullscreen_shortcut_available = !popup_was_open && self.menus.panel.is_none();
         self.fullscreen_shortcuts(ui, text_was_focused, fullscreen_shortcut_available);
-        if !workspace_available
+        if !self.workspace_input.shortcuts_allowed(ui.ctx())
             || (text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
-            || egui::Popup::is_any_open(ui.ctx())
         {
             return;
         }
 
-        self.fit_view_shortcut(ui.ctx());
         if ui.memory(|memory| {
             memory
                 .focused()

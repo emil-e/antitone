@@ -120,14 +120,18 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
                 harness.read(|editor| {
                     assert!(editor.fullscreen.is_some(), "popover owns first Escape")
                 });
-                harness.get_by_label("100%").click();
-                harness.step();
+                let fitted = harness.read(|editor| editor.canvas_frame.layout.unwrap().0);
+                assert_ne!(fitted.scale * density, 1.);
+                key(&mut harness, egui::Key::Z);
                 harness.read(|editor| {
-                    assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(1.))
+                    let (layout, density) = editor.canvas_frame.layout.unwrap();
+                    assert_eq!(layout.scale * density, 1.);
+                    assert_eq!(layout.image.center(), layout.canvas.center());
                 });
                 key(&mut harness, egui::Key::Z);
-                harness
-                    .read(|editor| assert!(editor.document.visit.canvas.viewport.zoom.is_none()));
+                harness.read(|editor| {
+                    assert_eq!(editor.canvas_frame.layout.unwrap().0.image, fitted.image);
+                });
                 let png = harness.render().unwrap();
                 save_capture(&png, &format!("fullscreen-{layout}-{density}x-offscreen"));
                 harness.get_by_label("Exit fullscreen").click();

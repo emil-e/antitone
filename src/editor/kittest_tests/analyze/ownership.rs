@@ -89,6 +89,24 @@ fn review_uses_ordinary_selection_without_retargeting_its_roll_wide_drafts() {
 }
 
 #[test]
+fn starting_analysis_with_enter_blocks_roll_navigation_in_the_same_pass() {
+    editor_harness(|mut h, _| {
+        let ids = calibrated_roll(&mut h);
+        show_confirmation(&mut h);
+        h.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[0])));
+        ui::surrender_keyboard_focus(&h.ctx);
+
+        h.key_press(egui::Key::Enter);
+        h.key_press(egui::Key::ArrowRight);
+        h.step();
+        h.read(|editor| {
+            assert!(editor.analysis_fitting() && editor.workspace_input.is_blocked());
+            assert_eq!(editor.document.visit.current_source, Some(ids[0]));
+        });
+    });
+}
+
+#[test]
 fn reordering_during_review_preserves_sampling_areas_and_accepts_in_the_new_order() {
     editor_harness(|mut h, _| {
         let ids = calibrated_roll(&mut h);

@@ -30,6 +30,7 @@ fn scoped_input_blocks_pointer_keyboard_and_native_commands_without_a_feature_ca
                 .click_modifiers(egui::Modifiers::COMMAND);
             harness.step();
             let before = harness.read(|editor| editor.document.state.project.clone());
+            let zoom = harness.read(|editor| editor.active_canvas().viewport.zoom);
             let selected = harness.read(|editor| editor.document.visit.current_source);
             let selection =
                 harness.read(|editor| editor.export_ids(crate::editor::export::Scope::Selected));
@@ -73,6 +74,7 @@ fn scoped_input_blocks_pointer_keyboard_and_native_commands_without_a_feature_ca
             );
             harness.key_press(egui::Key::Delete);
             harness.key_press(egui::Key::F);
+            harness.key_press(egui::Key::Z);
             for action in [Action::Undo, Action::Settings, Action::PhotoInspection] {
                 harness.update(|editor| host::App::menu_action(editor, action));
                 harness.step();
@@ -80,6 +82,7 @@ fn scoped_input_blocks_pointer_keyboard_and_native_commands_without_a_feature_ca
             harness.read(|editor| {
                 assert!(!editor.cropping());
                 assert!(editor.menus.panel.is_none() && editor.fullscreen.is_none());
+                assert_eq!(editor.active_canvas().viewport.zoom, zoom);
                 assert_eq!(editor.document.visit.current_source, selected);
                 assert_eq!(
                     editor.export_ids(crate::editor::export::Scope::Selected),
@@ -117,7 +120,11 @@ fn scoped_input_blocks_pointer_keyboard_and_native_commands_without_a_feature_ca
             harness.read(|editor| {
                 assert!(!editor.cropping());
                 assert!(editor.menus.panel.is_none() && editor.fullscreen.is_none());
+                assert_eq!(editor.active_canvas().viewport.zoom, zoom);
             });
+            harness.key_press(egui::Key::Z);
+            harness.step();
+            harness.read(|editor| assert_ne!(editor.active_canvas().viewport.zoom, zoom));
             harness.key_press_modifiers(
                 egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
                 egui::Key::A,

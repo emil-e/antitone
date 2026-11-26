@@ -240,8 +240,7 @@ impl Editor {
     fn menu_shortcut(&self, ui: &egui::Ui) -> Option<Action> {
         let state = self.application_menu_state();
         // Bare letters can arrive as window input even with a native menu installed.
-        if !ui.ctx().text_edit_focused()
-            && !egui::Popup::is_any_open(ui.ctx())
+        if self.workspace_input.shortcuts_allowed(ui.ctx())
             && let Some(action) =
                 [Action::Lightbox, Action::SinglePhoto]
                     .into_iter()

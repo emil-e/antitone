@@ -29,7 +29,7 @@ impl View {
         self.focus_active = true;
     }
 
-    pub(super) fn size_controls(&mut self, ui: &mut egui::Ui, enabled: bool) {
+    fn size_controls(&mut self, ui: &mut egui::Ui, enabled: bool) {
         use ui::icons::{Icon, button};
         if button(
             ui,
@@ -57,6 +57,12 @@ impl View {
 }
 
 impl Editor {
+    pub(super) fn lightbox_bar(&mut self, ui: &mut egui::Ui, fullscreen: bool) -> bool {
+        let enabled = !self.interaction_blocked();
+        self.document.lightbox.size_controls(ui, enabled);
+        self.fullscreen_button(ui, fullscreen)
+    }
+
     pub(super) fn show_lightbox(
         &mut self,
         ui: &mut egui::Ui,
@@ -134,7 +140,7 @@ impl Editor {
                             action = Some((index, modifiers, open_photo));
                         } else if response.enabled()
                             && response.has_focus()
-                            && !egui::Popup::is_any_open(ui.ctx())
+                            && self.workspace_input.shortcuts_allowed(ui.ctx())
                         {
                             self.select_active_shortcut(ui.ctx());
                             if let Some(index) = navigate(ui.ctx(), index, columns, order.len()) {
