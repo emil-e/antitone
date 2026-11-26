@@ -23,8 +23,8 @@ fn wb(document: &Document) -> Option<[f64; 4]> {
     document.project.acquisition_wb()
 }
 
-fn codes(scan: &Scan) -> Vec<[f32; 4]> {
-    let image = scan.source().camera_image().unwrap();
+fn codes(scan: &DevelopedSource) -> Vec<[f32; 4]> {
+    let image = scan.camera_image().unwrap();
     (0..image.height)
         .flat_map(|y| (0..image.width).map(move |x| (x, y)))
         .map(|(x, y)| image.pixel_samples(x, y).unwrap())
@@ -54,7 +54,7 @@ fn prepare(
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
     renderers: &crate::editor::display::DisplayFixture,
-) -> (Ready, Scan) {
+) -> (Ready, Arc<DevelopedSource>) {
     let id = document.project.order[0];
     let path = document.source_path(id).unwrap();
     let expected = document.project.source(id).unwrap();
@@ -83,18 +83,18 @@ fn discarding_a_candidate_snapshot_keeps_the_scope_cache_and_live_pixels() {
     let file = raw_fixture::bayer_dng();
     let document = document(file.path());
     let key = key(&document);
-    let scan = Scan::open(file.path(), wb(&document)).unwrap();
+    let scan = DevelopedSource::open(file.path(), wb(&document)).unwrap();
     document
         .cache
-        .publish_source(key.clone(), scan.source().clone())
+        .publish_source(key.clone(), scan.clone())
         .unwrap();
     let before = document.cache.charges();
     let candidate = document.capture();
     drop(candidate);
 
     assert_eq!(document.cache.charges(), before);
-    let consumer = Scan::from_source(document.cache.get(&key).unwrap());
-    assert!(Arc::ptr_eq(consumer.source(), scan.source()));
+    let consumer = document.cache.get(&key).unwrap();
+    assert!(Arc::ptr_eq(&consumer, &scan));
     assert_eq!(codes(&consumer), codes(&scan));
 }
 
@@ -105,11 +105,9 @@ fn same_document_install_keeps_protected_proxies_at_zero_optional_budget() {
     document.cache.set_budget(0);
     let cache = document.cache.clone();
     let key = key(&document);
-    let scan = Scan::open(file.path(), wb(&document)).unwrap();
-    let proxy = Arc::new(crate::scan::CameraPixels::from_scan(&scan).unwrap());
-    cache
-        .publish_source(key.clone(), scan.source().clone())
-        .unwrap();
+    let scan = DevelopedSource::open(file.path(), wb(&document)).unwrap();
+    let proxy = Arc::new(crate::scan::CameraPixels::from_source(&scan).unwrap());
+    cache.publish_source(key.clone(), scan.clone()).unwrap();
     cache.protect_proxies(vec![key.clone()]);
     cache.publish_proxy(key.clone(), proxy.clone()).unwrap();
     document.install(document.capture());
@@ -118,7 +116,7 @@ fn same_document_install_keeps_protected_proxies_at_zero_optional_budget() {
     assert_eq!(cache.charges().retained, 0);
     assert_eq!(cache.protected_bytes(), proxy.retained_bytes());
     assert!(Arc::ptr_eq(&cache.get_proxy(&key).unwrap(), &proxy));
-    assert!(Arc::ptr_eq(&cache.get(&key).unwrap(), scan.source()));
+    assert!(Arc::ptr_eq(&cache.get(&key).unwrap(), &scan));
 }
 
 #[test]
@@ -130,7 +128,7 @@ fn foreground_and_candidate_reads_share_the_scope_cache() {
         let renderers = crate::editor::display::DisplayFixture::for_device(&device);
         let (first, scan) = prepare(&document, &document.cache, &device, &queue, &renderers);
         let (_, warm) = prepare(&document, &document.cache, &device, &queue, &renderers);
-        assert!(Arc::ptr_eq(scan.source(), warm.source()));
+        assert!(Arc::ptr_eq(&scan, &warm));
         assert_eq!(codes(&scan), codes(&warm));
         assert_eq!(
             first.development().clone(),
@@ -144,7 +142,7 @@ fn foreground_and_candidate_reads_share_the_scope_cache() {
         let before = document.cache.charges();
         let candidate = document.capture();
         let (_, borrowed) = prepare(&candidate, &document.cache, &device, &queue, &renderers);
-        assert!(Arc::ptr_eq(scan.source(), borrowed.source()));
+        assert!(Arc::ptr_eq(&scan, &borrowed));
 
         assert_eq!(document.cache.charges(), before);
         drop(candidate);
@@ -183,8 +181,8 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
             field: None,
             recipe: Ok(None),
         };
-        let scan = Scan::open(&path, wb(&document)).unwrap();
-        let seed = Arc::new(crate::scan::CameraPixels::from_scan(&scan).unwrap());
+        let scan = DevelopedSource::open(&path, wb(&document)).unwrap();
+        let seed = Arc::new(crate::scan::CameraPixels::from_source(&scan).unwrap());
         thumbnails.seed_at_path(source, &path, thumbnails::FileKey::new(&path), seed.clone());
         assert!(
             !thumbnails
@@ -267,12 +265,12 @@ fn background_native_by_product_is_a_foreground_hit_under_the_shared_cpu_limit()
         assert!(document.cache.get_proxy(&key(&document)).is_some());
         assert!(document.cache.charges().retained <= BUDGET);
         let (_, foreground) = prepare(&document, &document.cache, &device, &queue, &renderers);
-        assert!(Arc::ptr_eq(&native, foreground.source()));
+        assert!(Arc::ptr_eq(&native, &foreground));
         document.cache.set_budget(0);
         assert_eq!(document.cache.charges().retained, 0);
         assert!(Arc::ptr_eq(
             &document.cache.get(&key(&document)).unwrap(),
-            foreground.source()
+            &foreground
         ));
     });
 }
@@ -283,10 +281,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
         let file = raw_fixture::bayer_dng();
         let document = document(file.path());
         document.cache.set_budget(0);
-        let native = Scan::open(file.path(), wb(&document))
-            .unwrap()
-            .source()
-            .clone();
+        let native = DevelopedSource::open(file.path(), wb(&document)).unwrap();
         let worker_native = native.clone();
         let (entered, starts) = mpsc::channel();
         let (release, resume) = mpsc::channel();
@@ -372,7 +367,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
                 }
                 release.send(()).unwrap();
                 let (_, scan) = foreground.join().unwrap().unwrap();
-                assert!(Arc::ptr_eq(scan.source(), &native));
+                assert!(Arc::ptr_eq(&scan, &native));
                 app.run_until(Duration::from_secs(5), |results| !results.is_empty());
                 let completed = app.update(|results| results.pop().unwrap()).unwrap();
                 assert!(completed.proper);
@@ -397,14 +392,8 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
             .register_with_development(record, development)
             .unwrap();
         document.cache.set_budget(0);
-        let native_a = Scan::open(a.path(), wb(&document))
-            .unwrap()
-            .source()
-            .clone();
-        let native_b = Scan::open(b.path(), wb(&document))
-            .unwrap()
-            .source()
-            .clone();
+        let native_a = DevelopedSource::open(a.path(), wb(&document)).unwrap();
+        let native_b = DevelopedSource::open(b.path(), wb(&document)).unwrap();
         let path_a = document.source_path(document.project.order[0]).unwrap();
         let path_b = document.source_path(document.project.order[1]).unwrap();
         let worker_a = path_a.clone();
@@ -586,10 +575,10 @@ fn registered_flat_reference_carries_its_document_native_reuse_key() {
     let document = document(file.path());
     let mut editor = Editor::state();
     let expected_key = key(&document);
-    let scan = Scan::open(file.path(), wb(&document)).unwrap();
+    let scan = DevelopedSource::open(file.path(), wb(&document)).unwrap();
     document
         .cache
-        .publish_source(expected_key.clone(), scan.source().clone())
+        .publish_source(expected_key.clone(), scan.clone())
         .unwrap();
     editor.document = document;
     editor.developments = Some(source_loading::SourceLoader::new());
@@ -605,5 +594,5 @@ fn registered_flat_reference_carries_its_document_native_reuse_key() {
             .source(sources.as_ref(), source_loading::Priority::Foreground),
     )
     .unwrap();
-    assert!(Arc::ptr_eq(&reused.prepared.source, scan.source()));
+    assert!(Arc::ptr_eq(&reused.prepared.source, &scan));
 }

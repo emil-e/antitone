@@ -2,11 +2,12 @@
 use antitone::{
     color::ap1_to_ap0,
     export::{self, ExrPrecision, ImageSize, Overwrite},
+    flat_field::reference as reference_field,
     processing::{Calibration, InputSettings, Pipeline, RollSettings},
     profiles,
     raw::Rect,
     rendering::{CpuRenderer, OutputTarget},
-    scan::Scan,
+    scan::DevelopedSource,
 };
 use glam::DVec3;
 use std::{path::Path, sync::Arc, time::Instant};
@@ -15,25 +16,29 @@ use std::{path::Path, sync::Arc, time::Instant};
 #[ignore = "full-size read-only local RAW export acceptance; run explicitly in release"]
 fn corrected_full_size_tiff_and_ap0_exr_reopen() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut reference = Scan::open(&root.join("samples/DSC01739.ARW"), None).unwrap();
-    let support = reference.propose_flat_field_area().unwrap().unwrap();
-    let map = Arc::new(reference.estimate_flat_field(support).unwrap());
-    let mut scan = Scan::open(
+    let reference = DevelopedSource::open(&root.join("samples/DSC01739.ARW"), None).unwrap();
+    let support = reference_field::suggest_region(&reference)
+        .unwrap()
+        .unwrap();
+    let map = Arc::new(reference_field::estimate(&reference, support).unwrap());
+    let scan = DevelopedSource::open(
         &root.join("samples/DSC01737.ARW"),
-        Some(reference.white_balance),
+        Some(reference.white_balance()),
     )
     .unwrap();
-    scan.set_flat_field(Some(map));
-    let a = scan.area;
+    let a = scan.area();
     // Diagnostic anchors exercise signed/HDR export, not photographic film calibration.
-    let dmin = scan
-        .reference(Rect {
+    let dmin = antitone::sampling::camera::reference(
+        &scan,
+        Some(&map),
+        Rect {
             x: a.x + a.width / 2 - 128,
             y: a.y + a.height / 2 - 128,
             width: 256,
             height: 256,
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     let calibration = (Calibration {
         dmin,
         dmax: dmin * 0.1,
@@ -45,12 +50,20 @@ fn corrected_full_size_tiff_and_ap0_exr_reopen() {
         ..RollSettings::default()
     };
     let input = InputSettings::negative(calibration);
-    let pipeline = Pipeline::new(input, roll, scan.camera_to_ap1).unwrap();
+    let pipeline = Pipeline::new(input, roll, scan.camera_to_ap1()).unwrap();
     let size = ImageSize {
         width: a.width,
         height: a.height,
     };
-    let pixel = |x, y| pipeline.apply(scan.pixel(a.x + x, a.y + y)?).map(|p| p.rgb);
+    let pixel = |x, y| {
+        pipeline
+            .apply(antitone::flat_field::sample_camera_light(
+                &scan,
+                Some(&map),
+                [a.x + x, a.y + y],
+            )?)
+            .map(|p| p.rgb)
+    };
     let positions: Vec<_> = (0..13)
         .flat_map(|y| (0..19).map(move |x| [x * (a.width - 1) / 18, y * (a.height - 1) / 12]))
         .collect();

@@ -1,13 +1,12 @@
 //! Original-coordinate camera samples from the shared, source-owned analysis raster.
 use super::*;
 use crate::{
-    acquisition::camera::ProcessingSource,
-    photographic::stages::flat_field::GpuFlatField,
-    scan::{AnalysisInput, AnalysisSamples},
+    acquisition::camera::ProcessingSource, photographic::stages::flat_field::GpuFlatField,
+    roll_analysis::AnalysisSamples, scan::AnalysisInput,
 };
 
 #[cfg(test)]
-use crate::scan::Scan;
+use crate::scan::DevelopedSource;
 
 #[cfg(test)]
 mod spatial;
@@ -56,11 +55,12 @@ impl<'a> CameraSampler<'a> {
     pub(crate) fn new(
         context: &'a evaluation::Context,
         gpu: &'a crate::gpu::submission::Queue,
-        scan: &Scan,
+        source: &DevelopedSource,
+        field: Option<Arc<crate::flat_field::FlatField>>,
     ) -> Result<Self, Error> {
-        let input = AnalysisInput::capture(scan, || false)?
+        let input = AnalysisInput::capture(source, || false)?
             .ok_or(Error::UnusableSample("camera capture cancelled"))?;
-        Self::retained(context, gpu, Arc::new(input), scan.flat_field().cloned())
+        Self::retained(context, gpu, Arc::new(input), field)
     }
 
     #[cfg(test)]

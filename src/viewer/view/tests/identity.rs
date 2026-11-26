@@ -148,7 +148,7 @@ fn complete_grades_reuse_the_input_image_and_replace_all_layer_values() {
             kernels,
             &scan,
             None,
-            SourceRequest::new(frame, cal, scan.camera_to_ap1, None).unwrap(),
+            SourceRequest::new(frame, cal, scan.camera_to_ap1(), None).unwrap(),
             || false,
         )
         .unwrap()
@@ -183,8 +183,8 @@ fn complete_grades_reuse_the_input_image_and_replace_all_layer_values() {
                     cal,
                     RollSettings::default(),
                     snapshot,
-                    scan.camera_to_ap1,
-                    scan.area,
+                    scan.camera_to_ap1(),
+                    scan.area(),
                 )
                 .unwrap(),
             ));
@@ -238,7 +238,7 @@ fn spatial_grades_require_the_input_coordinate_extent_but_global_grades_do_not()
             kernels,
             &scan,
             None,
-            SourceRequest::new(frame(&scan), cal, scan.camera_to_ap1, None).unwrap(),
+            SourceRequest::new(frame(&scan), cal, scan.camera_to_ap1(), None).unwrap(),
             || false,
         )
         .unwrap()
@@ -263,7 +263,7 @@ fn spatial_grades_require_the_input_coordinate_extent_but_global_grades_do_not()
                     cal,
                     RollSettings::default(),
                     AdjustmentLayerSnapshot::new(vec![layer]).unwrap(),
-                    scan.camera_to_ap1,
+                    scan.camera_to_ap1(),
                     area,
                 )
                 .unwrap(),
@@ -276,15 +276,15 @@ fn spatial_grades_require_the_input_coordinate_extent_but_global_grades_do_not()
                 None,
             )
         };
-        assert!(admit(scan.area, local).is_ok());
+        assert!(admit(scan.area(), local).is_ok());
         for area in [
             SourceRegion {
-                width: scan.area.width / 2,
-                ..scan.area
+                width: scan.area().width / 2,
+                ..scan.area()
             },
             SourceRegion {
-                x: scan.area.x + 1,
-                ..scan.area
+                x: scan.area().x + 1,
+                ..scan.area()
             },
         ] {
             assert!(

@@ -18,18 +18,24 @@ fn supplied_photo_distribution_measures_cube_approximation_without_retuning_mate
     let id = project.order[0];
     let source = project.source(id).unwrap();
     let white_balance = project.input.is_negative().then_some([1.; 4]);
-    let mut scan = crate::scan::Scan::open(&source.path, white_balance).unwrap();
-    scan.reference_exposure = project.exposure_metadata.as_ref().and_then(|m| {
+    let scan = crate::scan::DevelopedSource::open(&source.path, white_balance).unwrap();
+    let scan_reference = project.exposure_metadata.as_ref().and_then(|m| {
         m.entries
             .iter()
             .find(|e| e.source == id)
             .map(|e| e.reference.clone())
     });
     assert!(
-        project.input.is_negative() || scan.reference_exposure.is_some(),
+        project.input.is_negative() || scan_reference.is_some(),
         "Digital must retain its recorded starting exposure"
     );
-    let image = crate::scan::ImageSource::new(&scan, project.input).unwrap();
+    let image = crate::scan::ImageSource::new(
+        &scan,
+        project.input,
+        scan_reference.as_ref().map(|reference| reference.ev()),
+        None,
+    )
+    .unwrap();
     let roll = crate::processing::RollPipeline::new(project.roll).unwrap();
     let area = image.area();
     let mut inputs = Vec::new();
@@ -109,7 +115,7 @@ fn supplied_photo_distribution_measures_cube_approximation_without_retuning_mate
         }
     });
     let report = serde_json::json!({"project":path,"source":source.path,
-        "input":project.input,"roll":project.roll,"reference_exposure":scan.reference_exposure,
+        "input":project.input,"roll":project.roll,"reference_exposure":scan_reference,
         "local_grades_and_texture_evaluated":false,"samples":inputs.len(),
         "outside_lut_window_reported_separately":outside,"signed_samples":inputs.iter().filter(|v|v.min_element()<0.).count(),
         "hdr_samples":inputs.iter().filter(|v|v.max_element()>1.).count(),

@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    project::SourceDevelopment,
-    scan::{DevelopedSource, Scan},
-};
+use crate::{project::SourceDevelopment, scan::DevelopedSource};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Backend {
@@ -21,13 +18,12 @@ impl SourceProvider for Backend {
 #[test]
 fn scoped_and_cacheless_providers_share_one_acquisition_contract_without_sharing_retention() {
     let file = crate::raw::fixture::bayer_dng();
-    let scan = Scan::open(file.path(), Some([1.; 4])).unwrap();
+    let scan = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
     let development =
-        SourceDevelopment::from_metadata(&scan.source().metadata(), scan.source().white_balance())
-            .unwrap();
+        SourceDevelopment::from_metadata(&scan.metadata(), scan.white_balance()).unwrap();
     let key = SourceKey::capture(file.path(), &development).unwrap();
     let backend = Arc::new(Backend {
-        source: scan.source().clone(),
+        source: scan.clone(),
         calls: AtomicUsize::new(0),
     });
     let cache = Arc::new(SourceCache::new(1 << 20));

@@ -179,7 +179,7 @@ The editor uses several image representations for different jobs:
 
 | Representation | Purpose |
 | --- | --- |
-| Full developed `Scan` | Full-resolution measurement, refinement and export |
+| Developed RAW pixels | Original-grid measurement, refinement and export |
 | Camera-RGB proxy | Initial/pending feedback and uncalibrated/source-inspection thumbnails |
 | Camera-proxy photograph | Positive navigation cards with current grading, look and framing |
 | Physical-view calculation | Preview-quality photograph on the requested grid |

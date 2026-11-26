@@ -19,12 +19,14 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
         ([5898, 23592, 11796], 0.36_f32),
     ] {
         let file = crate::raw::fixture::bayer_dng_with_as_shot(rgb, [4, 1, 2]);
-        let scan = Scan::from_raw(
-            crate::raw::RawFile::open_uncorrected(file.path()).unwrap(),
-            None,
-        )
-        .unwrap();
-        let area = scan.area;
+        let scan = std::sync::Arc::new(
+            DevelopedSource::from_raw(
+                crate::raw::RawFile::open_uncorrected(file.path()).unwrap(),
+                None,
+            )
+            .unwrap(),
+        );
+        let area = scan.area();
         let mut project = Project {
             input: InputSettings::Digital,
             ..Default::default()
@@ -36,11 +38,11 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
                 id: SourceId(0),
                 path: file.path().into(),
                 development: SourceDevelopment {
-                    decode: scan.source().metadata().development(scan.white_balance),
+                    decode: scan.metadata().development(scan.white_balance()),
                     dimensions: [64; 2],
                     active_area: [area.x, area.y, area.width, area.height],
-                    camera_model: scan.camera_model.clone(),
-                    camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
+                    camera_model: scan.camera_model().to_owned(),
+                    camera_to_ap1: scan.camera_to_ap1().to_cols_array_2d(),
                 },
                 adjustment_layers: None,
                 repairs: Default::default(),
@@ -69,9 +71,18 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
                 .iter()
                 .all(|layer| layer.photo.exposure == 0.)
         );
-        let recipe = project.image_recipe(id).unwrap();
+        let prepared = crate::photo_preparation::native(
+            None,
+            &std::sync::OnceLock::new(),
+            project.input,
+            &scan,
+        )
+        .unwrap();
+        let recipe = project
+            .image_recipe_with_reference(project.source(id).unwrap(), prepared.reference)
+            .unwrap();
         let healed = crate::repair_source::evaluate(
-            &crate::scan::ImageSource::new(&scan, InputSettings::Digital).unwrap(),
+            &crate::scan::ImageSource::new(&scan, InputSettings::Digital, None, None).unwrap(),
             &recipe.repairs[0],
         )
         .unwrap();
@@ -86,7 +97,7 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
             &context,
             &queue,
             Job {
-                scan: &scan,
+                source: &scan,
                 field: None,
                 recipe: &recipe,
                 render: Render::resolve::<Error>(Format::Exr(ExrPrecision::Full).plan(), || {

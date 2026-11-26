@@ -47,7 +47,7 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
             input,
             roll,
             layers,
-            train.camera_to_ap1,
+            train.camera_to_ap1(),
         )
     })
     .unwrap();
@@ -61,7 +61,7 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
             .await
             .unwrap();
         let source =
-            ProcessingSource::new_continuous(&device, &codes, train.camera_to_ap1, None).unwrap();
+            ProcessingSource::new_continuous(&device, &codes, train.camera_to_ap1(), None).unwrap();
         assert_eq!(source.byte_len(), codes.len() as u64 * 16);
         let kernel = CameraFixture::new(&device).await.unwrap();
         let grade = antitone::photographic::test_inputs::AuthoredPhotograph::new(
@@ -72,7 +72,7 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
                 antitone::adjustment_layers::AdjustmentLayer::global(photo),
             ])
             .unwrap(),
-            train.camera_to_ap1,
+            train.camera_to_ap1(),
             [0, 0, codes.len() as u32, 1].into(),
         )
         .unwrap();

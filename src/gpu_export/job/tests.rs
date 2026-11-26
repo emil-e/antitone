@@ -10,6 +10,7 @@ use crate::{
     dust_repair::{RepairOrigin, SupportMask},
     photographic::test_inputs::AuthoredPhotograph,
     project::{Development, Project, Source, SourceDevelopment, SourceId},
+    scan::DevelopedSource,
 };
 mod cancellation;
 #[cfg(feature = "ocio-reference")]
@@ -19,15 +20,15 @@ mod source_scale;
 #[cfg(feature = "ocio-reference")]
 mod starting_exposure;
 
-fn fixture(scan: &Scan) -> (Project, SourceId) {
+fn fixture(scan: &DevelopedSource) -> (Project, SourceId) {
     let (width, height) = scan.dimensions().unwrap();
-    let a = scan.area;
+    let a = scan.area();
     let mut source_development = SourceDevelopment {
-        decode: scan.source().metadata().development(scan.white_balance),
+        decode: scan.metadata().development(scan.white_balance()),
         dimensions: [width, height],
         active_area: [a.x, a.y, a.width, a.height],
-        camera_model: scan.camera_model.clone(),
-        camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
+        camera_model: scan.camera_model().to_owned(),
+        camera_to_ap1: scan.camera_to_ap1().to_cols_array_2d(),
     };
     source_development.decode = Development::for_source(&source_development);
     let mut project = Project {
@@ -74,16 +75,16 @@ fn fixture(scan: &Scan) -> (Project, SourceId) {
 fn calibrated_neutral_readout_matches_an_ordinary_finite_source_sample() {
     let (device, queue, renderer) = super::super::tests::context();
     let file = crate::raw::fixture::bayer_dng();
-    let mut scan = Scan::open(file.path(), None).unwrap();
-    let area = scan.area;
-    scan.set_flat_field(Some(Arc::new(
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    let area = scan.area();
+    let scan_field = Some(Arc::new(
         crate::flat_field::FlatField::from_nodes(
             [area.x, area.y, area.width, area.height],
             [2, 2],
             vec![DVec3::splat(0.065535); 4],
         )
         .unwrap(),
-    )));
+    ));
     let (mut project, id) = fixture(&scan);
     project.input = InputSettings::negative(crate::processing::Calibration {
         dmin: DVec3::splat(0.7),
@@ -94,9 +95,9 @@ fn calibrated_neutral_readout_matches_an_ordinary_finite_source_sample() {
     }
     project.roll.exposure = 0.5;
     let mut recipe = project.image_recipe(id).unwrap();
-    recipe.neutral.correction = scan.flat_field().cloned();
+    recipe.neutral.correction = scan_field.clone();
     let input = recipe.neutral.input;
-    let matrix = scan.positive_matrix(&input).unwrap();
+    let matrix = input.positive_matrix(scan.camera_to_ap1(), None).unwrap();
     assert!(
         AuthoredPhotograph::new(
             &device.limits(),
@@ -109,7 +110,7 @@ fn calibrated_neutral_readout_matches_an_ordinary_finite_source_sample() {
         .is_ok(),
         "valid photographic controls must not require a parameter-wide neutral range proof"
     );
-    let actual_local = crate::scan::ImageSource::new(&scan, input)
+    let actual_local = crate::scan::ImageSource::new(&scan, input, None, scan_field.clone())
         .unwrap()
         .sample([area.x + 16, area.y + 16])
         .unwrap();
@@ -118,7 +119,7 @@ fn calibrated_neutral_readout_matches_an_ordinary_finite_source_sample() {
         "this local sample exercises ordinary HDR, not arithmetic saturation"
     );
 
-    let field = scan.flat_field().cloned().map(|map| {
+    let field = scan_field.clone().map(|map| {
         Arc::new(crate::photographic::stages::flat_field::GpuFlatField::new(&device, map).unwrap())
     });
     let mut local_source = crate::dust_repair::image_source::Source::from_recipe(
@@ -143,7 +144,7 @@ fn calibrated_neutral_readout_matches_an_ordinary_finite_source_sample() {
 }
 
 fn repair_demand(
-    scan: &Scan,
+    scan: &Arc<DevelopedSource>,
     recipe: &crate::image_recipe::ImageRecipe,
     device: &wgpu::Device,
     index: usize,
@@ -178,12 +179,12 @@ fn repair_demand(
 #[test]
 fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_honours_stops() {
     let (device, queue, renderer) = super::super::tests::context();
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
     .unwrap();
-    let a = scan.area;
+    let a = scan.area();
     let (mut project, id) = fixture(&scan);
     project
         .source_mut(id)
@@ -215,7 +216,7 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
     assert_eq!(recipe.repairs.len(), 2);
     assert!(
         crate::repair_source::evaluate(
-            &crate::scan::ImageSource::new(&scan, recipe.neutral.input).unwrap(),
+            &crate::scan::ImageSource::new(&scan, recipe.neutral.input, None, None).unwrap(),
             &recipe.repairs[1]
         )
         .is_err(),
@@ -232,7 +233,7 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("result.tif");
     let job = |recipe| Job {
-        scan: &scan,
+        source: &scan,
         field: None,
         recipe,
         render: fixture_render(Format::Tiff(OutputTarget::Srgb), &renderer),
@@ -300,7 +301,7 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
 
 #[test]
 fn cold_frame_edge_repairs_use_the_common_engine_for_tiff_and_exr() {
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
@@ -340,7 +341,7 @@ fn cold_frame_edge_repairs_use_the_common_engine_for_tiff_and_exr() {
             renderer.evaluation(),
             &queue,
             Job {
-                scan: &scan,
+                source: &scan,
                 field: None,
                 recipe: &recipe,
                 render: fixture_render(format, &renderer),

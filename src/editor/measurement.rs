@@ -1,5 +1,5 @@
 use super::*;
-use crate::{cancellation::Cancellation, photographic::stages::flat_field::GpuFlatField};
+use crate::cancellation::Cancellation;
 use std::future::Future;
 
 pub(super) mod query;
@@ -7,37 +7,6 @@ pub(super) mod query;
 pub(super) mod testing;
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-pub(super) fn capture_scan(editor: &Editor) -> Result<Scan, String> {
-    let ready = editor
-        .document
-        .visit
-        .canvas
-        .ready
-        .as_ref()
-        .ok_or("No developed source for measurement")?;
-    let mut scan = Scan::with_reference(ready.developed.clone(), ready.reference.clone());
-    scan.set_flat_field(editor.correction().map().cloned());
-    Ok(scan)
-}
-
-pub(super) type CapturedInput = (Scan, Option<Arc<GpuFlatField>>);
-
-pub(super) fn capture_input(
-    editor: &Editor,
-) -> Result<impl Future<Output = Result<CapturedInput, String>> + use<>, String> {
-    let input = editor.capture_source_context()?;
-    Ok(async move {
-        let context = input.await?;
-        let scan = context.scan().map_err(|error| error.to_string())?;
-        let field = context
-            .correction
-            .gpu()
-            .map_err(|error| error.to_string())?;
-        Ok((scan, field))
-    })
-}
 
 use crate::{evaluation::Context, gpu::submission::Queue};
 

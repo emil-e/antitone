@@ -10,7 +10,6 @@ use crate::acquisition::camera::SourceGeometry;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::photographic::graph::test_support::CameraFixture;
 use crate::photographic::test_inputs::AuthoredPhotograph;
-use crate::raw_test_support::train_raw;
 use api::adjustment_layers::AdjustmentLayer;
 use api::adjustment_layers::AdjustmentLayerCoverage;
 use api::adjustment_layers::AdjustmentLayerPipeline;
@@ -181,8 +180,8 @@ fn mapped_pixels(
 #[test]
 #[ignore = "read-only train RAW, diagnostic calibration, Metal parity/timing and rotated local refinement; run explicitly in release"]
 fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
-    let (scan, calibration) = train_raw::load();
-    let area = scan.area;
+    let (scan, calibration) = crate::raw_test_support::train_raw::load();
+    let area = scan.area();
     let roll = RollSettings::default();
     let graded_global = AdjustmentLayerSettings {
         exposure: -2.,
@@ -196,7 +195,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
         println!(
             "local_raw adapter={:?} camera={} source_area={area:?} samples=3 warmups=1 timing=encode_submit_gpu_completion excludes=raw_development_upload_readback_reconstruction_scopes_presentation calibration=diagnostic",
             adapter.get_info(),
-            scan.camera_model
+            scan.camera_model()
         );
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
@@ -226,7 +225,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
         };
         let tile = scan
             .tile_region(
-                scan.area,
+                scan.area(),
                 tile_area.x - area.x,
                 tile_area.y - area.y,
                 1024,
@@ -248,7 +247,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
             let source = ProcessingSource::new_continuous(
                 &device,
                 &pixels,
-                scan.camera_to_ap1,
+                scan.camera_to_ap1(),
                 Some(geometry),
             )
             .unwrap();
@@ -296,7 +295,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
                     calibration,
                     roll,
                     snapshot.clone(),
-                    scan.camera_to_ap1,
+                    scan.camera_to_ap1(),
                     area,
                 ) {
                     Ok(grade) => Arc::new(grade),
@@ -338,7 +337,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
                     );
                 }
                 let pipeline =
-                    AdjustmentLayerPipeline::new(calibration, roll, snapshot, scan.camera_to_ap1)
+                    AdjustmentLayerPipeline::new(calibration, roll, snapshot, scan.camera_to_ap1())
                         .unwrap();
                 let mut working = Vec::with_capacity(pixels.len());
                 let mut worst = 0_f64;
@@ -382,7 +381,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
                         renderer.drt(target),
                         [size[0], size[1]],
                         &pixels,
-                        scan.camera_to_ap1,
+                        scan.camera_to_ap1(),
                         Some(geometry),
                     )
                     .await
@@ -434,11 +433,11 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
             calibration,
             roll,
             grade.snapshot().clone(),
-            scan.camera_to_ap1,
+            scan.camera_to_ap1(),
         )
         .unwrap();
         let composition = Composition::with_crop(
-            scan.area,
+            scan.area(),
             Default::default(),
             Default::default(),
             Some(Crop {
@@ -478,7 +477,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
                 &renderer,
                 &device,
                 &queue,
-                (&scan, None),
+                (&scan, None, None),
                 grade.clone(),
                 target,
                 (&generation, 0),

@@ -3,11 +3,7 @@
 //! ownership and UI tickets. Started work stays pinned to its owner, and at most
 //! two owners overlap independent sources, yielding to foreground demand.
 use super::{SourceKey, SourceProvider, metadata as source_metadata};
-use crate::{
-    Error,
-    project::Source,
-    scan::{DevelopedSource, Scan},
-};
+use crate::{Error, project::Source, scan::DevelopedSource};
 use std::{
     collections::HashMap,
     future::Future,
@@ -373,16 +369,17 @@ impl SourceLoader {
                     #[cfg(feature = "gpu")]
                     raw.set_demosaicer(demosaicer.clone());
                     raw.set_development_share(task.share.load(Ordering::Relaxed));
-                    let scan = Scan::from_raw(raw, task.request.wb).map_err(|e| e.to_string())?;
+                    let developed = DevelopedSource::from_raw(raw, task.request.wb)
+                        .map_err(|e| e.to_string())?;
                     #[cfg(test)]
                     observe(
                         &task.request.path,
                         NativePhase::DevelopEnd,
-                        Some(&scan.source().metadata()),
+                        Some(&developed.metadata()),
                     )?;
-                    source_metadata::verify_scan(&input.record, &scan)
+                    source_metadata::verify_development(&input.record, &developed)
                         .map_err(|e| e.to_string())?;
-                    Ok(Some(scan.source().clone()))
+                    Ok(Some(Arc::new(developed)))
                 } else {
                     #[cfg(test)]
                     observe(&task.request.path, NativePhase::Open, None)?;

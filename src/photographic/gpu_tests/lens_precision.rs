@@ -7,7 +7,6 @@
 use crate::photographic::graph::test_support::CameraFixture;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 
-use crate::raw_test_support::train_raw;
 use antitone as api;
 use glam::{DMat3, DVec3};
 use std::{
@@ -29,7 +28,7 @@ use {
         processing::{Calibration, RollSettings},
         raw::RawFile,
         rendering::{CpuRenderer, OutputTarget},
-        scan::Scan,
+        scan::DevelopedSource,
     },
 };
 
@@ -53,13 +52,13 @@ fn camera(p: [f32; 4]) -> DVec3 {
 }
 
 fn sample(
-    scan: &Scan,
+    scan: &DevelopedSource,
     geometry: Option<&EmbeddedLensGeometry>,
     tile: bool,
     label: &str,
     calibration: Option<Calibration>,
 ) -> Dataset {
-    let image = scan.source().camera_image().unwrap();
+    let image = scan.camera_image().unwrap();
     let dimensions = geometry.map_or([image.width, image.height], EmbeddedLensGeometry::size);
     let size = if tile { [384, 384] } else { [256, 171] };
     let mut codes = Vec::new();
@@ -105,7 +104,7 @@ fn sample(
         size,
         codes,
         calibration,
-        matrix: scan.camera_to_ap1,
+        matrix: scan.camera_to_ap1(),
         flat: false,
         spatial: false,
     }
@@ -604,13 +603,13 @@ fn supplied_raw_storage_precision_study() {
             raw.metadata.vendor.sony_lens.profile().unwrap().unwrap()
         })
         .collect();
-    let (train, calibration) = train_raw::load();
+    let (train, calibration) = crate::raw_test_support::train_raw::load();
     println!(
         "precision real_film_calibration={calibration:?} wb={:?}; adapted-lens scans have no usable profile: borrowed Sony warps below are diagnostic resampling only, not calibrated lens correction",
-        train.white_balance
+        train.white_balance()
     );
     for (i, profile) in profiles.iter().enumerate() {
-        let geometry = EmbeddedLensGeometry::new(profile.clone(), train.area).unwrap();
+        let geometry = EmbeddedLensGeometry::new(profile.clone(), train.area()).unwrap();
         for tile in [false, true] {
             let label = format!(
                 "film-train-borrowed{}-{}",
@@ -629,10 +628,10 @@ fn supplied_raw_storage_precision_study() {
             }
         }
     }
-    let wb = train.white_balance;
+    let wb = train.white_balance();
     drop(train);
-    let dense = Scan::open(&root.join("DSC04378.ARW"), Some(wb)).unwrap();
-    let geometry = EmbeddedLensGeometry::new(profiles[0].clone(), dense.area).unwrap();
+    let dense = DevelopedSource::open(&root.join("DSC04378.ARW"), Some(wb)).unwrap();
+    let geometry = EmbeddedLensGeometry::new(profiles[0].clone(), dense.area()).unwrap();
     for tile in [false, true] {
         let mut data = sample(
             &dense,
@@ -655,7 +654,8 @@ fn supplied_raw_storage_precision_study() {
     }
     drop(dense);
     for name in ["DSC00638", "DSC00632", "DSC00666", "DSC00635"] {
-        let scan = Scan::open(&root.join("non-scans").join(format!("{name}.ARW")), None).unwrap();
+        let scan = DevelopedSource::open(&root.join("non-scans").join(format!("{name}.ARW")), None)
+            .unwrap();
         report(
             &sample(&scan, None, false, name, None),
             &gpu,

@@ -296,7 +296,9 @@ fn input_stage_switch_accepts_intent_and_consumers_acquire_each_photographs_wb()
     let red = directory.path().join("red-neutral.dng");
     std::fs::write(&red, super::super::tests::dng_with_red_as_shot(&original)).unwrap();
     assert_ne!(
-        crate::scan::Scan::open(&red, None).unwrap().white_balance,
+        crate::scan::DevelopedSource::open(&red, None)
+            .unwrap()
+            .white_balance(),
         crate::project::UNITY_WB
     );
     let scheduler = source_loading::SourceLoader::new();
@@ -347,7 +349,7 @@ fn input_stage_switch_accepts_intent_and_consumers_acquire_each_photographs_wb()
                 .unwrap();
                 assert_eq!(acquired.record.development, expected.development);
                 assert_eq!(
-                    acquired.prepared.scan().white_balance,
+                    acquired.prepared.source.white_balance(),
                     expected.development.decode.white_balance
                 );
             }
@@ -464,14 +466,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 e.status
             );
             assert!(e.correction().prepared().is_none() && !e.document.source);
-            assert!(
-                e.source_context()
-                    .unwrap()
-                    .scan()
-                    .unwrap()
-                    .flat_field()
-                    .is_none()
-            );
+            assert!(e.source_context().unwrap().correction.map().is_none());
             assert!(e.document.state.project.flat_field.is_none());
             assert_eq!(
                 e.history_label(history::Direction::Undo),

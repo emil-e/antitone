@@ -75,13 +75,13 @@ fn observe(image: &Value, observation: &Arc<Observation>) -> Value {
 fn export_cancellation_reaches_the_real_healer_after_its_inputs_arrive_and_preserves_the_destination()
  {
     let (device, queue, renderer) = super::super::super::tests::context();
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
     .unwrap();
     let (mut project, id) = fixture(&scan);
-    let area = scan.area;
+    let area = scan.area();
     project
         .source_mut(id)
         .unwrap()

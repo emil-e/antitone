@@ -1,7 +1,7 @@
 use super::*;
 
-fn authored_scan() -> Scan {
-    Scan::open(
+fn authored_scan() -> Arc<DevelopedSource> {
+    DevelopedSource::open(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
@@ -11,10 +11,10 @@ fn authored_scan() -> Scan {
 #[test]
 fn minified_camera_proxy_averages_a_bounded_grid_in_continuous_camera_units() {
     let scan = authored_scan();
-    let proxy = CameraProxy::sample(&scan, 16).unwrap();
+    let proxy = CameraPixels::sample(&scan, 16).unwrap();
     let [width, height] = proxy.dimensions();
-    let area = scan.area;
-    let image = scan.source.camera_image().unwrap();
+    let area = scan.area();
+    let image = scan.camera_image().unwrap();
     assert!(area.width / width >= 4 && area.height / height >= 4);
     let mut distinguishes_point_sampling = false;
     for y in 0..height {
@@ -48,19 +48,19 @@ fn minified_camera_proxy_averages_a_bounded_grid_in_continuous_camera_units() {
         distinguishes_point_sampling,
         "the fixture must expose a regression to a single sample, beyond code rounding"
     );
-    assert_eq!(proxy.matrix, scan.camera_to_ap1);
+    assert_eq!(proxy.matrix, scan.camera_to_ap1());
 }
 
 #[test]
 fn native_sized_camera_proxy_preserves_samples_without_upscaling() {
     let scan = authored_scan();
-    let proxy = CameraProxy::from_scan(&scan).unwrap();
-    assert_eq!(proxy.dimensions(), [scan.area.width, scan.area.height]);
-    let image = scan.source.camera_image().unwrap();
+    let proxy = CameraPixels::from_source(&scan).unwrap();
+    assert_eq!(proxy.dimensions(), [scan.area().width, scan.area().height]);
+    let image = scan.camera_image().unwrap();
     for y in 0..proxy.height {
         for x in 0..proxy.width {
             let expected = image
-                .pixel_samples(scan.area.x + x, scan.area.y + y)
+                .pixel_samples(scan.area().x + x, scan.area().y + y)
                 .unwrap();
             let actual = proxy.pixels[(y * proxy.width + x) as usize];
             assert_eq!(actual[..3], expected[..3]);

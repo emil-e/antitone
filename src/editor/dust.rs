@@ -2021,8 +2021,12 @@ fn search_pixels(
     if stopped() {
         return Ok(SearchOutcome::Cancelled);
     }
-    let scan = input.context.scan()?;
-    let (scan, recipe) = crate::photo_preparation::native_image(&scan, &input.recipe)?;
+    let developed = &input.context.source;
+    let recipe = crate::photo_preparation::native_recipe(
+        developed,
+        input.context.reference.as_ref(),
+        &input.recipe,
+    )?;
     let (evaluation, queue) = input
         .gpu
         .as_ref()
@@ -2031,14 +2035,14 @@ fn search_pixels(
         input.context.correction.gpu()?,
         evaluation,
         queue,
-        &scan,
+        developed,
         &recipe,
     )?;
 
     crate::dust_repair::search_image(
         &input.support,
         input.previous_offset,
-        scan.area,
+        developed.area(),
         &mut source,
         std::time::Instant::now() + crate::dust_repair::SEARCH_BUDGET,
         crate::dust_repair::SEARCH_ACCEPTABLE_SCORE,

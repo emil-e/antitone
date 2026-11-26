@@ -24,12 +24,12 @@ fn editor_background_prewarm_initializes_the_shared_display_targets() {
 #[test]
 fn renderer_exports_exact_rotated_tiff_and_both_exr_precisions_and_stops_safely() {
     let (device, queue, renderer) = super::tests::context();
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
     .unwrap();
-    let a = scan.area;
+    let a = scan.area();
     let exact = Composition::new(a, Default::default(), Default::default()).unwrap();
     let rotated = Composition::with_crop(
         a,
@@ -47,7 +47,8 @@ fn renderer_exports_exact_rotated_tiff_and_both_exr_precisions_and_stops_safely(
     .unwrap();
     let request = |composition, format| Request {
         calculation: None,
-        scan: &scan,
+        source: &scan,
+        reference_ev: None,
         field: None,
         input: Calibration {
             dmin: DVec3::splat(0.8),

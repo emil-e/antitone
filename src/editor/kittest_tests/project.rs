@@ -94,17 +94,17 @@ fn compare_pixel(harness: &Harness<'_, Editor>) -> (DVec3, Vec<glam::Vec3>, Vec<
                 .unwrap(),
         )
     });
-    let scan = Scan::open(&path, wb).unwrap();
+    let scan = DevelopedSource::open(&path, wb).unwrap();
     let point = [
-        scan.area.x + scan.area.width / 2,
-        scan.area.y + scan.area.height / 2,
+        scan.area().x + scan.area().width / 2,
+        scan.area().y + scan.area().height / 2,
     ];
     let pixel = scan.pixel(point[0], point[1]).unwrap();
     let working = crate::adjustment_layers::AdjustmentLayerPipeline::new(
         input,
         roll,
         snapshot,
-        scan.camera_to_ap1,
+        scan.camera_to_ap1(),
     )
     .unwrap()
     .apply(pixel, point)
@@ -277,33 +277,41 @@ fn project_widgets_save_precision_order_and_reject_invalid_project_metadata_atom
                 editor.status
             );
             assert!(editor.document.state.project.sources.iter().all(|source| {
-                Scan::open(
+                DevelopedSource::open(
                     &editor.document.source_path(source.id).unwrap(),
                     editor.document.project.acquisition_wb(),
                 )
                 .unwrap()
-                .white_balance
+                .white_balance()
                     == crate::project::UNITY_WB
             }));
         });
-        let mut scan = Scan::open(&paths[0], Some(crate::project::UNITY_WB)).unwrap();
+        let scan = DevelopedSource::open(&paths[0], Some(crate::project::UNITY_WB)).unwrap();
         harness.update(|e| {
             e.set_dmin(Some(
-                scan.reference(Rect {
-                    x: 16,
-                    y: 16,
-                    width: 32,
-                    height: 32,
-                })
+                crate::sampling::camera::reference(
+                    &scan,
+                    None,
+                    Rect {
+                        x: 16,
+                        y: 16,
+                        width: 32,
+                        height: 32,
+                    },
+                )
                 .unwrap(),
             ));
             e.set_dmax(Some(
-                scan.reference(Rect {
-                    x: 80,
-                    y: 16,
-                    width: 32,
-                    height: 32,
-                })
+                crate::sampling::camera::reference(
+                    &scan,
+                    None,
+                    Rect {
+                        x: 80,
+                        y: 16,
+                        width: 32,
+                        height: 32,
+                    },
+                )
                 .unwrap(),
             ));
             e.document.source = false;

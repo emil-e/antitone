@@ -42,16 +42,14 @@ impl AnalysisInput {
     }
 
     pub(crate) fn capture(
-        scan: &Scan,
+        source: &DevelopedSource,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<Option<Self>> {
-        let scale = (f64::from(ANALYSIS_LONG_EDGE)
-            / f64::from(scan.area.width.max(scan.area.height)))
-        .min(1.);
-        let size = [scan.area.width, scan.area.height]
-            .map(|v| (f64::from(v) * scale).round().max(1.) as u32);
-        let grid = SourceRaster::new(scan.area, size)?;
-        let image = scan.source.camera_image()?;
+        let area = source.area();
+        let (width, height) = preview_dimensions(area, ANALYSIS_LONG_EDGE)?;
+        let size = [width, height];
+        let grid = SourceRaster::new(area, size)?;
+        let image = source.camera_image()?;
         let mut pixels = Vec::with_capacity((size[0] * size[1]) as usize);
         for y in 0..size[1] {
             if cancelled() {

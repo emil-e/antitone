@@ -914,7 +914,9 @@ fn digital_source_inspection_does_not_balance_as_shot_development_twice() {
         let id = editor.document.state.project.order[0];
         let source = editor.document.state.project.source(id).unwrap().clone();
         assert_ne!(
-            Scan::open(&source.path, None).unwrap().white_balance,
+            DevelopedSource::open(&source.path, None)
+                .unwrap()
+                .white_balance(),
             crate::project::UNITY_WB
         );
         let expected = ProcessingParameters::source_preview(None, 0.37).unwrap();

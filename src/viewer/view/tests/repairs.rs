@@ -10,9 +10,12 @@ use crate::{
     processing::{NegativeInput, Response},
 };
 
-fn repaired(scan: &Scan) -> (Vec<Replacement>, Arc<crate::dust_repair::EvaluatedRepair>) {
+fn repaired(
+    scan: &DevelopedSource,
+) -> (Vec<Replacement>, Arc<crate::dust_repair::EvaluatedRepair>) {
     let roll = RollSettings::default();
-    let scalar = crate::processing::Pipeline::new(calibration(), roll, scan.camera_to_ap1).unwrap();
+    let scalar =
+        crate::processing::Pipeline::new(calibration(), roll, scan.camera_to_ap1()).unwrap();
     let support =
         SupportMask::new([124, 40], [9, 9], (0..81).map(|i| i % 3 != 0).collect()).unwrap();
     let repair = Repair {
@@ -23,7 +26,7 @@ fn repaired(scan: &Scan) -> (Vec<Replacement>, Arc<crate::dust_repair::Evaluated
         support,
     };
     let evaluated = Arc::new(
-        crate::dust_repair::evaluate(&repair, scan.area, |p| {
+        crate::dust_repair::evaluate(&repair, scan.area(), |p| {
             Ok(scalar
                 .apply(scan.pixel(p[0], p[1])?)?
                 .rgb
@@ -45,7 +48,7 @@ fn batched_fixture_demands_keep_their_own_captured_neutral_arguments() {
         let scan = scan();
         let (replacements, _) = repaired(&scan);
         let plain =
-            SourceRequest::new(frame(&scan), calibration(), scan.camera_to_ap1, None).unwrap();
+            SourceRequest::new(frame(&scan), calibration(), scan.camera_to_ap1(), None).unwrap();
         let mut input = plain.processing_fixture();
         input.replacements = replacements;
         let changed = SourceRequest::for_processing(plain.frame(), &input).unwrap();
@@ -85,7 +88,7 @@ fn repaired_materialization_joins_live_consumers_after_one_waiter_retires() {
         let scan = scan();
         let (repairs, _) = repaired(&scan);
         let spec =
-            SourceRequest::new(frame(&scan), calibration(), scan.camera_to_ap1, None).unwrap();
+            SourceRequest::new(frame(&scan), calibration(), scan.camera_to_ap1(), None).unwrap();
         let scope = renderer.evaluation().test_materializations(false);
         let gate = queue.clone();
         let base = ViewImage::original_prefixes(
@@ -185,7 +188,7 @@ fn repaired_materialization_joins_live_consumers_after_one_waiter_retires() {
 fn render_repaired(
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
-    scan: &Scan,
+    scan: &Arc<DevelopedSource>,
     scope: &crate::evaluation::Materializations,
     renderer: &Arc<crate::render_fixture::RenderFixture>,
     base: Arc<ViewImage>,
@@ -443,13 +446,13 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
         let scalar = crate::processing::Pipeline::new(
             calibration(),
             RollSettings::default(),
-            scan.camera_to_ap1,
+            scan.camera_to_ap1(),
         )
         .unwrap();
         let native = frame(&scan);
         let mut rotated = native;
         rotated.composition = Composition::with_crop(
-            scan.area,
+            scan.area(),
             Default::default(),
             Default::default(),
             Some(crate::crop::Crop {
@@ -462,7 +465,8 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
         rotated = FrameRaster::full(rotated.composition).unwrap();
         rotated.output = [31, 23];
         for frame in [native, rotated] {
-            let spec = SourceRequest::new(frame, calibration(), scan.camera_to_ap1, None).unwrap();
+            let spec =
+                SourceRequest::new(frame, calibration(), scan.camera_to_ap1(), None).unwrap();
             let source = ViewImage::original_prefixes(
                 &device,
                 &queue,
@@ -516,7 +520,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                     .unwrap();
                 let mut expected = DVec3::ZERO;
                 let mut repaired = false;
-                for (p, w) in footprint.pixels(scan.area).unwrap() {
+                for (p, w) in footprint.pixels(scan.area()).unwrap() {
                     let base = scalar.apply(scan.pixel(p[0], p[1]).unwrap()).unwrap().rgb;
                     if evaluated.support().contains(p) {
                         expected +=
@@ -658,7 +662,7 @@ fn repair_instruction_changes_restore_removed_support_and_leave_published_inputs
         };
         let mut frame = frame(&scan);
         frame.output = [31, 23];
-        let clean = SourceRequest::new(frame, calibration(), scan.camera_to_ap1, None).unwrap();
+        let clean = SourceRequest::new(frame, calibration(), scan.camera_to_ap1(), None).unwrap();
         let scope = renderer.evaluation().test_materializations(false);
         let build = |repairs: Vec<Repair>, cancelled: bool| {
             let mut input = clean.processing_fixture();
@@ -700,8 +704,8 @@ fn repair_instruction_changes_restore_removed_support_and_leave_published_inputs
         );
         let without_first = build(vec![second.clone()], false).unwrap().unwrap();
         let scalar =
-            crate::processing::InputPipeline::new(calibration(), scan.camera_to_ap1).unwrap();
-        let second_values = crate::dust_repair::evaluate(&second, scan.area, |point| {
+            crate::processing::InputPipeline::new(calibration(), scan.camera_to_ap1()).unwrap();
+        let second_values = crate::dust_repair::evaluate(&second, scan.area(), |point| {
             Ok(scalar
                 .apply(scan.pixel(point[0], point[1])?)?
                 .rgb
@@ -715,7 +719,7 @@ fn repair_instruction_changes_restore_removed_support_and_leave_published_inputs
         for (i, pixel) in removal.iter().enumerate() {
             let footprint = frame.footprint([i as u32 % 31, i as u32 / 31]).unwrap();
             let influenced = footprint
-                .pixels(scan.area)
+                .pixels(scan.area())
                 .unwrap()
                 .any(|(p, _)| second.support.contains(p));
             if !influenced {
@@ -726,7 +730,7 @@ fn repair_instruction_changes_restore_removed_support_and_leave_published_inputs
             } else {
                 let expected =
                     footprint
-                        .pixels(scan.area)
+                        .pixels(scan.area())
                         .unwrap()
                         .fold(DVec3::ZERO, |sum, (p, w)| {
                             let base = scalar.apply(scan.pixel(p[0], p[1]).unwrap()).unwrap().rgb;
@@ -761,7 +765,7 @@ fn repair_instruction_changes_restore_removed_support_and_leave_published_inputs
         shrunk.support = SupportMask::new([135, 46], [1, 1], vec![true]).unwrap();
         let updated = build(vec![shrunk.clone()], false).unwrap().unwrap();
         let actual = read(&device, &queue, &updated.pixels);
-        let evaluated = crate::dust_repair::evaluate(&shrunk, scan.area, |point| {
+        let evaluated = crate::dust_repair::evaluate(&shrunk, scan.area(), |point| {
             Ok(scalar
                 .apply(scan.pixel(point[0], point[1])?)?
                 .rgb
@@ -773,7 +777,7 @@ fn repair_instruction_changes_restore_removed_support_and_leave_published_inputs
         for (i, pixel) in actual.iter().enumerate() {
             let footprint = frame.footprint([i as u32 % 31, i as u32 / 31]).unwrap();
             let contains = footprint
-                .pixels(scan.area)
+                .pixels(scan.area())
                 .unwrap()
                 .any(|(p, _)| shrunk.support.contains(p));
             if !contains {
@@ -782,7 +786,7 @@ fn repair_instruction_changes_restore_removed_support_and_leave_published_inputs
                 touched += 1;
                 let expected =
                     footprint
-                        .pixels(scan.area)
+                        .pixels(scan.area())
                         .unwrap()
                         .fold(DVec3::ZERO, |sum, (p, w)| {
                             let base = scalar.apply(scan.pixel(p[0], p[1]).unwrap()).unwrap().rgb;
@@ -834,7 +838,7 @@ fn original_reference_repairs_are_pre_grade_and_leave_other_rendered_pixels_bit_
         let mut input = processing_input(&device, calibration(), roll, photo, &scan);
         let frame = frame(&scan);
         let request = crate::refinement::ViewRequest {
-            area: scan.area,
+            area: scan.area(),
             output: frame.output,
             frame: Some(frame),
         };
@@ -844,7 +848,7 @@ fn original_reference_repairs_are_pre_grade_and_leave_other_rendered_pixels_bit_
                 &renderer,
                 &device,
                 &queue,
-                (&scan, None),
+                (&scan, None, None),
                 input,
                 OutputTarget::Srgb,
                 (&generation, 1),
@@ -871,7 +875,7 @@ fn original_reference_repairs_are_pre_grade_and_leave_other_rendered_pixels_bit_
             .collect::<Vec<_>>();
         let expected = cpu.render(&values).unwrap();
         for (i, ((point, _), expected)) in evaluated.pixels().zip(expected).enumerate() {
-            let at = (point[1] - scan.area.y) * scan.area.width + point[0] - scan.area.x;
+            let at = (point[1] - scan.area().y) * scan.area().width + point[0] - scan.area().x;
             for c in 0..3 {
                 assert!(
                     (actual[at as usize][c] - expected[c]).abs() < 0.001,
@@ -881,8 +885,8 @@ fn original_reference_repairs_are_pre_grade_and_leave_other_rendered_pixels_bit_
         }
         for (i, (a, b)) in actual.iter().zip(before).enumerate() {
             let point = [
-                scan.area.x + (i as u32) % scan.area.width,
-                scan.area.y + (i as u32) / scan.area.width,
+                scan.area().x + (i as u32) % scan.area().width,
+                scan.area().y + (i as u32) / scan.area().width,
             ];
             if !evaluated.support().contains(point) {
                 assert_eq!(a.map(f32::to_bits), b.map(f32::to_bits));

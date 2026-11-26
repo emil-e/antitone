@@ -14,7 +14,8 @@ mod tests;
 
 pub(super) fn roll(
     gpu: super::super::measurement::Gpu<'_>,
-    scan: &mut Scan,
+    source: &Arc<DevelopedSource>,
+    reference: Option<&ReferenceExposure>,
     field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
     input: crate::image_recipe::ImageRecipe,
@@ -23,8 +24,8 @@ pub(super) fn roll(
     if cancelled() {
         return Err(Error::Cancelled);
     }
-    let (mut scan, input) = crate::photo_preparation::native_image(scan, &input)?;
-    let samples = Samples::new(gpu, &mut scan, field, coverage, cancelled)?;
+    let input = crate::photo_preparation::native_recipe(source, reference, &input)?;
+    let samples = Samples::new(gpu, source, field, coverage, cancelled)?;
 
     roll_from_samples(&samples, &input, cancelled)
 }
@@ -41,7 +42,8 @@ pub(in crate::editor) fn roll_from_samples(
 
 pub(super) fn layer(
     gpu: super::super::measurement::Gpu<'_>,
-    scan: &mut Scan,
+    source: &Arc<DevelopedSource>,
+    reference: Option<&ReferenceExposure>,
     field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
     input: LayerInput,
@@ -50,8 +52,8 @@ pub(super) fn layer(
     if cancelled() {
         return Err(Error::Cancelled);
     }
-    let (mut scan, recipe) = crate::photo_preparation::native_image(scan, &input.recipe)?;
-    let samples = Samples::new(gpu, &mut scan, field, coverage, cancelled)?;
+    let recipe = crate::photo_preparation::native_recipe(source, reference, &input.recipe)?;
+    let samples = Samples::new(gpu, source, field, coverage, cancelled)?;
 
     let layer = recipe.grade.layers()[input.index];
     let weights = Grading::weight_image(samples.source.clone(), layer)?;

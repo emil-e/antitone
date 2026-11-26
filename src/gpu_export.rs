@@ -14,7 +14,7 @@ use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     processing::{InputSettings, RollSettings},
     render_fixture::RenderFixture,
-    scan::Scan,
+    scan::DevelopedSource,
 };
 #[cfg(test)]
 use crate::{export::ExrPrecision, rendering::OutputTarget};

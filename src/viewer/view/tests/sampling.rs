@@ -352,11 +352,13 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
         ..Default::default()
     }
     .write();
-    let scan = Scan::open(fixture.path(), None).unwrap();
-    let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
+    let scan = DevelopedSource::open(fixture.path(), None).unwrap();
+    let matrix = InputSettings::Digital
+        .positive_matrix(scan.camera_to_ap1(), None)
+        .unwrap();
     for rotated in [false, true] {
         let composition = Composition::with_crop(
-            scan.area,
+            scan.area(),
             crate::geometry::RollOrientation {
                 turns: if rotated {
                     crate::geometry::QuarterTurns::One
@@ -368,7 +370,10 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
             },
             Default::default(),
             rotated.then_some(crate::crop::Crop {
-                center: [f64::from(scan.area.x) + 512., f64::from(scan.area.y) + 512.],
+                center: [
+                    f64::from(scan.area().x) + 512.,
+                    f64::from(scan.area().y) + 512.,
+                ],
                 size: [768, 640],
                 angle: 0.19,
             }),
@@ -402,7 +407,7 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
                 Default::default(),
                 AdjustmentLayerSnapshot::new(vec![]).unwrap(),
                 matrix,
-                scan.area,
+                scan.area(),
             )
             .unwrap()
             .with_definition(pipeline)

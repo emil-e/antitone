@@ -23,7 +23,7 @@ use antitone::{
     photographic::stages::flat_field::GpuFlatField,
     processing::{InputSettings, RollSettings},
     rendering::OutputTarget,
-    scan::Scan,
+    scan::DevelopedSource,
 };
 use authored_export::{Format, Request};
 use glam::DVec3;
@@ -61,7 +61,12 @@ fn output_directory(name: &str) -> PathBuf {
 fn saturation_vibrance_with_film_paper_samples() {
     let output = output_directory("colourfulness");
     let (scan, calibration) = train_raw::load();
-    let area = SourceRegion::from([scan.area.x, scan.area.y, scan.area.width, scan.area.height]);
+    let area = SourceRegion::from([
+        scan.area().x,
+        scan.area().y,
+        scan.area().width,
+        scan.area().height,
+    ]);
     let composition = Composition::with_crop(
         area,
         Default::default(),
@@ -111,7 +116,8 @@ fn saturation_vibrance_with_film_paper_samples() {
                 &device,
                 &queue,
                 Request {
-                    scan: &scan,
+                    source: &scan,
+                    reference_ev: None,
                     field: None,
                     input: InputSettings::negative(calibration),
                     roll: RollSettings {
@@ -167,7 +173,7 @@ fn photographic_tiff_pairs() {
     assert!(root.is_absolute());
     let output = output_directory("paired");
     let (train, calibration) = train_raw::load();
-    let wb = train.white_balance;
+    let wb = train.white_balance();
     drop(train);
     let (device, queue, renderer) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -195,9 +201,13 @@ fn photographic_tiff_pairs() {
         ("DSC04522.ARW", 0.5),
         ("DSC04524.ARW", 0.75),
     ] {
-        let mut scan = Scan::open(&root.join(name), Some(wb)).unwrap();
-        let area =
-            SourceRegion::from([scan.area.x, scan.area.y, scan.area.width, scan.area.height]);
+        let scan = DevelopedSource::open(&root.join(name), Some(wb)).unwrap();
+        let area = SourceRegion::from([
+            scan.area().x,
+            scan.area().y,
+            scan.area().width,
+            scan.area().height,
+        ]);
         let region = SourceRegion {
             x: area.x + ((area.width - 512) as f64 * fraction) as u32,
             y: area.y + (area.height - 384) / 2,
@@ -227,8 +237,9 @@ fn photographic_tiff_pairs() {
                     .unwrap(),
                 )
             });
-            scan.set_flat_field(field.clone());
-            let gpu_field = field.map(|f| Arc::new(GpuFlatField::new(&device, f).unwrap()));
+            let gpu_field = field
+                .clone()
+                .map(|f| Arc::new(GpuFlatField::new(&device, f).unwrap()));
             let input = InputSettings::negative((calibration).validate().unwrap());
             for (edited, colour, vibrance) in [
                 ("none", 0., 0.),
@@ -288,7 +299,7 @@ fn photographic_tiff_pairs() {
                 .unwrap();
                 let roll = RollSettings::default();
                 let pipeline =
-                    AdjustmentLayerPipeline::new(input, roll, grade.clone(), scan.camera_to_ap1)
+                    AdjustmentLayerPipeline::new(input, roll, grade.clone(), scan.camera_to_ap1())
                         .unwrap();
                 for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
                     let label = format!("{name}-{corrected}-{edited}-{target:?}");
@@ -300,7 +311,8 @@ fn photographic_tiff_pairs() {
                         &device,
                         &queue,
                         Request {
-                            scan: &scan,
+                            source: &scan,
+                            reference_ev: None,
                             field: gpu_field.clone(),
                             input,
                             roll,
@@ -321,7 +333,14 @@ fn photographic_tiff_pairs() {
                         composition,
                         target,
                         Overwrite::Refuse,
-                        |x, y| pipeline.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb),
+                        |x, y| {
+                            let camera = antitone::flat_field::sample_camera_light(
+                                &scan,
+                                field.as_deref(),
+                                [x, y],
+                            )?;
+                            pipeline.apply(camera, [x, y]).map(|p| p.rgb)
+                        },
                     )
                     .unwrap();
                     let (dimensions, actual) = read(&gpu_path);

@@ -186,9 +186,16 @@ fn gamma_pivot_is_on_by_default_and_can_be_bypassed_without_a_project_edit() {
 
 fn roll_colour(h: &Harness<'_, Editor>, patch: Rect) -> DVec3 {
     h.read(|editor| {
-        let mut scan = crate::editor::measurement::capture_scan(editor).unwrap();
+        let developed = &editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .developed;
         let coverage = crate::coverage::Coverage::rectangle(patch);
-        let source = editor.document.find_source(scan.source().path()).unwrap();
+        let source = editor.document.find_source(developed.path()).unwrap();
         let recipe = editor
             .positive_recipe_for_source(
                 editor.input(),
@@ -200,7 +207,7 @@ fn roll_colour(h: &Harness<'_, Editor>, patch: Rect) -> DVec3 {
         let services = editor.source_services.as_ref().unwrap();
         let samples = crate::editor::measurement::query::Samples::new(
             (&services.evaluation, &services.queue),
-            &mut scan,
+            developed,
             editor.correction().gpu().unwrap(),
             coverage,
             &|| false,

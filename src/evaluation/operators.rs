@@ -12,23 +12,20 @@ pub fn source(source: Arc<dyn Source>) -> Value {
 }
 
 #[cfg(all(test, feature = "editor"))]
-impl Source for crate::scan::Scan {
+impl Source for crate::scan::DevelopedSource {
     fn domain(&self) -> Domain {
         Domain {
-            bounds: Some(self.area.try_into().unwrap()),
+            bounds: Some(self.area().try_into().unwrap()),
             grid: Grid::axis_aligned([0., 0.], [1., 1.]),
         }
     }
 
     fn read(&self, region: Rect) -> Result<Vec<[f32; 4]>, Error> {
         let region = region.source()?;
-        let mut pixels = self.tile_region(
-            self.area,
-            region.x - self.area.x,
-            region.y - self.area.y,
-            region.width,
-            region.height,
-        )?;
+        self.validate_area(region)?;
+        let mut pixels = vec![[0.; 4]; region.width as usize * region.height as usize];
+        self.camera_image()?
+            .copy_samples(region, &mut pixels, region.width as usize)?;
         // Source adapters expose normalized camera light, not the native code-unit encoding.
         for pixel in &mut pixels {
             for value in &mut pixel[..3] {

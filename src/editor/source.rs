@@ -4,11 +4,7 @@ use super::{
     ActivityOptions, Editor, Ready, SelectionTiming, UiContext, document, source_loading,
     thumbnails,
 };
-use crate::{
-    Error,
-    project::Source,
-    scan::{DevelopedSource, Scan},
-};
+use crate::{Error, project::Source, scan::DevelopedSource};
 use std::{path::PathBuf, sync::Arc};
 
 #[cfg(test)]
@@ -113,14 +109,6 @@ impl PartialEq for Context {
         self.source.identity() == other.source.identity()
             && self.reference == other.reference
             && self.correction.map() == other.correction.map()
-    }
-}
-
-impl Context {
-    pub fn scan(&self) -> Result<Scan, Error> {
-        let mut scan = Scan::with_reference(self.source.clone(), self.reference.clone());
-        scan.set_flat_field(self.correction.map().cloned());
-        Ok(scan)
     }
 }
 
@@ -331,7 +319,7 @@ impl Request {
             file,
             ..
         } = acquired;
-        let source = prepared.source.clone();
+        let source = prepared.source;
         let actual = document::source_metadata(
             self.source.path(),
             &source.metadata(),
@@ -340,18 +328,15 @@ impl Request {
         timing.registration_seconds = tick.elapsed().as_secs_f64();
         document::verify_source(&record, &actual)?;
         let tick = std::time::Instant::now();
-        let mut scan = Scan::from_source(source);
-        document::verify_scan(&record, &scan)?;
+        document::verify_development(&record, &source)?;
         timing.verification_seconds = tick.elapsed().as_secs_f64();
         let camera_proxy = prepared.proxy;
-        scan = Scan::with_reference(prepared.source, prepared.reference);
         self.require_live(cancelled)?;
         let context = Context {
-            source: scan.source().clone(),
-            reference: scan.reference_exposure.clone(),
+            source,
+            reference: prepared.reference,
             correction: self.correction,
         };
-        context.scan()?;
         Ok(Developed {
             context,
             record,
@@ -374,33 +359,33 @@ impl Developed {
         if cancelled() {
             return Err(Error::UnusableSample("document source work retired"));
         }
-        let scan = self.context.scan()?;
+        let source = &self.context.source;
         let tick = std::time::Instant::now();
-        let (width, height, pixels) = scan.preview_source(1024)?;
+        let (width, height, pixels) = source.preview_source(1024)?;
         let proxy = self
             .camera_proxy
-            .map_or_else(|| thumbnails::Proxy::from_scan(&scan).map(Arc::new), Ok)?;
+            .map_or_else(|| thumbnails::Proxy::from_source(source).map(Arc::new), Ok)?;
         let thumbnail = Some((self.file.clone(), proxy));
         let proxy_seconds = tick.elapsed().as_secs_f64();
         let tick = std::time::Instant::now();
         let targets = display.ready()?;
         let renderer_seconds = tick.elapsed().as_secs_f64();
         let tick = std::time::Instant::now();
-        let a = scan.area;
+        let area = source.area();
         let proxy = crate::viewer::GpuProxy::new_continuous(
             evaluation,
             looks,
             targets,
             [width, height],
             &pixels,
-            scan.camera_to_ap1,
+            source.camera_to_ap1(),
             crate::acquisition::camera::SourceGeometry::new(
-                [a.x, a.y, a.width, a.height],
+                [area.x, area.y, area.width, area.height],
                 [width, height],
             )?,
         )?
         .with_identity(crate::acquisition::camera::identity::Identity::camera(
-            scan.source().identity(),
+            source.identity(),
         ))?;
         let images_seconds = tick.elapsed().as_secs_f64();
         let Timing {
@@ -427,7 +412,7 @@ impl Developed {
             file: self.file,
             thumbnail,
             path: self.path,
-            area: scan.area,
+            area,
             analysis_support: None,
             proxy,
             record: self.record,

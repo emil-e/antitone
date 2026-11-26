@@ -26,8 +26,8 @@ fn reopen_and_cold_acquisition_keep_accepted_wb_when_as_shot_metadata_changes() 
     record.development.decode.backend_version = "previous LibRaw release".into();
     let project_path = directory.path().join("accepted.antitone");
     document.save(&project_path, Save::New).unwrap();
-    let baseline = Scan::open(&path, None).unwrap();
-    let samples = |scan: &Scan| {
+    let baseline = DevelopedSource::open(&path, None).unwrap();
+    let samples = |scan: &DevelopedSource| {
         let (width, height) = scan.dimensions().unwrap();
         (0..height)
             .flat_map(|y| (0..width).map(move |x| scan.pixel(x, y).unwrap()))
@@ -37,8 +37,8 @@ fn reopen_and_cold_acquisition_keep_accepted_wb_when_as_shot_metadata_changes() 
     assert!(pixels.iter().any(|pixel| pixel.min_element() > 0.));
     // Only the declared as-shot neutral changes; sensor samples and camera profile are identical.
     std::fs::copy(changed.path(), &path).unwrap();
-    let current_default = Scan::open(&path, None).unwrap();
-    assert_eq!(current_default.white_balance, [4., 1., 2., 1.]);
+    let current_default = DevelopedSource::open(&path, None).unwrap();
+    assert_eq!(current_default.white_balance(), [4., 1., 2., 1.]);
     assert_ne!(
         samples(&current_default),
         pixels,
@@ -49,7 +49,7 @@ fn reopen_and_cold_acquisition_keep_accepted_wb_when_as_shot_metadata_changes() 
     let record = opened.project.source(id).unwrap().clone();
     assert_eq!(
         record.development.decode.white_balance,
-        baseline.white_balance
+        baseline.white_balance()
     );
     let loader = source_loading::SourceLoader::new();
     // No runtime WB override: the accepted descriptor must be authoritative even on a cold load.
@@ -60,8 +60,8 @@ fn reopen_and_cold_acquisition_keep_accepted_wb_when_as_shot_metadata_changes() 
     }
     .load(&loader, &|| false)
     .unwrap();
-    let scan = developed.context.scan().unwrap();
-    assert_eq!(scan.white_balance, baseline.white_balance);
+    let scan = developed.context.source.clone();
+    assert_eq!(scan.white_balance(), baseline.white_balance());
     assert_eq!(samples(&scan), pixels);
     loader.close_and_wait().unwrap();
 }
@@ -222,9 +222,10 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
             }
             .load(&loader, &|| false)
             .unwrap();
-            let scan = developed.context.scan().unwrap();
+            let context = developed.context.clone();
             assert_eq!(
-                scan.source()
+                context
+                    .source
                     .metadata()
                     .development([1.; 4])
                     .backend_version,
@@ -245,7 +246,7 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
                     &|| false,
                 )
                 .unwrap();
-            assert_eq!(ready.area, scan.area);
+            assert_eq!(ready.area, context.source.area());
             let recipe = legacy.image_recipe(id).unwrap();
             assert_eq!(
                 recipe
@@ -257,12 +258,17 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
                     .backend_version,
                 "previous decoder release"
             );
-            let (prepared_scan, prepared_recipe) =
-                crate::photo_preparation::native_image(&scan, &recipe).unwrap();
-            prepared_recipe
-                .neutral
-                .require_scan(&prepared_scan)
-                .unwrap();
+            let prepared_recipe = crate::photo_preparation::native_recipe(
+                &context.source,
+                context.reference.as_ref(),
+                &recipe,
+            )
+            .unwrap();
+            assert_eq!(prepared_recipe.neutral.reference, context.reference);
+            assert_eq!(
+                prepared_recipe.neutral.correction.as_ref(),
+                context.correction.map()
+            );
             assert!(prepared_recipe.repairs.is_empty());
             let composition = recipe.composition;
             let output = directory.path().join(format!("legacy-{sdk}-{digital}.tif"));
@@ -270,9 +276,9 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
                 renderer.evaluation(),
                 &queue,
                 crate::gpu_export::job::Job {
-                    scan: &scan,
+                    source: &context.source,
                     field: correction.as_ref().map(|field| field.gpu.clone()),
-                    recipe: &recipe,
+                    recipe: &prepared_recipe,
                     render: crate::gpu_export::job::Render::resolve(
                         crate::gpu_export::authored::Format::Tiff(
                             crate::rendering::OutputTarget::Srgb,

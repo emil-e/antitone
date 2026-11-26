@@ -1,5 +1,8 @@
 use super::*;
-use crate::{cancellation::Cancellation, viewport::CanvasLayout};
+use crate::{
+    cancellation::Cancellation, flat_field::reference as reference_field, scan::DevelopedSource,
+    viewport::CanvasLayout,
+};
 #[cfg(test)]
 use crate::{photographic::stages::flat_field::GpuFlatField, project::FlatFieldSettings};
 use std::{cell::RefCell, rc::Rc};
@@ -353,11 +356,7 @@ impl tool::Tool for FlatTool {
                 let input = CorrectionInput {
                     region,
                     document: change.edit.initial().as_ref().clone(),
-                    source: source::Context {
-                        source: reference.developed.clone(),
-                        reference: reference.reference.clone(),
-                        correction: Default::default(),
-                    },
+                    source: reference.developed.clone(),
                     reference: reference.record.path.clone(),
                 };
                 editor.end_tool();
@@ -500,11 +499,11 @@ fn fail(cx: &UiContext<'_, Editor>, error: String) {
     });
 }
 
-pub(super) struct CorrectionInput {
-    pub region: Rect,
-    pub document: Document,
-    pub source: source::Context,
-    pub reference: PathBuf,
+struct CorrectionInput {
+    region: Rect,
+    document: Document,
+    source: Arc<DevelopedSource>,
+    reference: PathBuf,
 }
 
 impl CorrectionInput {
@@ -513,13 +512,7 @@ impl CorrectionInput {
             if cancelled.is_cancelled() {
                 return Err(Error::UnusableSample("correction retired"));
             }
-            if self.source.correction.map().is_some() {
-                return Err(Error::InvalidParameter(
-                    "flat-field reference must be uncorrected",
-                ));
-            }
-            let mut scan = self.source.scan()?;
-            let map = Arc::new(scan.estimate_flat_field(self.region)?);
+            let map = Arc::new(reference_field::estimate(&self.source, self.region)?);
             let enabled = self
                 .document
                 .project
@@ -549,13 +542,7 @@ async fn preview(
         if cancelled.is_cancelled() {
             return Err(Error::UnusableSample("reference retired"));
         }
-        let scan = source::Context {
-            source: ready.developed.clone(),
-            reference: ready.reference.clone(),
-            correction: Default::default(),
-        }
-        .scan()?;
-        let region = scan.propose_flat_field_area()?;
+        let region = reference_field::suggest_region(&ready.developed)?;
         Ok(FlatPreview { ready, region })
     })
     .await

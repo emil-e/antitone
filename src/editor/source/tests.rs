@@ -118,22 +118,25 @@ fn acquisition_preserves_source_identity_and_pixels_without_editor_or_gpu() {
         developed.record.development,
         document.project.sources[0].development
     );
-    let mut scan = context.scan().unwrap();
+    let scan = context.source.clone();
     assert!(
-        Arc::ptr_eq(scan.source(), &context.source),
+        Arc::ptr_eq(&scan, &context.source),
         "a job context must lease, not copy, the source"
     );
     let cache = Arc::downgrade(&document.cache);
     drop(document);
     assert!(cache.upgrade().is_none());
-    let measured = scan
-        .reference(crate::raw::Rect {
+    let measured = crate::sampling::camera::reference(
+        &scan,
+        None,
+        crate::raw::Rect {
             x: 24,
             y: 24,
             width: 16,
             height: 16,
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     // Authored 12-bit patch: black 64, white 4095, film-base code 3064.
     assert!(
         (measured - glam::DVec3::splat(3000. / 4031.))

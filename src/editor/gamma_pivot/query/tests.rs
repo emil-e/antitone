@@ -217,9 +217,12 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
         ))
     ));
 
-    let scan = crate::editor::measurement::capture_scan(&editor).unwrap();
+    let scan = editor.source_context().unwrap().source;
     let captured = Evidence::from_samples(
-        camera_samples(gpu, &scan, None, Coverage::rectangle(scan.area), &|| false).unwrap(),
+        camera_samples(gpu, &scan, None, Coverage::rectangle(scan.area()), &|| {
+            false
+        })
+        .unwrap(),
     );
     let native = captured.mean(gpu, negative(1.), &|| false).unwrap();
     let supplied = DVec3::new(16000., 20000., 24000.) / 65535.;
@@ -278,12 +281,12 @@ fn corrected_nonuniform_source_coverage_matches_individually_transformed_origina
         .project
         .set_flat_field(Some(crate::project::FlatFieldSettings::new(
             "pivot-reference.dng",
-            map,
+            map.clone(),
         )));
     let captured = pollster::block_on(editor.correction().acquire())
         .unwrap()
         .unwrap();
-    let scan = crate::editor::measurement::capture_scan(&editor).unwrap();
+    let scan = editor.source_context().unwrap().source;
     let services = editor.source_services.as_ref().unwrap();
     let gpu = (&services.evaluation, &services.queue);
     let coverage = Coverage::new(
@@ -303,8 +306,8 @@ fn corrected_nonuniform_source_coverage_matches_individually_transformed_origina
     let mut sum = DVec3::ZERO;
     let mut camera_sum = DVec3::ZERO;
     let mut weight = 0.;
-    for (point, area) in coverage.pixels(scan.area).unwrap() {
-        let camera = scan.pixel(point[0], point[1]).unwrap();
+    for (point, area) in coverage.pixels(scan.area()).unwrap() {
+        let camera = crate::flat_field::sample_camera_light(&scan, Some(&map), point).unwrap();
         // The gamma-one calibrated response is the rational function used in the
         // analytic case above; source reads include the actual demosaiced ramps.
         sum += ((DVec3::splat(0.8) / camera - DVec3::ONE) / 3.) * area;

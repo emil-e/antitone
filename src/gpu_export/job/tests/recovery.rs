@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         Some([1.; 4]),
     )
@@ -13,7 +13,7 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
     source
         .repairs
         .insert(
-            SupportMask::new([scan.area.x, scan.area.y], [3, 3], vec![true; 9]).unwrap(),
+            SupportMask::new([scan.area().x, scan.area().y], [3, 3], vec![true; 9]).unwrap(),
             RepairOrigin::Manual,
             [32, 0],
         )
@@ -41,7 +41,7 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
                 renderer.evaluation(),
                 &queue,
                 Job {
-                    scan: &scan,
+                    source: &scan,
                     field: None,
                     recipe,
                     render: fixture_render(format, &renderer),
@@ -59,7 +59,7 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
                         tiff::decoder::Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
                     assert_eq!(
                         decoder.dimensions().unwrap(),
-                        (scan.area.width, scan.area.height)
+                        (scan.area().width, scan.area().height)
                     );
                     let tiff::decoder::DecodingResult::U16(pixels) = decoder.read_image().unwrap()
                     else {
@@ -90,7 +90,7 @@ fn cold_exports_with_a_failed_heal_match_unrepaired_tiff_and_exr_pixels() {
             }
         }
     }
-    let field = scan.flat_field().cloned().map(|map| {
+    let field = None.map(|map| {
         Arc::new(crate::photographic::stages::flat_field::GpuFlatField::new(&device, map).unwrap())
     });
     let reader = crate::dust_repair::image_source::Source::from_recipe(

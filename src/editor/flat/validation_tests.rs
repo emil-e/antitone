@@ -266,10 +266,8 @@ fn preparing_and_reusing_a_map_are_independent_of_photo_camera_descriptors() {
 #[test]
 fn correction_acceptance_is_independent_of_photographic_overflow_which_fails_at_execution() {
     let mut editor = crate::editor::tests::authored_fixture(&["roll-0.dng"]);
-    let codes = crate::acquisition::camera::camera_source(
-        &editor.source_context().unwrap().scan().unwrap(),
-    )
-    .unwrap();
+    let codes = crate::acquisition::camera::camera_source(&editor.source_context().unwrap().source)
+        .unwrap();
     let device = editor.document.visit.working_view.device().unwrap().clone();
     let mut document = document();
     document.project.sources[0].development.camera_to_ap1 =

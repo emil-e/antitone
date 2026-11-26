@@ -125,7 +125,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
             kernels.clone(),
             &scan,
             None,
-            SourceRequest::new(frame, calibration(), scan.camera_to_ap1, None).unwrap(),
+            SourceRequest::new(frame, calibration(), scan.camera_to_ap1(), None).unwrap(),
             || false,
         )
         .unwrap()
@@ -137,7 +137,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
             kernels,
             &scan,
             None,
-            SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, None).unwrap(),
+            SourceRequest::inspection_fixture(frame, scan.camera_to_ap1(), None).unwrap(),
             || false,
         )
         .unwrap()

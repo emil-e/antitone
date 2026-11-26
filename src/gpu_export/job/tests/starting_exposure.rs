@@ -4,8 +4,30 @@ use crate::{processing::InputSettings, rendering::CpuRenderer};
 use crate::exposure_fixture;
 
 #[test]
-fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_changes() {
-    for (repaired, recorded) in [(false, None), (true, None), (false, Some(2.75))] {
+fn prepared_tiff_and_exr_use_resolved_starting_exposure_without_changing_manual_controls() {
+    let exposure = |ev| {
+        crate::exposure_reference::ReferenceExposure::Matched(
+            crate::exposure_reference::StartingExposure {
+                ev,
+                samples: 1024,
+                spread: 0.,
+            },
+        )
+    };
+    use crate::exposure_reference::{ReferenceExposure, UnavailableReference};
+
+    for (repaired, known, expected_ev) in [
+        (false, None, 1.3),
+        (true, None, 1.3),
+        (false, Some(exposure(2.75)), 2.75),
+        (
+            false,
+            Some(ReferenceExposure::Unavailable(
+                UnavailableReference::NoUsablePreview,
+            )),
+            0.,
+        ),
+    ] {
         let path = if repaired {
             exposure_fixture::neutral_dng_with_defect(1.3)
         } else {
@@ -13,7 +35,7 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
         };
         let (_device, queue, renderer) = super::super::super::tests::context();
         let directory = tempfile::tempdir().unwrap();
-        let scene = 6000. / 65535. * 2_f64.powf(recorded.unwrap_or(1.3));
+        let scene = 6000. / 65535. * 2_f64.powf(expected_ev);
         let reference = CpuRenderer::new(OutputTarget::Srgb)
             .unwrap()
             .render(&[DVec3::splat(scene)])
@@ -22,8 +44,7 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
             Format::Tiff(OutputTarget::Srgb),
             Format::Exr(crate::export::ExrPrecision::Full),
         ] {
-            let scan = Scan::open(path.path(), None).unwrap();
-            assert!(scan.reference_exposure.as_ref().is_none());
+            let scan = DevelopedSource::open(path.path(), None).unwrap();
             let (mut project, id) = fixture(&scan);
             project.input = InputSettings::Digital;
             project.source_mut(id).unwrap().development_mode =
@@ -46,21 +67,6 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
                     )
                     .unwrap();
             }
-            if let Some(ev) = recorded {
-                project.exposure_metadata = Some(crate::exposure_metadata::Metadata {
-                    entries: vec![crate::exposure_metadata::Entry {
-                        source: id,
-                        reference: crate::exposure_reference::ReferenceExposure::Matched(
-                            crate::exposure_reference::StartingExposure {
-                                ev,
-                                samples: 1024,
-                                spread: 0.,
-                            },
-                        ),
-                    }],
-                    ..Default::default()
-                });
-            }
             // A contrasting look must neither affect scene EXR pixels nor allocate a GPU LUT.
             if matches!(format, Format::Exr(_)) {
                 use crate::looks::{LookAsset, LookOrigin, Lut3D};
@@ -76,28 +82,62 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
                 ));
             }
             let before = project.clone();
-            let recipe = project.image_recipe(id).unwrap();
             let output = directory.path().join(match format {
                 Format::Tiff(_) => "cold.tif",
                 Format::Exr(_) => "cold.exr",
             });
+            let job = |recipe| Job {
+                source: &scan,
+                field: None,
+                recipe,
+                render: fixture_render(format, &renderer),
+            };
+            let unresolved =
+                (!repaired && known.is_none()).then(|| project.image_recipe(id).unwrap());
+            if let Some(unresolved) = &unresolved {
+                let result = write(
+                    renderer.evaluation(),
+                    &queue,
+                    job(unresolved),
+                    (&output, Overwrite::Refuse),
+                    &mut Execution::default(),
+                    || Ok(()),
+                );
+                assert!(matches!(
+                    result,
+                    Err(Error::InvalidParameter(
+                        "export requires resolved Digital starting exposure"
+                    ))
+                ));
+                assert!(!output.exists());
+            }
+
+            let point = [
+                scan.area().x + scan.area().width / 2,
+                scan.area().y + scan.area().height / 2,
+            ];
+            let camera = scan.pixel(point[0], point[1]).unwrap();
+            let memo = known
+                .clone()
+                .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from);
+            let prepared =
+                crate::photo_preparation::native(None, &memo, project.input, &scan).unwrap();
+            let recipe = project
+                .image_recipe_with_reference(project.source(id).unwrap(), prepared.reference)
+                .unwrap();
             write(
                 renderer.evaluation(),
                 &queue,
-                Job {
-                    scan: &scan,
-                    field: None,
-                    recipe: &recipe,
-                    render: fixture_render(format, &renderer),
-                },
+                job(&recipe),
                 (&output, Overwrite::Refuse),
                 &mut Execution::default(),
                 || Ok(()),
             )
             .unwrap();
-            assert!(
-                scan.reference_exposure.is_none(),
-                "export must leave its caller's interpretation unchanged"
+            assert_eq!(
+                scan.pixel(point[0], point[1]).unwrap(),
+                camera,
+                "export must not change camera light"
             );
             assert_eq!(project, before);
             assert_eq!(project.roll.exposure, 0.);
@@ -129,7 +169,7 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
                         for channel in 0..3 {
                             assert!(
                                 data[offset + channel].abs_diff(expected[channel])
-                                    <= if recorded.is_some() { 2 } else { 160 },
+                                    <= if known.is_some() { 2 } else { 160 },
                                 "{} vs {}",
                                 data[offset + channel],
                                 expected[channel]
@@ -149,7 +189,7 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
                             let actual = f64::from(data[point[0] + point[1] * 64]);
                             assert!(
                                 (actual / scene - 1.).abs()
-                                    < if recorded.is_some() { 1e-5 } else { 0.03 },
+                                    < if known.is_some() { 1e-5 } else { 0.03 },
                                 "{actual} vs {scene}"
                             );
                         }

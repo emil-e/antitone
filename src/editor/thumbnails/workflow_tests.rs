@@ -71,10 +71,7 @@ fn gated(
     Arc<AtomicUsize>,
 ) {
     let path = document.source_path(document.project.order[0]).unwrap();
-    let native = Scan::open(&path, document.project.acquisition_wb())
-        .unwrap()
-        .source()
-        .clone();
+    let native = DevelopedSource::open(&path, document.project.acquisition_wb()).unwrap();
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let calls = Arc::new(AtomicUsize::new(0));

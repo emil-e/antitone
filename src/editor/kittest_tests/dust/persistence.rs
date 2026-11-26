@@ -546,7 +546,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_sco
             h.read(|editor| editor.scope_request().unwrap());
         assert!(Arc::ptr_eq(&scope, &view));
         let raw_path = h.read(|editor| editor.document.source_path(source).unwrap());
-        let scan = Scan::open(&raw_path, expected.acquisition_wb()).unwrap();
+        let scan = DevelopedSource::open(&raw_path, expected.acquisition_wb()).unwrap();
         for repair in expected.source(source).unwrap().repairs.repairs() {
             let recipe = expected.image_recipe(source).unwrap();
             let input = crate::scan::ImageSource::from_recipe(&scan, &recipe.neutral).unwrap();

@@ -1,6 +1,6 @@
 #![cfg(feature = "raw")]
 
-use antitone::scan::Scan;
+use antitone::scan::DevelopedSource;
 use std::f64::consts::TAU;
 
 #[path = "support/sony_fixture.rs"]
@@ -69,7 +69,7 @@ fn gpu_context() -> &'static (wgpu::Device, antitone::gpu::submission::Queue) {
     })
 }
 
-fn open(file: &fixture_path::FixturePath) -> Scan {
+fn open(file: &fixture_path::FixturePath) -> std::sync::Arc<DevelopedSource> {
     #[cfg(feature = "gpu")]
     let scan = {
         let (device, queue) = gpu_context();
@@ -77,20 +77,20 @@ fn open(file: &fixture_path::FixturePath) -> Scan {
         raw.set_demosaicer(Some(std::sync::Arc::new(
             antitone::raw::demosaic::Demosaicer::new(device, queue, 4 << 30),
         )));
-        Scan::from_raw(raw, Some([1.; 4])).unwrap()
+        std::sync::Arc::new(DevelopedSource::from_raw(raw, Some([1.; 4])).unwrap())
     };
     #[cfg(not(feature = "gpu"))]
-    let scan = Scan::open(file.path(), Some([1.; 4])).unwrap();
+    let scan = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
     #[cfg(feature = "gpu")]
     assert_eq!(
-        scan.source().demosaic_backend(),
+        scan.demosaic_backend(),
         antitone::raw::DemosaicBackend::GpuDht,
         "photographic checks require consumed GPU output, not CPU fallback"
     );
     assert_eq!(scan.dimensions().unwrap(), (64, 64));
-    assert_eq!(scan.white_balance, [1.; 4]);
-    assert_eq!(scan.source().metadata().black, BLACK as u32);
-    assert_eq!(scan.source().metadata().maximum, 16383);
+    assert_eq!(scan.white_balance(), [1.; 4]);
+    assert_eq!(scan.metadata().black, BLACK as u32);
+    assert_eq!(scan.metadata().maximum, 16383);
     scan
 }
 
@@ -134,7 +134,7 @@ fn weak_blue_reconstruction_does_not_amplify_green_only_noise_into_strong_colour
     assert!(blue_rms <= 1.5 * green_rms, "{blue_rms} vs {green_rms}");
 }
 
-fn amplitude(scan: &Scan, frequency: f64, c: usize) -> f64 {
+fn amplitude(scan: &DevelopedSource, frequency: f64, c: usize) -> f64 {
     let mut sin = 0.;
     let mut cos = 0.;
     for y in 16..48 {
@@ -269,7 +269,7 @@ fn reconstructed_negative_detail_reaches_original_sample_gpu_export_in_the_same_
         balance: Default::default(),
     };
     let composition = Composition::with_crop(
-        scan.area,
+        scan.area(),
         Default::default(),
         Default::default(),
         Some(Crop::from_region(SourceRegion {
@@ -287,7 +287,8 @@ fn reconstructed_negative_detail_reaches_original_sample_gpu_export_in_the_same_
         &device,
         &queue,
         Request {
-            scan: &scan,
+            source: &scan,
+            reference_ev: None,
             field: None,
             input,
             roll: Default::default(),
@@ -303,7 +304,7 @@ fn reconstructed_negative_detail_reaches_original_sample_gpu_export_in_the_same_
     )
     .unwrap();
     let image = exr::prelude::read_first_flat_layer_from_file(path).unwrap();
-    let matrix = ap1_to_ap0() * scan.camera_to_ap1;
+    let matrix = ap1_to_ap0() * scan.camera_to_ap1();
     assert_eq!(image.layer_data.channel_data.list.len(), 3);
     for channel in &image.layer_data.channel_data.list {
         let c = match channel.name.to_string().as_str() {

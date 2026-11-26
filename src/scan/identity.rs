@@ -89,19 +89,19 @@ mod tests {
     #[test]
     fn camera_identity_is_shared_with_proxies_and_reloads_without_retaining_native_pixels() {
         let file = crate::raw::fixture::bayer_dng();
-        let scan = Scan::open(file.path(), Some([1.; 4])).unwrap();
-        let identity = scan.source().identity();
-        let native = Arc::downgrade(&scan.source.raw);
-        let proxy = CameraProxy::from_scan(&scan).unwrap();
+        let scan = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
+        let identity = scan.identity();
+        let native = Arc::downgrade(&scan.raw);
+        let proxy = CameraPixels::from_source(&scan).unwrap();
         assert!(proxy.identity() == Some(&identity));
-        let reloaded = Scan::open(file.path(), Some([1.; 4])).unwrap();
-        let reloaded_identity = reloaded.source().identity();
+        let reloaded = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
+        let reloaded_identity = reloaded.identity();
         assert!(identity == reloaded_identity);
         assert_eq!(fingerprint(&identity), fingerprint(&reloaded_identity));
         let other = crate::raw::fixture::bayer_dng();
-        let other = Scan::open(other.path(), Some([1.; 4])).unwrap();
+        let other = DevelopedSource::open(other.path(), Some([1.; 4])).unwrap();
         assert!(
-            identity != other.source().identity(),
+            identity != other.identity(),
             "same development is not the same capture"
         );
         drop(scan);

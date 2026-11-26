@@ -3,7 +3,10 @@ use super::*;
 use crate::{
     cancellation::Cancellation,
     export::{FileFormat, Overwrite, Plan},
+    exposure_reference::ReferenceExposure,
     image_recipe::ImageRecipe,
+    photographic::stages::flat_field::GpuFlatField,
+    scan::DevelopedSource,
 };
 use std::{
     collections::HashSet,
@@ -13,7 +16,8 @@ use std::{
 };
 
 pub(super) struct PhotoRequest {
-    pub input: source::Context,
+    pub source: Arc<DevelopedSource>,
+    pub field: Option<Arc<GpuFlatField>>,
     pub path: PathBuf,
     pub plan: Plan,
     pub recipe: ImageRecipe,
@@ -174,7 +178,7 @@ impl Services {
                     .await
             }
         };
-        let mut input = match input {
+        let input = match input {
             Ok(input) => input,
             Err(_) if cancelled.is_cancelled() => {
                 return ControlFlow::Break(PhotoResult::Cancelled);
@@ -183,7 +187,7 @@ impl Services {
                 return ControlFlow::Break(PhotoResult::Finished(Outcome::Failed { path, error }));
             }
         };
-        input.correction = match futures_lite::future::or(
+        let field = match futures_lite::future::or(
             async {
                 cancelled.wait().await;
                 Err("Export cancelled".to_owned())
@@ -192,7 +196,7 @@ impl Services {
         )
         .await
         {
-            Ok(correction) => correction.into(),
+            Ok(correction) => correction.map(|correction| correction.gpu.clone()),
             Err(_) if cancelled.is_cancelled() => {
                 return ControlFlow::Break(PhotoResult::Cancelled);
             }
@@ -200,11 +204,26 @@ impl Services {
                 return ControlFlow::Break(PhotoResult::Finished(Outcome::Failed { path, error }));
             }
         };
+        let recipe = match crate::background::compute(cancelled, move || {
+            photo.intent.recipe(input.reference)
+        })
+        .await
+        {
+            Ok(Some(recipe)) => recipe,
+            Ok(None) => return ControlFlow::Break(PhotoResult::Cancelled),
+            Err(error) => {
+                return ControlFlow::Break(PhotoResult::Finished(Outcome::Failed {
+                    path,
+                    error: error.to_string(),
+                }));
+            }
+        };
         ControlFlow::Continue(PhotoRequest {
-            input,
+            source: input.source,
+            field,
             path: photo.path,
             plan,
-            recipe: photo.recipe,
+            recipe,
             overwrite: if policy == Collision::Replace {
                 Overwrite::Confirmed
             } else {
@@ -242,7 +261,8 @@ impl Services {
                 .clone()
                 .write_one(
                     PhotoRequest {
-                        input: photo.input.clone(),
+                        source: photo.source.clone(),
+                        field: photo.field.clone(),
                         path: path.clone(),
                         plan: photo.plan,
                         recipe: photo.recipe.clone(),
@@ -303,7 +323,6 @@ impl Services {
             if cancelled.load(Ordering::Relaxed) {
                 return Err(WriteFailure::Photo(crate::Error::Cancelled));
             }
-            let scan = request.input.scan()?;
             let render = crate::gpu_export::job::Render::resolve(request.plan, || {
                 let targets = self
                     .display
@@ -316,8 +335,8 @@ impl Services {
                 &self.evaluation,
                 &self.queue,
                 crate::gpu_export::job::Job {
-                    scan: &scan,
-                    field: request.input.correction.gpu()?,
+                    source: &request.source,
+                    field: request.field,
                     recipe: &request.recipe,
                     render,
                 },
@@ -379,8 +398,35 @@ pub(super) enum Input {
 pub(super) struct Photo {
     pub input: Input,
     pub correction: super::correction::Resources,
-    pub recipe: ImageRecipe,
+    pub intent: Intent,
     pub path: PathBuf,
+}
+
+/// Accepted edits and source identity frozen at confirmation, before any RAW work.
+pub(super) struct Intent {
+    pub project: editing::ProjectVersion,
+    source: SourceId,
+    development: crate::development_metadata::Development,
+}
+
+impl Intent {
+    pub(super) fn recipe(
+        &self,
+        reference: Option<ReferenceExposure>,
+    ) -> Result<ImageRecipe, Error> {
+        let reference = if self.project.input.is_negative() {
+            None
+        } else {
+            Some(reference.ok_or(Error::InvalidParameter(
+                "export requires resolved Digital starting exposure",
+            ))?)
+        };
+        self.project.image_recipe_with_source(
+            self.project.source(self.source)?,
+            self.development.clone(),
+            reference,
+        )
+    }
 }
 
 pub(super) struct Request {
@@ -607,29 +653,41 @@ impl Editor {
                 number += 1;
             }
             require_safe(&path, &protected)?;
-            let ready = (self.document.visit.current_source == Some(id))
-                .then(|| self.source_context())
-                .flatten();
-            let input = match ready {
-                Some(context) => Input::Ready(context),
-                None => Input::Acquire(Box::new(source::Request {
-                    source: self.document.source_input(id)?,
-                    sources: None,
-                    correction: self.correction(),
-                })),
-            };
-            photos.push(Photo {
-                correction: self.correction(),
-                input,
-                path,
-                recipe: self.document.image_recipe(id)?,
-            });
+            photos.push(self.capture_output_photo(id, path)?);
         }
         Ok(Request {
             photos,
             plan: options.plan,
             collision: options.collision,
             protected,
+        })
+    }
+
+    pub(super) fn capture_output_photo(&self, id: SourceId, path: PathBuf) -> Result<Photo, Error> {
+        let project = self.document.state.project.clone();
+        let registered = project.source(id)?;
+        let development = self.document.development_for(registered, project.input);
+        let ready = (self.document.visit.current_source == Some(id))
+            .then(|| self.source_context())
+            .flatten()
+            .filter(|context| project.input.is_negative() || context.reference.is_some());
+        let input = match ready {
+            Some(context) => Input::Ready(context),
+            None => Input::Acquire(Box::new(source::Request {
+                source: self.document.source_input(id)?,
+                sources: None,
+                correction: Default::default(),
+            })),
+        };
+        Ok(Photo {
+            input,
+            correction: self.correction(),
+            intent: Intent {
+                project,
+                source: id,
+                development,
+            },
+            path,
         })
     }
 }

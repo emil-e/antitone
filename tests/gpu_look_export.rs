@@ -17,7 +17,7 @@ use antitone::{
     looks::{LookAsset, LookOrigin, Lut3D},
     processing::{Calibration, InputSettings, RollSettings},
     rendering::OutputTarget,
-    scan::Scan,
+    scan::DevelopedSource,
 };
 use authored_export::{Format, Request};
 use glam::DVec3;
@@ -44,13 +44,13 @@ fn context() -> (
     })
 }
 fn fixture() -> (
-    Scan,
+    Arc<DevelopedSource>,
     Calibration,
     RollSettings,
     AdjustmentLayerSnapshot,
     Composition,
 ) {
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
@@ -65,7 +65,7 @@ fn fixture() -> (
         )])
         .unwrap();
     let composition = Composition::new(
-        scan.area,
+        scan.area(),
         RollOrientation::default(),
         PhotoOrientation::default(),
     )
@@ -99,7 +99,7 @@ fn look(minimum: [f32; 3], maximum: [f32; 3]) -> Arc<LookAsset> {
     )
 }
 fn repairs(
-    scan: &Scan,
+    scan: &DevelopedSource,
     calibration: Calibration,
 ) -> (
     Vec<antitone::dust_repair::Repair>,
@@ -116,7 +116,7 @@ fn repairs(
     let input = InputSettings::negative(calibration.validate().unwrap());
     let evaluated = vec![Arc::new(
         antitone::repair_source::evaluate(
-            &antitone::scan::ImageSource::new(scan, input).unwrap(),
+            &antitone::scan::ImageSource::new(scan, input, None, None).unwrap(),
             &repair,
         )
         .unwrap(),
@@ -172,7 +172,7 @@ fn compare_tiff(repaired: bool, asset: Arc<LookAsset>) {
         InputSettings::negative((calibration).validate().unwrap()),
         roll,
         grade.clone(),
-        scan.camera_to_ap1,
+        scan.camera_to_ap1(),
     )
     .unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -187,7 +187,8 @@ fn compare_tiff(repaired: bool, asset: Arc<LookAsset>) {
                 &queue,
                 Request {
                     calculation: None,
-                    scan: &scan,
+                    source: &scan,
+                    reference_ev: None,
                     field: None,
                     input: InputSettings::negative(calibration),
                     roll,
@@ -270,7 +271,8 @@ fn compare_exr(repaired: bool) {
                 &queue,
                 Request {
                     calculation: None,
-                    scan: &scan,
+                    source: &scan,
+                    reference_ev: None,
                     field: None,
                     input: InputSettings::negative(calibration),
                     roll,
@@ -318,12 +320,12 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
         InputSettings::negative((calibration).validate().unwrap()),
         roll,
         grade.clone(),
-        scan.camera_to_ap1,
+        scan.camera_to_ap1(),
     )
     .unwrap();
     let [x, y] = [
-        scan.area.x + scan.area.width / 2,
-        scan.area.y + scan.area.height / 2,
+        scan.area().x + scan.area().width / 2,
+        scan.area().y + scan.area().height / 2,
     ];
     let scene = pipeline
         .apply(scan.pixel(x, y).unwrap(), [x, y])
@@ -341,7 +343,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
         encoded.map(|v| (v + 0.001) as f32),
     );
     let crop = Composition::with_crop(
-        scan.area,
+        scan.area(),
         Default::default(),
         Default::default(),
         Some(antitone::crop::Crop {
@@ -359,7 +361,8 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
         &queue,
         Request {
             calculation: None,
-            scan: &scan,
+            source: &scan,
+            reference_ev: None,
             field: None,
             input: InputSettings::negative(calibration),
             roll,
@@ -380,7 +383,8 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
         &queue,
         Request {
             calculation: None,
-            scan: &scan,
+            source: &scan,
+            reference_ev: None,
             field: None,
             input: InputSettings::negative(calibration),
             roll,
@@ -425,7 +429,8 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
             &queue,
             Request {
                 calculation: None,
-                scan: &scan,
+                source: &scan,
+                reference_ev: None,
                 field: None,
                 input: InputSettings::negative(calibration),
                 roll: invalid_roll,

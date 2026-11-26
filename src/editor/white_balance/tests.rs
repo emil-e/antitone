@@ -39,25 +39,53 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_unrenderable_adjustm
         width: 32,
         height: 32,
     });
-    let reference = measurement::capture_scan(&editor)
-        .unwrap()
-        .white_balance_coverage(
-            region,
-            &editor.input(),
-            RollSettings {
-                wb: Balance::default(),
-                ..editor.document.project.roll
-            },
-            AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-            None,
-        )
-        .unwrap();
+    let context = editor.source_context().unwrap();
+    let input = editor.input();
+    let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
+        input,
+        RollSettings {
+            wb: Balance::default(),
+            ..editor.document.project.roll
+        },
+        AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+        input
+            .positive_matrix(
+                context.source.camera_to_ap1(),
+                context.reference.as_ref().map(|reference| reference.ev()),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    let reference = crate::sampling::camera::white_balance(
+        &context.source,
+        context.correction.map().map(Arc::as_ref),
+        region,
+        &pipeline,
+        None,
+    )
+    .unwrap();
     let expected = query::roll(
         (
             &editor.source_services.as_ref().unwrap().evaluation,
             &editor.source_services.as_ref().unwrap().queue,
         ),
-        &mut measurement::capture_scan(&editor).unwrap(),
+        &editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .developed,
+        editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .reference
+            .as_ref(),
         None,
         region,
         roll_input(&editor).unwrap(),
@@ -157,17 +185,17 @@ fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacemen
         height: ready.area.height / 3,
     });
     let captured = LayerInput::capture(&editor).unwrap();
-    let mut captured_image = measurement::capture_scan(&editor).unwrap();
-    let mut scan = Scan::from_source(ready.developed.clone());
-    let baseline = scan
-        .white_balance_coverage(
-            region,
-            &editor.document.project.input,
-            editor.document.project.roll,
-            AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-            None,
-        )
-        .unwrap();
+    let captured_image = editor.source_context().unwrap();
+    let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
+        editor.document.project.input,
+        editor.document.project.roll,
+        AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+        ready.developed.camera_to_ap1(),
+    )
+    .unwrap();
+    let baseline =
+        crate::sampling::camera::white_balance(&ready.developed, None, region, &pipeline, None)
+            .unwrap();
     // Bradford gains add in log coordinates; the selected replacement cancels the upstream WB.
     let expected = Balance {
         warmth: baseline.warmth - upstream.warmth,
@@ -181,7 +209,8 @@ fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacemen
         .unwrap();
     let actual = captured
         .measure(
-            &mut captured_image,
+            &captured_image.source,
+            captured_image.reference.as_ref(),
             None,
             region,
             (
@@ -299,7 +328,23 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
         let balance = LayerInput::capture(&editor)
             .unwrap()
             .measure(
-                &mut measurement::capture_scan(&editor).unwrap(),
+                &editor
+                    .document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .developed,
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .reference
+                    .as_ref(),
                 None,
                 Coverage::rectangle(patch),
                 (
@@ -321,7 +366,7 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
             developed.camera_to_ap1(),
         )
         .unwrap();
-        let scan = Scan::from_source(developed.clone());
+        let scan = developed.clone();
         let mut rgb = DVec3::ZERO;
         for y in patch.y..patch.y + patch.height {
             for x in patch.x..patch.x + patch.width {
@@ -412,7 +457,23 @@ fn wb_target_is_locked_while_open_and_cancel_allows_a_new_layer_pick_without_old
             LayerInput::capture(editor)
                 .unwrap()
                 .measure(
-                    &mut measurement::capture_scan(editor).unwrap(),
+                    &editor
+                        .document
+                        .visit
+                        .canvas
+                        .ready
+                        .as_ref()
+                        .unwrap()
+                        .developed,
+                    editor
+                        .document
+                        .visit
+                        .canvas
+                        .ready
+                        .as_ref()
+                        .unwrap()
+                        .reference
+                        .as_ref(),
                     None,
                     region,
                     (
@@ -494,8 +555,8 @@ fn a_completed_wb_result_applies_to_its_captured_layer_after_selection_changes()
         .unwrap();
     editor.select_adjustment_layer(Target::Layer(first));
     let target = (source, Target::Layer(first));
-    let mut image = measurement::capture_scan(&editor).unwrap();
-    let area = image.area;
+    let image = editor.source_context().unwrap();
+    let area = image.source.area();
     let region = Coverage::rectangle(Rect {
         x: area.x + 8,
         y: area.y + 8,
@@ -514,7 +575,8 @@ fn a_completed_wb_result_applies_to_its_captured_layer_after_selection_changes()
                 measurement::run(&cx, LAYER.label, async move {
                     measurement::query(&worker, move |cancelled| {
                         input.measure(
-                            &mut image,
+                            &image.source,
+                            image.reference.as_ref(),
                             None,
                             region,
                             (&services.evaluation, &services.queue),
@@ -622,7 +684,23 @@ fn layer_selection_is_locked_during_wb_measurement_and_unlocked_after_completion
     let balance = LayerInput::capture(&editor)
         .unwrap()
         .measure(
-            &mut measurement::capture_scan(&editor).unwrap(),
+            &editor
+                .document
+                .visit
+                .canvas
+                .ready
+                .as_ref()
+                .unwrap()
+                .developed,
+            editor
+                .document
+                .visit
+                .canvas
+                .ready
+                .as_ref()
+                .unwrap()
+                .reference
+                .as_ref(),
             None,
             region,
             (
@@ -738,7 +816,23 @@ fn completed_wb_measurement_cannot_publish_after_cancellation_photo_or_document_
         let would_apply = LayerInput::capture(&editor)
             .unwrap()
             .measure(
-                &mut measurement::capture_scan(&editor).unwrap(),
+                &editor
+                    .document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .developed,
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .reference
+                    .as_ref(),
                 None,
                 region,
                 (
@@ -825,10 +919,11 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
     editor = crate::editor::tests::accepted_input(editor, InputSettings::Digital);
     editor.document.project.roll = RollSettings::default();
     let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
-    let scan = Scan::with_reference(ready.developed.clone(), Some(baseline));
+    let scan = ready.developed.clone();
+    let scan_reference = Some(baseline);
     let patch = Rect {
-        x: scan.area.x + 8,
-        y: scan.area.y + 8,
+        x: scan.area().x + 8,
+        y: scan.area().y + 8,
         width: 32,
         height: 32,
     };
@@ -854,10 +949,15 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
         .adjustment_layers = Some(layers);
     editor.select_adjustment_layer(crate::editor::adjustment_layers::Target::Layer(selected));
 
-    let expected_signature = crate::scan::ImageSource::new(&scan, InputSettings::Digital)
-        .unwrap()
-        .gpu_program()
-        .unwrap();
+    let expected_signature = crate::scan::ImageSource::new(
+        &scan,
+        InputSettings::Digital,
+        scan_reference.as_ref().map(|reference| reference.ev()),
+        None,
+    )
+    .unwrap()
+    .gpu_program()
+    .unwrap();
     assert_eq!(
         editor
             .neutral_source_signature(&InputSettings::Digital)
@@ -865,16 +965,16 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
         expected_signature
     );
     let captured = LayerInput::capture(&editor).unwrap();
-    let mut captured_image = measurement::capture_scan(&editor).unwrap();
-    let mut zero_image = measurement::capture_scan(&editor).unwrap();
-    zero_image.reference_exposure = None;
+    let captured_image = editor.source_context().unwrap();
+    let zero_image = editor.source_context().unwrap().source;
     let mut control = LayerInput::capture(&editor).unwrap();
     control.recipe.neutral.reference = Some(ReferenceExposure::Unavailable(
         crate::exposure_reference::UnavailableReference::NoUsablePreview,
     ));
     let control = control
         .measure(
-            &mut zero_image,
+            &zero_image,
+            None,
             None,
             Coverage::rectangle(patch),
             (
@@ -894,7 +994,8 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
         .reference = None;
     let balance = captured
         .measure(
-            &mut captured_image,
+            &captured_image.source,
+            captured_image.reference.as_ref(),
             None,
             Coverage::rectangle(patch),
             (
@@ -914,7 +1015,12 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
             InputSettings::Digital,
             RollSettings::default(),
             AdjustmentLayerSnapshot::new(vec![upstream, target]).unwrap(),
-            scan.positive_matrix(&InputSettings::Digital).unwrap(),
+            InputSettings::Digital
+                .positive_matrix(
+                    scan.camera_to_ap1(),
+                    scan_reference.as_ref().map(|reference| reference.ev()),
+                )
+                .unwrap(),
         )
         .unwrap();
         let mut mean = DVec3::ZERO;

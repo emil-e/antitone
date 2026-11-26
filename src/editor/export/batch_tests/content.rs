@@ -19,6 +19,66 @@ fn center_pixel(path: &Path) -> glam::DVec3 {
     }))
 }
 
+#[cfg(feature = "ocio-reference")]
+#[test]
+fn digital_batch_reuses_ready_exposure_and_resolves_an_unvisited_photo_with_frozen_edits() {
+    use crate::editor::tests::{authored_fixture, complete_document_operation};
+    use crate::processing::InputSettings;
+
+    let files = [
+        crate::exposure_fixture::neutral_dng(0.7),
+        crate::exposure_fixture::neutral_dng(1.3),
+    ];
+    let mut editor = authored_fixture(&[]);
+    editor.document.project.input = InputSettings::Digital;
+    editor = complete_document_operation(editor, Duration::from_secs(30), |editor, cx| {
+        editor.add_raws(
+            files.iter().map(|file| file.path().to_owned()).collect(),
+            cx,
+        );
+    });
+    let ids = editor.document.project.order.clone();
+    let first = editor
+        .document
+        .exposure_slot(&editor.document.initialization, ids[0]);
+    let second = editor
+        .document
+        .exposure_slot(&editor.document.initialization, ids[1]);
+    let first_ev = first
+        .get()
+        .expect("selected source has resolved exposure")
+        .ev();
+    assert!((first_ev - 0.7).abs() < 0.06);
+    assert!(
+        second.get().is_none(),
+        "second photo must require cold acquisition"
+    );
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut settings = draft(directory.path());
+    settings.precision = ExrPrecision::Full;
+    let request = editor.capture_export(&settings).unwrap();
+    assert!(matches!(request.photos[0].input, Input::Ready(_)));
+    assert!(matches!(request.photos[1].input, Input::Acquire(_)));
+    let paths: Vec<_> = request
+        .photos
+        .iter()
+        .map(|photo| photo.path.clone())
+        .collect();
+    editor.document.project.roll.exposure = 3.;
+    let services = editor.output_services.take().unwrap();
+    drop(editor);
+    let summary =
+        pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));
+    assert_eq!((summary.exported(), summary.failed()), (2, 0));
+    assert_eq!(first.get().unwrap().ev(), first_ev);
+    assert!((second.get().unwrap().ev() - 1.3).abs() < 0.06);
+    for (path, ev) in paths.iter().zip([0.7_f64, 1.3]) {
+        let expected = 6000. / 65535. * ev.exp2();
+        assert!((center_pixel(path) / expected - 1.).abs().max_element() < 0.05);
+    }
+}
+
 #[test]
 fn cold_batch_pixels_match_each_sources_accepted_grade_not_active_or_later_settings() {
     let mut editor = fixture();
@@ -31,7 +91,9 @@ fn cold_batch_pixels_match_each_sources_accepted_grade_not_active_or_later_setti
     for id in &project.order {
         // Independent source loading and scalar processing: no export request,
         // active visit or production GPU output supplies the expected pixels.
-        let scan = crate::scan::Scan::open(&editor.document.source_path(*id).unwrap(), wb).unwrap();
+        let scan =
+            crate::scan::DevelopedSource::open(&editor.document.source_path(*id).unwrap(), wb)
+                .unwrap();
         grades.push(project.source(*id).unwrap().grade_snapshot().unwrap());
         scans.push(scan);
     }
@@ -41,7 +103,7 @@ fn cold_batch_pixels_match_each_sources_accepted_grade_not_active_or_later_setti
             (calibration).validate().unwrap(),
             project.roll,
             grades[grade].clone(),
-            scan.camera_to_ap1,
+            scan.camera_to_ap1(),
         )
         .unwrap();
         crate::color::ap1_to_ap0()

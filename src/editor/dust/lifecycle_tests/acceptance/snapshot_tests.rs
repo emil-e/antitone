@@ -195,14 +195,14 @@ fn export_confirmation_captures_search_results_only_if_already_accepted_and_free
                 editor.document.export.form = Some(form);
                 request.unwrap()
             });
-            let recipe = request.photos[0].recipe.clone();
+            let recipe = request.photos[0].intent.recipe(None).unwrap();
             let path = request.photos[0].path.clone();
             assert_eq!(
                 recipe.repairs.len(),
                 if complete_before_confirmation { 2 } else { 1 }
             );
             let expected = app.read(|editor| {
-                let scan = crate::scan::Scan::open(
+                let scan = crate::scan::DevelopedSource::open(
                     &editor.document.source_path(recipe.neutral.source).unwrap(),
                     editor.document.project.acquisition_wb(),
                 )
@@ -218,7 +218,7 @@ fn export_confirmation_captures_search_results_only_if_already_accepted_and_free
                         .unwrap(),
                     recipe.roll,
                     recipe.grade.clone(),
-                    scan.camera_to_ap1,
+                    scan.camera_to_ap1(),
                 )
                 .unwrap();
                 crate::color::ap1_to_ap0()
@@ -261,7 +261,7 @@ fn export_confirmation_captures_search_results_only_if_already_accepted_and_free
                 assert!(editor.dialogs.message().is_none(), "{}", editor.status);
                 let summary = editor.document.export.summary.as_ref().unwrap();
                 assert_eq!((summary.exported(), summary.failed()), (1, 0));
-                assert_eq!(request.photos[0].recipe, recipe);
+                assert_eq!(request.photos[0].intent.recipe(None).unwrap(), recipe);
             });
             let image = exr::prelude::read_first_flat_layer_from_file(&path).unwrap();
             let index = image.layer_data.size.0 * 24 + 24;

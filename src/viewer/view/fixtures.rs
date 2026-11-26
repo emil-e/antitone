@@ -95,7 +95,7 @@ impl ViewImage {
         renderer: Arc<crate::render_fixture::RenderFixture>,
         kernels: Arc<ViewKernels>,
         wanted: &SourceRequest,
-        scan: &Scan,
+        source: &Arc<DevelopedSource>,
         field: Option<Arc<GpuFlatField>>,
     ) -> Option<Arc<Self>> {
         if !cache.belongs_to(renderer.evaluation())
@@ -103,7 +103,7 @@ impl ViewImage {
         {
             return None;
         }
-        let root = prefix_definitions(scan, field, std::slice::from_ref(wanted))
+        let root = prefix_definitions(source, field, std::slice::from_ref(wanted))
             .ok()?
             .remove(0);
         let region = wanted.input_region().ok()?;
@@ -190,7 +190,7 @@ impl ViewImage {
         queue: &crate::gpu::submission::Queue,
         renderer: Arc<crate::render_fixture::RenderFixture>,
         kernels: Arc<ViewKernels>,
-        scan: &Scan,
+        source: &Arc<DevelopedSource>,
         field: Option<Arc<GpuFlatField>>,
         spec: SourceRequest,
         cancelled: impl Fn() -> bool,
@@ -200,7 +200,7 @@ impl ViewImage {
             queue,
             renderer,
             kernels,
-            scan,
+            source,
             field,
             vec![spec],
             cancelled,
@@ -214,14 +214,14 @@ impl ViewImage {
         queue: &crate::gpu::submission::Queue,
         renderer: Arc<crate::render_fixture::RenderFixture>,
         kernels: Arc<ViewKernels>,
-        scan: &Scan,
+        source: &Arc<DevelopedSource>,
         field: Option<Arc<GpuFlatField>>,
         specs: Vec<SourceRequest>,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<Vec<Arc<Self>>>, Error> {
         let scope = renderer.evaluation().test_materializations(false);
         pollster::block_on(Self::original_prefixes(
-            device, queue, renderer, kernels, scan, field, specs, &scope, cancelled,
+            device, queue, renderer, kernels, source, field, specs, &scope, cancelled,
         ))
     }
 
@@ -231,7 +231,7 @@ impl ViewImage {
         queue: &crate::gpu::submission::Queue,
         renderer: Arc<crate::render_fixture::RenderFixture>,
         kernels: Arc<ViewKernels>,
-        scan: &Scan,
+        source: &Arc<DevelopedSource>,
         field: Option<Arc<GpuFlatField>>,
         specs: Vec<SourceRequest>,
         scope: &e::Materializations,
@@ -241,8 +241,7 @@ impl ViewImage {
             return Ok(None);
         }
         renderer.evaluation().require_device(device)?;
-        let identity =
-            crate::acquisition::camera::identity::Identity::camera(scan.source().identity());
+        let identity = crate::acquisition::camera::identity::Identity::camera(source.identity());
         let specs = specs
             .into_iter()
             .map(|spec| spec.capture(identity.clone()))
@@ -250,16 +249,15 @@ impl ViewImage {
         let spec = specs
             .first()
             .ok_or(Error::InvalidParameter("empty prefix request"))?;
-        scan.validate_area(spec.area)?;
-        if scan.area != spec.area
+        source.validate_area(spec.area)?;
+        if source.area() != spec.area
             || (if spec.is_inspection() {
-                scan.camera_to_ap1 != spec.matrix()
+                source.camera_to_ap1() != spec.matrix()
             } else {
                 !spec
                     .program()
-                    .is_some_and(|program| program.matches_native(scan).unwrap_or(false))
+                    .is_some_and(|program| program.matches_developed(source, None).unwrap_or(false))
             })
-            || scan.flat_field() != spec.field.as_ref()
             || spec.field.as_ref() != field.as_ref().map(|f| f.field())
             || specs.iter().any(|other| {
                 !other.same_source(spec)
@@ -270,7 +268,7 @@ impl ViewImage {
                 "prefix source authority differs from originals".into(),
             ));
         }
-        let definitions = prefix_definitions(scan, field, &specs)?;
+        let definitions = prefix_definitions(source, field, &specs)?;
         let requests = definitions
             .into_iter()
             .zip(&specs)
@@ -392,7 +390,7 @@ impl ViewImage {
 }
 
 pub(super) fn prefix_definitions(
-    scan: &Scan,
+    source: &Arc<DevelopedSource>,
     field: Option<Arc<GpuFlatField>>,
     specs: &[SourceRequest],
 ) -> Result<Vec<e::Value>, Error> {
@@ -400,7 +398,7 @@ pub(super) fn prefix_definitions(
         .iter()
         .map(|spec| {
             PhotographRequest::Fixture(spec.processing_fixture()).source_view(
-                scan,
+                source,
                 field.clone(),
                 spec,
             )

@@ -72,8 +72,8 @@ async fn context_with_cache_policy(
     (device, queue, renderer, kernels)
 }
 
-fn scan() -> Scan {
-    Scan::open(
+fn scan() -> Arc<DevelopedSource> {
+    DevelopedSource::open(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
@@ -98,9 +98,11 @@ pub(super) fn negative(gamma: f64) -> InputSettings {
     }
 }
 
-fn frame(scan: &Scan) -> FrameRaster {
-    FrameRaster::full(Composition::new(scan.area, Default::default(), Default::default()).unwrap())
-        .unwrap()
+fn frame(scan: &DevelopedSource) -> FrameRaster {
+    FrameRaster::full(
+        Composition::new(scan.area(), Default::default(), Default::default()).unwrap(),
+    )
+    .unwrap()
 }
 
 fn processing_input(
@@ -108,7 +110,7 @@ fn processing_input(
     input: impl Into<InputSettings>,
     roll: RollSettings,
     photo: AdjustmentLayerSettings,
-    scan: &Scan,
+    scan: &DevelopedSource,
 ) -> AuthoredPhotograph {
     crate::photographic::test_inputs::AuthoredPhotograph::new(
         &device.limits(),
@@ -118,8 +120,8 @@ fn processing_input(
             photo,
         )])
         .unwrap(),
-        scan.camera_to_ap1,
-        scan.area,
+        scan.camera_to_ap1(),
+        scan.area(),
     )
     .map(Arc::new)
     .unwrap()
@@ -180,17 +182,17 @@ fn read(
 fn native_graph_identity_captures_source_response_correction_and_grid() {
     pollster::block_on(async {
         let (device, _, _, _) = context().await;
-        let mut scan = scan();
+        let scan = scan();
         let frame = frame(&scan);
         let settings = negative(0.6);
-        let native = |scan: &Scan, frame, settings, field| {
+        let native = |scan: &Arc<DevelopedSource>, frame, settings, field| {
             let input = AuthoredPhotograph::new(
                 &device.limits(),
                 settings,
                 RollSettings::default(),
                 AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
-                scan.camera_to_ap1,
-                scan.area,
+                scan.camera_to_ap1(),
+                scan.area(),
             )
             .unwrap();
             let spec = SourceRequest::for_processing(frame, &input).unwrap();
@@ -214,7 +216,7 @@ fn native_graph_identity_captures_source_response_correction_and_grid() {
         }
         assert!(!original.same_definition(&native(&scan, frame, calibration_changed, None)));
         let file = crate::dng_fixture::Fixture::default().write();
-        let unrelated = Scan::open(file.path(), None).unwrap();
+        let unrelated = DevelopedSource::open(file.path(), None).unwrap();
         assert!(!original.same_definition(&native(&unrelated, frame, settings, None)));
         let finer = FrameRaster {
             output: frame.output.map(|n| n * 2),
@@ -223,14 +225,19 @@ fn native_graph_identity_captures_source_response_correction_and_grid() {
         assert!(!original.same_definition(&native(&scan, finer, settings, None)));
         let field = Arc::new(
             crate::flat_field::FlatField::from_nodes(
-                [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+                [
+                    scan.area().x,
+                    scan.area().y,
+                    scan.area().width,
+                    scan.area().height,
+                ],
                 [2, 2],
                 vec![DVec3::splat(0.9); 4],
             )
             .unwrap(),
         );
         let gpu_field = Arc::new(GpuFlatField::new(&device, field.clone()).unwrap());
-        scan.set_flat_field(Some(field));
+
         assert!(!original.same_definition(&native(&scan, frame, settings, Some(gpu_field))));
     });
 }
@@ -242,11 +249,16 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
         let gate = queue.clone();
         let context = egui::Context::default();
         for corrected in [false, true] {
-            let mut scan = scan();
+            let scan = scan();
             let field = corrected.then(|| {
                 Arc::new(
                     crate::flat_field::FlatField::from_nodes(
-                        [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+                        [
+                            scan.area().x,
+                            scan.area().y,
+                            scan.area().width,
+                            scan.area().height,
+                        ],
                         [2, 2],
                         vec![
                             DVec3::new(0.8, 0.9, 1.),
@@ -258,7 +270,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                     .unwrap(),
                 )
             });
-            scan.set_flat_field(field.clone());
+
             let cal = calibration();
             let gpu_field = field
                 .as_ref()
@@ -266,7 +278,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             let frame = if corrected {
                 FrameRaster::full(
                     Composition::new(
-                        scan.area,
+                        scan.area(),
                         Default::default(),
                         crate::geometry::PhotoOrientation {
                             turns: crate::geometry::QuarterTurns::One,
@@ -280,7 +292,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                 frame(&scan)
             };
             let roll = RollSettings::default();
-            let spec = SourceRequest::new(frame, cal, scan.camera_to_ap1, field).unwrap();
+            let spec = SourceRequest::new(frame, cal, scan.camera_to_ap1(), field).unwrap();
             let source = ViewImage::prefix(
                 &device,
                 &queue,
@@ -320,7 +332,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                 &renderer,
                 &device,
                 &queue,
-                (&scan, gpu_field.clone()),
+                (&scan, gpu_field.clone(), None),
                 input.clone(),
                 OutputTarget::Srgb,
                 (&generation, 9),

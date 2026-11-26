@@ -73,7 +73,7 @@ fn pixels(
 fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changing_prefixes() {
     let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([2949, 11796, 5898]);
-    let scan = crate::scan::Scan::open(file.path(), None).unwrap();
+    let scan = crate::scan::DevelopedSource::open(file.path(), None).unwrap();
     let mut project = Project {
         input: crate::processing::InputSettings::Digital,
         ..Default::default()
@@ -87,11 +87,8 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
             path: file.path().into(),
             capture_time: None,
             development_mode: crate::project::DevelopmentMode::Unity,
-            development: SourceDevelopment::from_metadata(
-                &scan.source().metadata(),
-                scan.source().white_balance(),
-            )
-            .unwrap(),
+            development: SourceDevelopment::from_metadata(&scan.metadata(), scan.white_balance())
+                .unwrap(),
             orientation: Default::default(),
             crop: None,
             repairs: Default::default(),
@@ -102,14 +99,19 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
     let capture = PhotographRequest::Recipe(recipe.clone());
     let codes = crate::acquisition::camera::camera_source(&scan).unwrap();
     let limits = device.limits();
-    let proxy = crate::scan::CameraProxy::from_scan(&scan).unwrap();
+    let proxy = crate::scan::CameraProxy::from_source(&scan, None).unwrap();
     let camera = ProcessingSource::new_continuous(
         &device,
         &proxy.pixels,
         proxy.matrix,
         Some(
             SourceGeometry::new(
-                [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+                [
+                    scan.area().x,
+                    scan.area().y,
+                    scan.area().width,
+                    scan.area().height,
+                ],
                 proxy.dimensions(),
             )
             .unwrap(),
@@ -121,7 +123,7 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
     let thumb = SourceRequest::for_frame(frame)
         .unwrap()
         .with_sampling(crate::acquisition::Sampling::CameraCells {
-            region: scan.area,
+            region: scan.area(),
             size: proxy.dimensions(),
         })
         .unwrap();
@@ -130,7 +132,7 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
     let spatial = SourceRequest::for_frame(view)
         .unwrap()
         .with_sampling(crate::acquisition::Sampling::CameraProxy {
-            region: scan.area,
+            region: scan.area(),
             size: proxy.dimensions(),
         })
         .unwrap();
@@ -299,7 +301,7 @@ fn preview_and_proxy_layouts_can_be_replanned_with_an_explicit_capture() {
     let (device, _, renderer) = crate::photographic::test_support::render_context();
     let limits = device.limits();
     let file = crate::raw::fixture::bayer_dng_with_rgb([2949, 11796, 5898]);
-    let scan = crate::scan::Scan::open(file.path(), None).unwrap();
+    let scan = crate::scan::DevelopedSource::open(file.path(), None).unwrap();
     let mut project = Project {
         input: crate::processing::InputSettings::Digital,
         ..Default::default()
@@ -310,11 +312,8 @@ fn preview_and_proxy_layouts_can_be_replanned_with_an_explicit_capture() {
             path: file.path().into(),
             capture_time: None,
             development_mode: crate::project::DevelopmentMode::Unity,
-            development: SourceDevelopment::from_metadata(
-                &scan.source().metadata(),
-                scan.source().white_balance(),
-            )
-            .unwrap(),
+            development: SourceDevelopment::from_metadata(&scan.metadata(), scan.white_balance())
+                .unwrap(),
             orientation: Default::default(),
             crop: None,
             repairs: Default::default(),
@@ -328,7 +327,7 @@ fn preview_and_proxy_layouts_can_be_replanned_with_an_explicit_capture() {
     let capture = PhotographRequest::Recipe(recipe.clone());
     let mut frame = crate::frame_raster::FrameRaster::full(recipe.composition).unwrap();
     frame.output = [8, 6];
-    let identity = crate::acquisition::camera::identity::Identity::camera(scan.source().identity());
+    let identity = crate::acquisition::camera::identity::Identity::camera(scan.identity());
     let fresh = capture
         .source_request(frame)
         .unwrap()
@@ -348,8 +347,8 @@ fn preview_and_proxy_layouts_can_be_replanned_with_an_explicit_capture() {
             ..returned.frame()
         };
         let proxy = Sampling::CameraProxy {
-            region: scan.area,
-            size: [scan.area.width, scan.area.height],
+            region: scan.area(),
+            size: [scan.area().width, scan.area().height],
         };
         for frame in [
             moved,
@@ -388,14 +387,19 @@ fn preview_and_proxy_layouts_can_be_replanned_with_an_explicit_capture() {
         .unwrap();
     check(&preview);
 
-    let proxy = crate::scan::CameraProxy::from_scan(&scan).unwrap();
+    let proxy = crate::scan::CameraProxy::from_source(&scan, None).unwrap();
     let camera = ProcessingSource::new_continuous(
         &device,
         &proxy.pixels,
         proxy.matrix,
         Some(
             SourceGeometry::new(
-                [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+                [
+                    scan.area().x,
+                    scan.area().y,
+                    scan.area().width,
+                    scan.area().height,
+                ],
                 proxy.dimensions(),
             )
             .unwrap(),
@@ -405,7 +409,7 @@ fn preview_and_proxy_layouts_can_be_replanned_with_an_explicit_capture() {
     let mut full = frame;
     full.output = proxy.dimensions();
     let sampling = Sampling::CameraCells {
-        region: scan.area,
+        region: scan.area(),
         size: proxy.dimensions(),
     };
     let (sampled, sampled_spec) = capture

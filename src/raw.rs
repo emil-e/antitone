@@ -1147,7 +1147,8 @@ impl Developed<'_> {
         }))
     }
 
-    pub(crate) fn copy_samples(
+    /// Copy original camera cells in code units to the supplied row-strided buffer.
+    pub fn copy_samples(
         &self,
         area: Rect,
         output: &mut [[f32; 4]],

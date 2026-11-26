@@ -5,7 +5,7 @@ fn rapid_stroke_batches_publish_every_accepted_repair_with_the_latest_grade_afte
     let mut e = coherent_editor();
     e.begin_dust_cleanup();
     let source = e.document.visit.current_source.unwrap();
-    let area = e.source_context().unwrap().scan().unwrap().area;
+    let area = e.source_context().unwrap().source.area();
     assert!(
         area.width >= 80 && area.height >= 80,
         "fixture needs room for64 separate masks and valid donor exteriors"

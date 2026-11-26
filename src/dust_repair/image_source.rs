@@ -4,7 +4,7 @@ use crate::{
     Error,
     dust_repair::{Ap1, BaseImage},
     geometry::SourceRegion,
-    scan::Scan,
+    scan::DevelopedSource,
 };
 use std::sync::Arc;
 use {crate::evaluation, crate::photographic::stages::flat_field::GpuFlatField};
@@ -24,12 +24,12 @@ impl<'a> Source<'a> {
         field: Option<Arc<GpuFlatField>>,
         context: &'a evaluation::Context,
         gpu: &'a crate::gpu::submission::Queue,
-        scan: &Scan,
+        developed: &Arc<DevelopedSource>,
         recipe: &crate::image_recipe::ImageRecipe,
     ) -> Result<Self, Error> {
-        recipe.neutral.require_scan(scan)?;
+        recipe.neutral.require_source(developed)?;
         let unrepaired = crate::photographic::graph::composition::original_unrepaired(
-            crate::acquisition::camera::camera_source(scan)?,
+            crate::acquisition::camera::camera_source(developed)?,
             field,
             recipe,
         )?;

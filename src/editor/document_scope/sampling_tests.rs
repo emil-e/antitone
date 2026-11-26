@@ -35,7 +35,9 @@ fn grading_does_not_invalidate_original_inputs_but_development_changes_do() {
     let editor = authored_fixture(&["roll-0.dng", "roll-1.dng"]);
     let mut document = editor.document.capture();
     let id = document.project.order[0];
-    let scan = crate::scan::Scan::open(&document.source_path(id).unwrap(), Some([1.; 4])).unwrap();
+    let scan =
+        crate::scan::DevelopedSource::open(&document.source_path(id).unwrap(), Some([1.; 4]))
+            .unwrap();
     let input = Arc::new(AnalysisInput::capture(&scan, || false).unwrap().unwrap());
     let mut inputs = SamplingInputs::default();
     inputs.insert(id, document.source_key(id).unwrap(), input.clone());
@@ -59,8 +61,11 @@ fn grading_does_not_invalidate_original_inputs_but_development_changes_do() {
 fn document_install_releases_removed_inputs_but_jobs_keep_their_own_snapshots() {
     let mut editor = authored_fixture(&["roll-0.dng", "roll-1.dng"]);
     let id = editor.document.project.order[1];
-    let scan =
-        crate::scan::Scan::open(&editor.document.source_path(id).unwrap(), Some([1.; 4])).unwrap();
+    let scan = crate::scan::DevelopedSource::open(
+        &editor.document.source_path(id).unwrap(),
+        Some([1.; 4]),
+    )
+    .unwrap();
     let input = Arc::new(AnalysisInput::capture(&scan, || false).unwrap().unwrap());
     let weak = Arc::downgrade(&input);
     let bytes = input.retained_bytes();

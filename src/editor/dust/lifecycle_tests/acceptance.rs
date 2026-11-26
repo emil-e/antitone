@@ -605,8 +605,8 @@ fn failed_graph_region_does_not_poison_an_independent_repair_demand() {
     use crate::dust_repair::BaseImage;
     let mut e = coherent_editor();
     let id = e.document.visit.current_source.unwrap();
-    let scan = e.source_context().unwrap().scan().unwrap();
-    let a = scan.area;
+    let scan = e.source_context().unwrap().source;
+    let a = scan.area();
     for origin in [[a.x, a.y], [80, 80]] {
         e.dust_repairs_mut(id)
             .insert(
@@ -718,7 +718,7 @@ fn graph_completion_keeps_photo_basis_and_does_not_invalidate_an_independent_ref
     }
     let recipe = capture(&e);
     let photo = e.source_context().unwrap();
-    let scan = photo.scan().unwrap();
+    let scan = photo.source.clone();
     let input = crate::scan::ImageSource::from_recipe(&scan, &recipe.neutral).unwrap();
     let expected = recipe
         .repairs
@@ -732,14 +732,29 @@ fn graph_completion_keeps_photo_basis_and_does_not_invalidate_an_independent_ref
         .collect::<Vec<_>>();
     let mut other = super::super::super::tests::authored_fixture(&["bare-light.dng"]);
     let reference = other.document.visit.canvas.ready.take().unwrap();
-    let reference_scan =
-        Scan::with_reference(reference.developed.clone(), reference.reference.clone());
+    let reference_scan = reference.developed.clone();
+    let reference_scan_reference = reference.reference.clone();
     assert!(crate::scan::ImageSource::from_recipe(&reference_scan, &recipe.neutral).is_err());
-    let wrong_source =
-        crate::scan::ImageSource::new(&reference_scan, recipe.neutral.input).unwrap();
-    let uncorrected = Scan::with_reference(photo.source.clone(), photo.reference.clone());
-    let wrong_correction =
-        crate::scan::ImageSource::new(&uncorrected, recipe.neutral.input).unwrap();
+    let wrong_source = crate::scan::ImageSource::new(
+        &reference_scan,
+        recipe.neutral.input,
+        reference_scan_reference
+            .as_ref()
+            .map(|reference| reference.ev()),
+        None,
+    )
+    .unwrap();
+    let uncorrected = photo.source.clone();
+    let uncorrected_reference = photo.reference.clone();
+    let wrong_correction = crate::scan::ImageSource::new(
+        &uncorrected,
+        recipe.neutral.input,
+        uncorrected_reference
+            .as_ref()
+            .map(|reference| reference.ev()),
+        None,
+    )
+    .unwrap();
     for (repair, expected) in recipe.repairs.iter().zip(&expected) {
         for control in [&wrong_source, &wrong_correction] {
             let wrong = crate::repair_source::evaluate(control, repair).unwrap();

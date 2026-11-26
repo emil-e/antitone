@@ -30,10 +30,9 @@ fn weight_images_preserve_original_coordinates_for_identity_controls_and_disable
         angle: 0.3,
         feather: 1.,
     };
-    let mut scan = measurement::capture_scan(&editor).unwrap();
     let samples = Samples::new(
         (&services.evaluation, &services.queue),
-        &mut scan,
+        &ready.developed,
         None,
         Coverage::rectangle(patch),
         &|| false,
@@ -126,12 +125,13 @@ fn layer_queries_reject_zero_effective_coverage_and_cancel_without_poisoning_lat
         .unwrap();
         LayerInput { recipe, index: 0 }
     };
-    let mut scan = measurement::capture_scan(&editor).unwrap();
+    let scan = editor.source_context().unwrap().source;
     for (enabled, invert, strength) in [(false, false, 1.), (true, false, 0.), (true, true, 1.)] {
         assert!(matches!(
             layer(
                 (&services.evaluation, &services.queue),
-                &mut scan,
+                &scan,
+                None,
                 None,
                 coverage,
                 input(enabled, invert, strength),
@@ -143,7 +143,8 @@ fn layer_queries_reject_zero_effective_coverage_and_cancel_without_poisoning_lat
     assert!(matches!(
         layer(
             (&services.evaluation, &services.queue),
-            &mut scan,
+            &scan,
+            None,
             None,
             coverage,
             input(true, false, 1.),
@@ -155,7 +156,8 @@ fn layer_queries_reject_zero_effective_coverage_and_cancel_without_poisoning_lat
     assert!(matches!(
         layer(
             (&services.evaluation, &services.queue),
-            &mut scan,
+            &scan,
+            None,
             None,
             coverage,
             input(true, false, 1.),
@@ -168,7 +170,8 @@ fn layer_queries_reject_zero_effective_coverage_and_cancel_without_poisoning_lat
     ));
     let balance = layer(
         (&services.evaluation, &services.queue),
-        &mut scan,
+        &scan,
+        None,
         None,
         coverage,
         input(true, false, 1.),
@@ -206,11 +209,13 @@ fn white_balance_queries_include_black_camera_samples_in_a_usable_patch() {
             editor
         };
         let services = editor.source_services.as_ref().unwrap();
-        let mut scan = measurement::capture_scan(&editor).unwrap();
-        let coverage = Coverage::rectangle(scan.area);
+        let context = editor.source_context().unwrap();
+        let scan = context.source;
+        let available = context.reference.as_ref();
+        let coverage = Coverage::rectangle(scan.area());
         let mut black = false;
         let mut lit = false;
-        for ([x, y], _) in coverage.pixels(scan.area).unwrap() {
+        for ([x, y], _) in coverage.pixels(scan.area()).unwrap() {
             let pixel = scan.pixel(x, y).unwrap();
             black |= pixel == DVec3::ZERO;
             lit |= pixel.min_element() > 0.;
@@ -220,15 +225,20 @@ fn white_balance_queries_include_black_camera_samples_in_a_usable_patch() {
             "the developed patch must contain both black and lit samples"
         );
 
-        let expected = scan
-            .white_balance_coverage(
-                coverage,
-                &input,
-                RollSettings::default(),
-                AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-                None,
-            )
-            .unwrap();
+        let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
+            input,
+            RollSettings::default(),
+            AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+            input
+                .positive_matrix(
+                    scan.camera_to_ap1(),
+                    available.map(|reference| reference.ev()),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        let expected =
+            crate::sampling::camera::white_balance(&scan, None, coverage, &pipeline, None).unwrap();
         let recipe = editor
             .positive_recipe(
                 input,
@@ -237,10 +247,12 @@ fn white_balance_queries_include_black_camera_samples_in_a_usable_patch() {
             )
             .unwrap();
         let gpu = (&services.evaluation, &services.queue);
-        let roll_balance = roll(gpu, &mut scan, None, coverage, recipe.clone(), &|| false).unwrap();
+        let roll_balance =
+            roll(gpu, &scan, None, None, coverage, recipe.clone(), &|| false).unwrap();
         let layer_balance = layer(
             gpu,
-            &mut scan,
+            &scan,
+            available,
             None,
             coverage,
             LayerInput { recipe, index: 0 },
@@ -281,18 +293,23 @@ fn white_balance_queries_keep_signed_working_light_and_recorded_hdr_exposure() {
     });
 
     for ev in [0., 8.] {
-        let mut scan = measurement::capture_scan(&editor).unwrap();
-        scan.reference_exposure = Some(crate::exposure_reference::ReferenceExposure::Matched(
+        let scan = editor.source_context().unwrap().source;
+        let scan_reference = Some(crate::exposure_reference::ReferenceExposure::Matched(
             crate::exposure_reference::StartingExposure {
                 ev,
                 samples: 1024,
                 spread: 0.,
             },
         ));
-        let working = crate::scan::ImageSource::new(&scan, InputSettings::Digital)
-            .unwrap()
-            .sample([area.x + 16, area.y + 16])
-            .unwrap();
+        let working = crate::scan::ImageSource::new(
+            &scan,
+            InputSettings::Digital,
+            scan_reference.as_ref().map(|reference| reference.ev()),
+            None,
+        )
+        .unwrap()
+        .sample([area.x + 16, area.y + 16])
+        .unwrap();
         assert!(
             working.min_element() < 0.,
             "the fixture must exercise signed working RGB: {working:?}"
@@ -303,15 +320,20 @@ fn white_balance_queries_keep_signed_working_light_and_recorded_hdr_exposure() {
                 "the recorded exposure must exercise HDR light: {working:?}"
             );
         }
-        let reference = scan
-            .white_balance_coverage(
-                coverage,
-                &InputSettings::Digital,
-                RollSettings::default(),
-                AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-                None,
-            )
-            .unwrap();
+        let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
+            InputSettings::Digital,
+            RollSettings::default(),
+            AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+            InputSettings::Digital
+                .positive_matrix(
+                    scan.camera_to_ap1(),
+                    scan_reference.as_ref().map(|reference| reference.ev()),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        let reference =
+            crate::sampling::camera::white_balance(&scan, None, coverage, &pipeline, None).unwrap();
         let mut recipe = editor
             .positive_recipe(
                 InputSettings::Digital,
@@ -319,10 +341,11 @@ fn white_balance_queries_keep_signed_working_light_and_recorded_hdr_exposure() {
                 AdjustmentLayerSettings::default(),
             )
             .unwrap();
-        recipe.neutral.reference = scan.reference_exposure.clone();
+        recipe.neutral.reference = scan_reference.clone();
         let roll_balance = roll(
             (&services.evaluation, &services.queue),
-            &mut scan,
+            &scan,
+            scan_reference.as_ref(),
             None,
             coverage,
             recipe.clone(),
@@ -331,7 +354,8 @@ fn white_balance_queries_keep_signed_working_light_and_recorded_hdr_exposure() {
         .unwrap();
         let layer_balance = layer(
             (&services.evaluation, &services.queue),
-            &mut scan,
+            &scan,
+            scan_reference.as_ref(),
             None,
             coverage,
             LayerInput { recipe, index: 0 },

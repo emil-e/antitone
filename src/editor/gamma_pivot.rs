@@ -316,19 +316,27 @@ impl Editor {
 
 fn capture_reference(editor: &Editor, input: InputSettings) -> Result<ReferenceWork, String> {
     let coverage = automatic_reference(editor)?;
-    let image = measurement::capture_input(editor)?;
+    let source = editor.capture_source_context()?;
     let gpu = measurement::capture_gpu(editor);
     let negative = input.negative_input().expect("calibrated gamma reference");
     Ok(async move {
-        let (image, field) = image.await?;
+        let context = source.await?;
+        let field = context
+            .correction
+            .gpu()
+            .map_err(|error| error.to_string())?;
         crate::background::run(move |cancelled| {
             let gpu = measurement::query_gpu(gpu.as_ref())?;
-            let evidence =
-                query::Evidence::capture_midtones(gpu, &image, field, coverage, negative, &|| {
-                    cancelled.is_cancelled()
-                })?;
+            let evidence = query::Evidence::capture_midtones(
+                gpu,
+                &context.source,
+                field,
+                coverage,
+                negative,
+                &|| cancelled.is_cancelled(),
+            )?;
             Ok::<_, Error>(Arc::new(Reference {
-                camera_to_ap1: image.camera_to_ap1,
+                camera_to_ap1: context.source.camera_to_ap1(),
                 evidence,
             }))
         })

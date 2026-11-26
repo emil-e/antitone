@@ -92,15 +92,18 @@ fn evaluate(
     cancelled: &Cancellation,
 ) -> Result<Vec<RepairFeedback>, Error> {
     let stopped = || cancelled.is_cancelled();
-    let scan = context.scan()?;
-    let (scan, recipe) = crate::photo_preparation::native_image(&scan, &recipe)?;
+    let recipe = crate::photo_preparation::native_recipe(
+        &context.source,
+        context.reference.as_ref(),
+        &recipe,
+    )?;
     let (evaluation, queue) =
         gpu.ok_or_else(|| Error::Gpu("repair image-query services unavailable".into()))?;
     let source = crate::dust_repair::image_source::Source::from_recipe(
         context.correction.gpu()?,
         &evaluation,
         &queue,
-        &scan,
+        &context.source,
         &recipe,
     )?;
     collect_feedback(recipe.repairs.iter().map(|repair| {

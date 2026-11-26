@@ -3,7 +3,7 @@ mod history_tests;
 mod latency;
 
 fn camera_images(editor: &Editor) -> Vec<crate::evaluation::Image<crate::evaluation::ImageLayout>> {
-    let scan = editor.source_context().unwrap().scan().unwrap();
+    let scan = editor.source_context().unwrap().source;
     let camera = crate::acquisition::camera::camera_source(&scan).unwrap();
     let services = editor.source_services.as_ref().unwrap();
     let renderer = services.render_fixture().unwrap();

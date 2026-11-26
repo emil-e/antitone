@@ -453,23 +453,31 @@ fn correction_reset_preserves_a_completed_numeric_edit_and_finishes_without_anot
         harness.enter(|e, cx| e.add_raws(vec![fixture("illuminated-patches.dng")], cx));
         wait_opened_photo(&mut harness);
         harness.update(|e| {
-            let mut scan = e.source_context().unwrap().scan().unwrap();
+            let scan = e.source_context().unwrap().source;
             e.set_dmin(Some(
-                scan.reference(Rect {
-                    x: 16,
-                    y: 16,
-                    width: 32,
-                    height: 32,
-                })
+                crate::sampling::camera::reference(
+                    &scan,
+                    None,
+                    Rect {
+                        x: 16,
+                        y: 16,
+                        width: 32,
+                        height: 32,
+                    },
+                )
                 .unwrap(),
             ));
             e.set_dmax(Some(
-                scan.reference(Rect {
-                    x: 80,
-                    y: 16,
-                    width: 32,
-                    height: 32,
-                })
+                crate::sampling::camera::reference(
+                    &scan,
+                    None,
+                    Rect {
+                        x: 80,
+                        y: 16,
+                        width: 32,
+                        height: 32,
+                    },
+                )
                 .unwrap(),
             ));
             e.scopes.visible = false;
@@ -698,8 +706,8 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             assert!(editor.document.find_source(&reference).is_none());
         });
         let wb = harness.read(|editor| editor.document.project.acquisition_wb());
-        let mut scan = Scan::open(&fixture("illuminated-patches.dng"), wb).unwrap();
-        scan.set_flat_field(Some(settings.map.clone()));
+        let scan = DevelopedSource::open(&fixture("illuminated-patches.dng"), wb).unwrap();
+        let scan_field = Some(settings.map.clone());
         let [x, y, w, h] = settings.map.area();
         let mut patches = Vec::new();
         for gy in 0..9 {
@@ -710,7 +718,9 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
                     width: 32,
                     height: 32,
                 };
-                if let Ok(rgb) = scan.reference(region) {
+                if let Ok(rgb) =
+                    crate::sampling::camera::reference(&scan, scan_field.as_deref(), region)
+                {
                     patches.push((region, rgb));
                 }
             }
@@ -784,14 +794,23 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
                 editor.photo_settings(),
             )
         });
+        let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
+            editor_input,
+            roll,
+            AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+            editor_input
+                .positive_matrix(scan.camera_to_ap1(), None)
+                .unwrap(),
+        )
+        .unwrap();
         let (region, balance) = patches
             .iter()
             .find_map(|(r, _)| {
-                scan.white_balance_coverage(
+                crate::sampling::camera::white_balance(
+                    &scan,
+                    scan_field.as_deref(),
                     Coverage::rectangle(*r),
-                    &editor_input,
-                    roll,
-                    AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+                    &pipeline,
                     Some(crate::adjustment_layers::AdjustmentLayer::global(photo)),
                 )
                 .ok()

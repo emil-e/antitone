@@ -50,7 +50,11 @@ impl Demand {
                 crate::viewer::view::rendering::Request::photograph(
                     context,
                     kernels,
-                    &self.pixels.scan()?,
+                    &self.pixels.source,
+                    self.pixels
+                        .reference
+                        .as_ref()
+                        .map(|reference| reference.ev()),
                     self.pixels.correction.gpu()?,
                     crate::viewer::view::rendering::Intent {
                         capture: &self.capture,
@@ -723,17 +727,17 @@ async fn packed_view_input(
 ) -> Result<Option<evaluation::Image<evaluation::ImageLayout>>, Error> {
     use evaluation::{ImageBacking, ImageFormat, Region, Tiling};
 
-    let scan = demand.pixels.scan()?;
+    let developed = &demand.pixels.source;
     let visible = demand.frame.bounds()?;
     let cells =
         |area: crate::geometry::SourceRegion| u64::from(area.width) * u64::from(area.height);
-    let source_cells = cells(scan.area);
+    let source_cells = cells(developed.area());
     // Only broad, substantial views benefit from paying for a full original upload.
     let bytes = source_cells * ImageFormat::Rgba16Uint.pixel_bytes();
     if !(32 << 20..=512 << 20).contains(&bytes) || cells(visible) * 2 < source_cells {
         return Ok(None);
     }
-    let source = crate::acquisition::camera::camera_source(&scan)?;
+    let source = crate::acquisition::camera::camera_source(developed)?;
     if source
         .source()
         .is_none_or(|source| source.storage_format() != ImageFormat::Rgba16Uint)

@@ -1,5 +1,5 @@
 use super::*;
-use crate::scan::Scan;
+use crate::scan::DevelopedSource;
 use crate::{
     dust_repair::{RepairId, RepairOrigin, SupportMask},
     processing::{Calibration, InputSettings, Pipeline, RollSettings},
@@ -9,7 +9,7 @@ use glam::DVec3;
 #[test]
 fn repair_sampling_sees_factory_normalized_ap1_but_negative_and_native_samples_do_not_change() {
     let file = crate::exposure_fixture::neutral_dng_with_defect(1.3);
-    let scan = Scan::open(file.path(), Some([1.; 4])).unwrap();
+    let scan = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
     let repair = Repair {
         id: RepairId(1),
         enabled: true,
@@ -22,7 +22,11 @@ fn repair_sampling_sees_factory_normalized_ap1_but_negative_and_native_samples_d
         dmax: DVec3::splat(0.01),
     }
     .into();
-    let before = evaluate(&ImageSource::new(&scan, negative).unwrap(), &repair).unwrap();
+    let before = evaluate(
+        &ImageSource::new(&scan, negative, None, None).unwrap(),
+        &repair,
+    )
+    .unwrap();
     let samples = scan.pixel(48, 48).unwrap();
     assert!(
         scan.pixel(16, 16).unwrap().max_element() < samples.min_element() * 0.1,
@@ -32,7 +36,7 @@ fn repair_sampling_sees_factory_normalized_ap1_but_negative_and_native_samples_d
         None,
         &std::sync::OnceLock::new(),
         InputSettings::Digital,
-        scan.source(),
+        &scan,
     )
     .unwrap();
     assert!(
@@ -43,9 +47,9 @@ fn repair_sampling_sees_factory_normalized_ap1_but_negative_and_native_samples_d
         "{:?}",
         prepared.reference.as_ref()
     );
-    let normalized = prepared.scan();
+    let reference_ev = prepared.reference.as_ref().map(|reference| reference.ev());
     let evaluated = evaluate(
-        &ImageSource::new(&normalized, InputSettings::Digital).unwrap(),
+        &ImageSource::new(&prepared.source, InputSettings::Digital, reference_ev, None).unwrap(),
         &repair,
     )
     .unwrap();
@@ -66,7 +70,11 @@ fn repair_sampling_sees_factory_normalized_ap1_but_negative_and_native_samples_d
         samples,
         "normalization must not rewrite native camera samples"
     );
-    let after = evaluate(&ImageSource::new(&normalized, negative).unwrap(), &repair).unwrap();
+    let after = evaluate(
+        &ImageSource::new(&prepared.source, negative, reference_ev, None).unwrap(),
+        &repair,
+    )
+    .unwrap();
     assert_eq!(
         before.pixels().collect::<Vec<_>>(),
         after.pixels().collect::<Vec<_>>()
@@ -74,7 +82,9 @@ fn repair_sampling_sees_factory_normalized_ap1_but_negative_and_native_samples_d
     let grade = Pipeline::new(
         InputSettings::Digital,
         RollSettings::default(),
-        normalized.positive_matrix(&InputSettings::Digital).unwrap(),
+        InputSettings::Digital
+            .positive_matrix(prepared.source.camera_to_ap1(), reference_ev)
+            .unwrap(),
     )
     .unwrap();
     for (_, pixel) in evaluated.pixels() {

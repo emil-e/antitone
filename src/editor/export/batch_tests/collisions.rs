@@ -56,10 +56,7 @@ fn a_photo_specific_numerical_rejection_does_not_abort_later_exports() {
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
     let mut request = editor.capture_export(&draft(directory.path())).unwrap();
-    let mut invalid = editor.document.project.clone();
-    invalid.roll.exposure = f64::MAX;
-    let source = request.photos[0].recipe.neutral.source;
-    request.photos[0].recipe = invalid.image_recipe(source).unwrap();
+    request.photos[0].intent.project.roll.exposure = f64::MAX;
     let services = editor.output_services.take().unwrap();
     drop(editor);
     let summary =

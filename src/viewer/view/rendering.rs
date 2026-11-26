@@ -129,7 +129,8 @@ impl Request {
     pub(crate) fn photograph(
         context: Context,
         kernels: Arc<ViewKernels>,
-        scan: &crate::scan::Scan,
+        developed: &Arc<crate::scan::DevelopedSource>,
+        reference_ev: Option<f64>,
         field: Option<Arc<GpuFlatField>>,
         intent: Intent<'_>,
         previous: Option<&SourceRequest>,
@@ -140,6 +141,8 @@ impl Request {
             looks,
             transform,
         } = intent;
+        capture.require_native(developed, reference_ev)?;
+
         #[cfg(test)]
         let spec = if matches!(capture, PhotographRequest::Fixture(_)) {
             capture.source_request(frame)?
@@ -149,13 +152,13 @@ impl Request {
         #[cfg(not(test))]
         let spec = SourceRequest::for_frame(frame)?;
         let spec = spec.with_identity(crate::acquisition::camera::identity::Identity::camera(
-            scan.source().identity(),
+            developed.identity(),
         ));
         let limits = context.device().limits();
         let request_view = |spec: SourceRequest| {
             let image = photograph(
                 &limits,
-                scan,
+                developed,
                 field.clone(),
                 capture,
                 spec,
@@ -288,13 +291,14 @@ impl Request {
 
 pub(crate) fn photograph(
     limits: &wgpu::Limits,
-    scan: &crate::scan::Scan,
+    developed: &Arc<crate::scan::DevelopedSource>,
     field: Option<Arc<GpuFlatField>>,
     capture: &PhotographRequest,
     spec: SourceRequest,
     looks: &crate::photographic::stages::look::Looks,
     transform: &crate::photographic::stages::display_rendering::Target,
 ) -> Result<ImageRequest, Error> {
-    let (definition, spec) = capture.preview_output(limits, scan, field, spec, looks, transform)?;
+    let (definition, spec) =
+        capture.preview_output(limits, developed, field, spec, looks, transform)?;
     ImageRequest::new(definition, spec)
 }

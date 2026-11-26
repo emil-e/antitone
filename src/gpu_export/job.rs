@@ -1,11 +1,11 @@
-//! Resolve captured photographic intent into a file export calculation.
+//! Render a prepared photographic recipe for file export.
 use super::*;
 use crate::photographic::stages::flat_field::GpuFlatField;
 use crate::photographic::stages::{display_rendering as drt, look::Looks};
-use crate::{dust_repair::Execution, image_recipe::ImageRecipe, scan::Scan};
+use crate::{dust_repair::Execution, image_recipe::ImageRecipe, scan::DevelopedSource};
 
 pub(crate) struct Job<'a> {
-    pub scan: &'a Scan,
+    pub source: &'a Arc<DevelopedSource>,
     pub field: Option<Arc<GpuFlatField>>,
     pub recipe: &'a ImageRecipe,
     pub render: Render<'a>,
@@ -60,12 +60,18 @@ pub(crate) fn write(
     };
     check()?;
 
-    let (scan, recipe) = crate::photo_preparation::native_image(job.scan, job.recipe)?;
+    let recipe = job.recipe;
+    recipe.neutral.require_source(job.source)?;
+    if !recipe.neutral.input.is_negative() && recipe.neutral.reference.is_none() {
+        return Err(Error::InvalidParameter(
+            "export requires resolved Digital starting exposure",
+        ));
+    }
     let image = crate::photographic::graph::composition::processed_originals(
         &context.device().limits(),
-        crate::acquisition::camera::camera_source(&scan)?,
+        crate::acquisition::camera::camera_source(job.source)?,
         job.field,
-        &recipe,
+        recipe,
     )?;
     let definition = match job.render.display {
         Some(Display {

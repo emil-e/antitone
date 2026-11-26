@@ -11,6 +11,7 @@ use crate::photographic::stages::interpretation::InspectionView;
 use crate::photographic::stages::{display_rendering as drt, look::Looks};
 #[cfg(test)]
 use crate::photographic::test_inputs::AuthoredPhotograph;
+use crate::scan::DevelopedSource;
 
 static NO_LUTS: LutChain = LutChain {
     lut: None,
@@ -74,45 +75,54 @@ impl PhotographRequest {
         display_output(image, self.luts(), looks, target)
     }
 
-    pub fn original(
+    pub(crate) fn require_native(
+        &self,
+        developed: &DevelopedSource,
+        reference_ev: Option<f64>,
+    ) -> Result<(), Error> {
+        if let Self::Recipe(recipe) = self {
+            recipe.neutral.require_source(developed)?;
+            let program = crate::photographic::stages::interpretation::InputTransform::from_recipe(
+                &recipe.neutral,
+            )?;
+            if !program.matches_developed(developed, reference_ev)? {
+                return Err(Error::Gpu(
+                    "recipe interpretation differs from captured source".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn original(
         &self,
         limits: &wgpu::Limits,
-        scan: &crate::scan::Scan,
+        developed: &Arc<DevelopedSource>,
+        reference_ev: Option<f64>,
         field: Option<Arc<GpuFlatField>>,
         looks: &Looks,
         target: &drt::Target,
     ) -> Result<Value, Error> {
-        if scan.flat_field() != field.as_ref().map(|field| field.field()) {
-            return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
-        }
+        self.require_native(developed, reference_ev)?;
         let photograph = match self {
             Self::Recipe(recipe) => {
-                recipe.neutral.require_scan(scan)?;
-                if !crate::photographic::stages::interpretation::InputTransform::from_recipe(
-                    &recipe.neutral,
-                )?
-                .matches_native(scan)?
-                {
-                    return Err(Error::Gpu(
-                        "recipe interpretation differs from captured source".into(),
-                    ));
-                }
-                composition::processed_originals(limits, camera_source(scan)?, field, recipe)?
+                recipe.neutral.require_reference(reference_ev)?;
+                composition::processed_originals(limits, camera_source(developed)?, field, recipe)?
             }
             Self::Inspection(view) => composition::inspection_original(
-                camera_source(scan)?,
+                camera_source(developed)?,
                 field,
-                scan.camera_to_ap1,
+                developed.camera_to_ap1(),
                 *view,
             )?,
             #[cfg(test)]
             Self::Fixture(input) => {
                 return super::authoring::original_chain(
                     limits,
-                    scan,
+                    developed,
+                    reference_ev,
                     field,
                     input,
-                    &input.definition(),
                     looks,
                     target,
                 );
@@ -442,11 +452,12 @@ impl PhotographRequest {
 
     pub(crate) fn source_view(
         &self,
-        scan: &crate::scan::Scan,
+        developed: &Arc<DevelopedSource>,
         field: Option<Arc<GpuFlatField>>,
         spec: &SourceRequest,
     ) -> Result<Value, Error> {
-        let neutral = self.original_neutral(camera_source(scan)?, field, scan.camera_to_ap1)?;
+        let neutral =
+            self.original_neutral(camera_source(developed)?, field, developed.camera_to_ap1())?;
         let mut grid = Grid::from_frame(spec.plan().output());
         grid.coverage = 8;
         crate::reconstruction::reconstruct(neutral, Domain { bounds: None, grid })
@@ -552,7 +563,7 @@ impl PhotographRequest {
     pub(crate) fn preview_output(
         &self,
         limits: &wgpu::Limits,
-        scan: &crate::scan::Scan,
+        developed: &Arc<DevelopedSource>,
         field: Option<Arc<GpuFlatField>>,
         spec: SourceRequest,
         looks: &Looks,
@@ -560,13 +571,13 @@ impl PhotographRequest {
     ) -> Result<(Value, SourceRequest), Error> {
         let (image, plan) = match self {
             Self::Recipe(recipe) => {
-                composition::preview(limits, scan, field, recipe, spec.frame())?
+                composition::preview(limits, developed, field, recipe, spec.frame())?
             }
             #[cfg(test)]
             Self::Fixture(input) if input.is_positive() => {
                 let (graph, plan) = authoring::PhotographTaps::preview_with_input(
                     limits,
-                    camera_source(scan)?,
+                    camera_source(developed)?,
                     field,
                     input,
                     spec.frame(),
@@ -575,7 +586,7 @@ impl PhotographRequest {
                 (graph.processed, plan)
             }
             _ => {
-                let source = self.source_view(scan, field, &spec)?;
+                let source = self.source_view(developed, field, &spec)?;
                 self.filtered(limits, &spec, source)?
             }
         };

@@ -691,12 +691,12 @@ fn disconnected_supports_share_the_stored_translation_before_evaluation_and_afte
 
 #[test]
 fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signed_hdr() {
-    let mut scan = Scan::open(
+    let scan = DevelopedSource::open(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
     .unwrap();
-    let area = scan.area;
+    let area = scan.area();
     let field = Arc::new(
         crate::flat_field::FlatField::from_nodes(
             [area.x, area.y, area.width, area.height],
@@ -710,7 +710,7 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         )
         .unwrap(),
     );
-    scan.set_flat_field(Some(field));
+    let scan_field = Some(field);
     let calibration = Calibration {
         dmin: DVec3::splat(0.2),
         dmax: DVec3::splat(0.16),
@@ -737,15 +737,12 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         input: calibration.into(),
         ..Default::default()
     };
-    let source = crate::source::source_metadata(
-        scan.source().path(),
-        &scan.source().metadata(),
-        scan.source().white_balance(),
-    )
-    .unwrap();
+    let source =
+        crate::source::source_metadata(scan.path(), &scan.metadata(), scan.white_balance())
+            .unwrap();
     let id = project.add_source(source).unwrap();
     let mut recipe = project.image_recipe(id).unwrap();
-    recipe.neutral.correction = scan.flat_field().cloned();
+    recipe.neutral.correction = scan_field.clone();
     let application = crate::editor::tests::authored_fixture(&["patches.dng"]);
     let services = application.source_services.as_ref().unwrap();
     let result = render_testing::pixels(&scan, &recipe, &repair, services);
@@ -769,10 +766,14 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
             .zip(changed.iter())
             .any(|((_, a), (_, b))| (0..3).any(|c| (a[c] - b[c]).abs() > 1e-4))
     );
-    let pipeline = InputPipeline::new(calibration, scan.camera_to_ap1).unwrap();
-    let expected = crate::dust_repair::evaluate(&repair, scan.area, |p| {
+    let pipeline = InputPipeline::new(calibration, scan.camera_to_ap1()).unwrap();
+    let expected = crate::dust_repair::evaluate(&repair, scan.area(), |p| {
         Ok(pipeline
-            .apply(scan.pixel(p[0], p[1])?)?
+            .apply(crate::flat_field::sample_camera_light(
+                &scan,
+                scan_field.as_deref(),
+                [p[0], p[1]],
+            )?)?
             .rgb
             .as_vec3()
             .to_array())
@@ -795,7 +796,14 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         .selected_points()
         .map(|p| {
             pipeline
-                .apply(scan.pixel(p[0], p[1]).unwrap())
+                .apply(
+                    crate::flat_field::sample_camera_light(
+                        &scan,
+                        scan_field.as_deref(),
+                        [p[0], p[1]],
+                    )
+                    .unwrap(),
+                )
                 .unwrap()
                 .rgb
                 .as_vec3()

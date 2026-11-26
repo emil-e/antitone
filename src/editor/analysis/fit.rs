@@ -10,6 +10,8 @@ use crate::{
 mod tests;
 
 use super::*;
+#[cfg(test)]
+use crate::scan::DevelopedSource;
 
 fn inside_film(footprint: Rect, planes: &[crate::spatial_metadata::Plane], inset: f64) -> bool {
     let corners = [
@@ -108,9 +110,11 @@ impl Fit {
                 let Some(acquired) = acquired else {
                     return Ok(None);
                 };
-                let scan = acquired.prepared.scan();
-                let Some(proposed) =
-                    background::compute(cancelled, move || scan.propose_flat_field_area()).await?
+                let developed = acquired.prepared.source.clone();
+                let Some(proposed) = background::compute(cancelled, move || {
+                    crate::flat_field::reference::suggest_region(&developed)
+                })
+                .await?
                 else {
                     return Ok(None);
                 };
@@ -156,21 +160,16 @@ impl Fit {
     }
 
     #[cfg(test)]
-    fn verify_scan(&self, index: usize, scan: &Scan) -> Result<Source, Error> {
+    fn verify_source(&self, index: usize, source: &DevelopedSource) -> Result<(), Error> {
         let project = &self.request.document.project;
         let id = project.order[index];
         let path = self.request.document.source_path(id)?;
-        let actual = document::source_metadata(
-            &path,
-            &scan.source().metadata(),
-            scan.source().white_balance(),
-        )?;
+        let actual = document::source_metadata(&path, &source.metadata(), source.white_balance())?;
         crate::development_metadata::require_geometry(
             &project.source(id)?.development,
             &actual.development,
         )?;
-        document::verify_scan(&actual, scan)?;
-        Ok(actual)
+        document::verify_development(&actual, source)
     }
 
     fn geometry(&mut self) -> Result<(), Error> {
@@ -199,31 +198,31 @@ impl Fit {
     fn capture_input(
         &self,
         index: usize,
-        scan: &Scan,
+        source: &DevelopedSource,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<Arc<crate::scan::AnalysisInput>>, Error> {
-        self.verify_scan(index, scan)?;
-        Ok(crate::scan::AnalysisInput::capture(scan, cancelled)?.map(Arc::new))
+        self.verify_source(index, source)?;
+        Ok(crate::scan::AnalysisInput::capture(source, cancelled)?.map(Arc::new))
     }
 
     #[cfg(test)]
     fn sample(
         &mut self,
         index: usize,
-        scan: Scan,
+        source: Arc<DevelopedSource>,
         retained: Option<Arc<crate::scan::AnalysisInput>>,
         cancelled: impl Fn() -> bool,
     ) -> Result<bool, Error> {
         let input = match retained {
             Some(input) => input,
             None => {
-                let Some(input) = self.capture_input(index, &scan, &cancelled)? else {
+                let Some(input) = self.capture_input(index, &source, &cancelled)? else {
                     return Ok(false);
                 };
                 input
             }
         };
-        drop(scan);
+        drop(source);
         self.sample_input(index, input, cancelled)
     }
 

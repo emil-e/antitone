@@ -61,7 +61,7 @@ pub(crate) fn libraw_green_scale(wb: [f64; 4]) -> Result<f64, Error> {
     Ok(f64::from(maximum) / f64::from(wb[1]))
 }
 
-/// What a stage can offer the editor. Scan-based stages share the film tools; the
+/// What a stage can offer the editor. Negative inputs use the film tools; the
 /// interpretation controls differ per stage. UI reads this instead of matching variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InputCapabilities {

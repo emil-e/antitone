@@ -16,21 +16,15 @@ use std::{
 };
 
 impl Editor {
-    #[cfg(test)]
-    pub(in crate::editor) fn export_input(
-        &self,
-        path: PathBuf,
-        format: OutputFormat,
-        overwrite: Overwrite,
-    ) -> Result<Option<PhotoRequest>, Error> {
+    fn capture_ready_export_photo(&self, path: PathBuf) -> Result<Option<Photo>, Error> {
         if self.editing() {
             return Err(Error::InvalidParameter(
                 "finish or cancel the current edit before exporting",
             ));
         }
-        let Some(ready) = &self.document.visit.canvas.ready else {
+        if self.document.visit.canvas.ready.is_none() {
             return Ok(None);
-        };
+        }
         if !self.document.project.input.ready() {
             return Ok(None);
         }
@@ -39,11 +33,28 @@ impl Editor {
             .visit
             .current_source
             .ok_or_else(|| Error::Project("no accepted source for export".into()))?;
-        let recipe = self.document.image_recipe(id)?;
+        self.capture_output_photo(id, path).map(Some)
+    }
+
+    pub(in crate::editor) fn export_input(
+        &self,
+        path: PathBuf,
+        format: OutputFormat,
+        overwrite: Overwrite,
+    ) -> Result<Option<PhotoRequest>, Error> {
+        let Some(photo) = self.capture_ready_export_photo(path)? else {
+            return Ok(None);
+        };
+        let Input::Ready(input) = photo.input else {
+            return Ok(None);
+        };
+        let recipe = photo.intent.recipe(input.reference)?;
+        let ready = self.document.visit.canvas.ready.as_ref().unwrap();
         debug_assert_eq!(recipe.composition.area(), ready.area);
         Ok(Some(PhotoRequest {
-            input: self.source_context().expect("ready export source"),
-            path,
+            source: input.source,
+            field: photo.correction.gpu()?,
+            path: photo.path,
             plan: format.plan(),
             recipe,
             overwrite,
@@ -69,8 +80,8 @@ impl Editor {
             return;
         }
 
-        let request = match self.export_input(path, format, overwrite) {
-            Ok(Some(request)) => request,
+        let photo = match self.capture_ready_export_photo(path) {
+            Ok(Some(photo)) => photo,
             Ok(None) => return,
             Err(error) => {
                 self.status = error.to_string();
@@ -85,20 +96,15 @@ impl Editor {
             .filter_map(|s| self.document.source_path(s.id).ok())
             .collect::<Vec<_>>();
         protected.extend(self.document.path.clone());
-        if let Err(error) = require_safe(&request.path, &protected) {
+        if let Err(error) = require_safe(&photo.path, &protected) {
             self.status = error.to_string();
             self.report_failure(FailureCase::Export, self.status.clone());
             return;
         }
         self.export_photos(
             Request {
-                photos: vec![Photo {
-                    correction: request.input.correction.clone(),
-                    input: Input::Ready(request.input),
-                    recipe: request.recipe,
-                    path: request.path,
-                }],
-                plan: request.plan,
+                photos: vec![photo],
+                plan: format.plan(),
                 collision: if matches!(overwrite, Overwrite::Confirmed) {
                     Collision::Replace
                 } else {

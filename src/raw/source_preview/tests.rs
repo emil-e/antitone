@@ -22,22 +22,26 @@ fn viewing_white_operates_in_camera_channels_not_working_rgb() {
 fn native_viewing_white_matches_an_independent_balanced_development() {
     let file = crate::raw::fixture::bayer_dng();
     let desired = [2., 1., 0.5, 1.];
-    let unity = crate::scan::Scan::from_raw(
-        crate::raw::RawFile::open_uncorrected(file.path()).unwrap(),
-        Some([1.; 4]),
-    )
-    .unwrap();
-    let balanced = crate::scan::Scan::from_raw(
-        crate::raw::RawFile::open_uncorrected(file.path()).unwrap(),
-        Some(desired),
-    )
-    .unwrap();
-    let mut metadata = unity.source().metadata();
+    let unity = std::sync::Arc::new(
+        crate::scan::DevelopedSource::from_raw(
+            crate::raw::RawFile::open_uncorrected(file.path()).unwrap(),
+            Some([1.; 4]),
+        )
+        .unwrap(),
+    );
+    let balanced = std::sync::Arc::new(
+        crate::scan::DevelopedSource::from_raw(
+            crate::raw::RawFile::open_uncorrected(file.path()).unwrap(),
+            Some(desired),
+        )
+        .unwrap(),
+    );
+    let mut metadata = unity.metadata();
     metadata.cam_mul = desired;
     let preview = metadata.source_preview([1.; 4]);
     let before = unity.pixel(32, 32).unwrap();
-    let actual = preview.transform(SourceWhiteBalance::AsShot) * (unity.camera_to_ap1 * before);
-    let expected = balanced.camera_to_ap1 * balanced.pixel(32, 32).unwrap();
+    let actual = preview.transform(SourceWhiteBalance::AsShot) * (unity.camera_to_ap1() * before);
+    let expected = balanced.camera_to_ap1() * balanced.pixel(32, 32).unwrap();
     assert!((actual - expected).abs().max_element() < 4. / 65535.);
     assert_eq!(unity.pixel(32, 32).unwrap(), before);
 }
@@ -56,31 +60,29 @@ fn sdk_viewing_white_uses_profile_adaptation_without_repeating_development_gains
     bytes[offset + 4..offset + 8].copy_from_slice(&2u32.to_le_bytes());
     bytes[offset + 16..offset + 20].copy_from_slice(&2u32.to_le_bytes());
     std::fs::write(file.path(), &bytes).unwrap();
-    let mut unity = crate::scan::Scan::open(file.path(), Some([1.; 4])).unwrap();
-    let mut balanced = crate::scan::Scan::open(file.path(), None).unwrap();
-    assert_ne!(balanced.white_balance, [1.; 4]);
-    let preview = unity
-        .source()
-        .metadata()
-        .source_preview(unity.white_balance);
-    let codes = |scan: &mut crate::scan::Scan| {
-        let pixel = scan.tile_region(scan.area, 32, 32, 1, 1).unwrap()[0];
+    let unity = crate::scan::DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
+    let balanced = crate::scan::DevelopedSource::open(file.path(), None).unwrap();
+    assert_ne!(balanced.white_balance(), [1.; 4]);
+    let preview = unity.metadata().source_preview(unity.white_balance());
+    let codes = |scan: &crate::scan::DevelopedSource| {
+        let pixel = scan.tile_region(scan.area(), 32, 32, 1, 1).unwrap()[0];
         DVec3::new(
             f64::from(pixel[0]),
             f64::from(pixel[1]),
             f64::from(pixel[2]),
         ) / 65535.
     };
-    let before = codes(&mut unity);
-    let actual = preview.transform(SourceWhiteBalance::AsShot) * (unity.camera_to_ap1 * before);
-    let balanced_codes = codes(&mut balanced);
-    let expected = balanced.camera_to_ap1 * balanced_codes;
+    let before = codes(&unity);
+    let actual = preview.transform(SourceWhiteBalance::AsShot) * (unity.camera_to_ap1() * before);
+    let balanced_codes = codes(&balanced);
+    let expected = balanced.camera_to_ap1() * balanced_codes;
     assert!(
         (actual - expected).abs().max_element() < 1e-6,
         "{actual:?} != {expected:?}"
     );
-    assert_eq!(codes(&mut unity), before);
-    let daylight = preview.transform(SourceWhiteBalance::Daylight) * (unity.camera_to_ap1 * before);
+    assert_eq!(codes(&unity), before);
+    let daylight =
+        preview.transform(SourceWhiteBalance::Daylight) * (unity.camera_to_ap1() * before);
     assert!((daylight - actual).abs().max_element() > 0.01);
 }
 

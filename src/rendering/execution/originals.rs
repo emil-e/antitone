@@ -4,7 +4,7 @@ use super::{OutputBlock, Request, SampleEncoding};
 use crate::evaluation;
 use crate::rendering::rgb16;
 #[cfg(all(test, target_os = "macos"))]
-use crate::scan::Scan;
+use crate::scan::DevelopedSource;
 use crate::{Error, rendering::OutputTarget};
 
 #[cfg(feature = "export")]

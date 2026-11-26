@@ -12,14 +12,14 @@ use crate::{
     processing::{Calibration, RollSettings},
     render_fixture::RenderFixture,
     rendering::execution::test_support::OutputReference,
-    scan::Scan,
+    scan::DevelopedSource,
     working_precision,
 };
 use glam::DVec3;
 use std::sync::Arc;
 
-fn source() -> (Scan, Calibration, AdjustmentLayerSnapshot) {
-    let scan = Scan::open(
+fn source() -> (Arc<DevelopedSource>, Calibration, AdjustmentLayerSnapshot) {
+    let scan = DevelopedSource::open(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
@@ -78,11 +78,16 @@ fn local_grade(base: &AdjustmentLayerSnapshot) -> AdjustmentLayerSnapshot {
     .unwrap()
 }
 
-fn correction(scan: &mut Scan, device: &wgpu::Device, enabled: bool) -> Option<Arc<GpuFlatField>> {
-    let field = enabled.then(|| {
+fn correction(scan: &DevelopedSource, enabled: bool) -> Option<Arc<crate::flat_field::FlatField>> {
+    enabled.then(|| {
         Arc::new(
             crate::flat_field::FlatField::from_nodes(
-                [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+                [
+                    scan.area().x,
+                    scan.area().y,
+                    scan.area().width,
+                    scan.area().height,
+                ],
                 [2, 2],
                 vec![
                     DVec3::new(0.9, 1.1, 1.),
@@ -93,14 +98,12 @@ fn correction(scan: &mut Scan, device: &wgpu::Device, enabled: bool) -> Option<A
             )
             .unwrap(),
         )
-    });
-    scan.set_flat_field(field.clone());
-    field.map(|field| Arc::new(GpuFlatField::new(device, field).unwrap()))
+    })
 }
 
-fn oriented_crop(scan: &Scan, angle: f64) -> Composition {
+fn oriented_crop(scan: &Arc<DevelopedSource>, angle: f64) -> Composition {
     Composition::with_crop(
-        scan.area,
+        scan.area(),
         RollOrientation {
             turns: QuarterTurns::One,
             horizontal: true,
@@ -160,7 +163,7 @@ fn capture(
 }
 
 fn controls(
-    scan: &Scan,
+    scan: &Arc<DevelopedSource>,
     calibration: Calibration,
     grade: AdjustmentLayerSnapshot,
     field: Option<Arc<GpuFlatField>>,
@@ -168,7 +171,8 @@ fn controls(
     output: OutputReference,
 ) -> OriginalControls<'_> {
     OriginalControls {
-        scan,
+        source: scan,
+        reference_ev: None,
         field,
         input: calibration.into(),
         roll: RollSettings::default(),
@@ -183,7 +187,8 @@ fn controls(
 }
 
 fn compare_scene(
-    scan: &Scan,
+    scan: &Arc<DevelopedSource>,
+    correction: Option<&crate::flat_field::FlatField>,
     calibration: Calibration,
     grade: AdjustmentLayerSnapshot,
     composition: Composition,
@@ -193,7 +198,7 @@ fn compare_scene(
         calibration,
         RollSettings::default(),
         grade,
-        scan.camera_to_ap1,
+        scan.camera_to_ap1(),
     )
     .unwrap();
     let raster = FrameRaster::full(composition).unwrap();
@@ -207,11 +212,14 @@ fn compare_scene(
                 raster
                     .footprint([x, y])
                     .unwrap()
-                    .pixels(scan.area)
+                    .pixels(scan.area())
                     .unwrap()
                     .map(|([sx, sy], weight)| {
                         scalar
-                            .apply(scan.pixel(sx, sy)?, [sx, sy])
+                            .apply(
+                                crate::flat_field::sample_camera_light(scan, correction, [sx, sy])?,
+                                [sx, sy],
+                            )
                             .map(|p| (p.rgb, weight))
                     }),
             )
@@ -241,14 +249,14 @@ fn compare_scene(
 fn scene_processing_matches_scalar_model_before_storage_on_exact_and_rotated_patches() {
     let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let (scan, calibration, grade) = source();
-    let exact = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+    let exact = Composition::new(scan.area(), Default::default(), Default::default()).unwrap();
     let rotated = Composition::with_crop(
-        scan.area,
+        scan.area(),
         Default::default(),
         Default::default(),
         Some(crate::crop::Crop {
             center: [128., 96.],
-            size: [scan.area.width - 64, scan.area.height - 64],
+            size: [scan.area().width - 64, scan.area().height - 64],
             angle: 0.13,
         }),
     )
@@ -267,17 +275,27 @@ fn scene_processing_matches_scalar_model_before_storage_on_exact_and_rotated_pat
                 OutputReference::SceneReferred,
             ),
         );
-        compare_scene(&scan, calibration, grade.clone(), composition, &pixels);
+        compare_scene(
+            &scan,
+            None,
+            calibration,
+            grade.clone(),
+            composition,
+            &pixels,
+        );
     }
 }
 
 #[test]
 fn scene_locals_match_scalar_model_through_correction_permutations_and_rotated_coverage() {
     let (device, queue, renderer) = crate::photographic::test_support::render_context();
-    let (mut scan, calibration, base) = source();
+    let (scan, calibration, base) = source();
     let grade = local_grade(&base);
     for corrected in [false, true] {
-        let field = correction(&mut scan, &device, corrected);
+        let correction = correction(&scan, corrected);
+        let field = correction
+            .clone()
+            .map(|map| Arc::new(GpuFlatField::new(&device, map).unwrap()));
         for angle in [0., 0.13] {
             let composition = oriented_crop(&scan, angle);
             let pixels = capture(
@@ -293,26 +311,33 @@ fn scene_locals_match_scalar_model_through_correction_permutations_and_rotated_c
                     OutputReference::SceneReferred,
                 ),
             );
-            compare_scene(&scan, calibration, grade.clone(), composition, &pixels);
+            compare_scene(
+                &scan,
+                correction.as_deref(),
+                calibration,
+                grade.clone(),
+                composition,
+                &pixels,
+            );
         }
     }
 }
 
 #[cfg(feature = "ocio-reference")]
 fn compare_display(
-    scan: &Scan,
+    scan: &Arc<DevelopedSource>,
+    correction: Option<&crate::flat_field::FlatField>,
     calibration: Calibration,
     grade: AdjustmentLayerSnapshot,
     composition: Composition,
     target: crate::rendering::OutputTarget,
-    pixels: &[[f32; 4]],
-    allowed_codes: u16,
+    (pixels, allowed_codes): (&[[f32; 4]], u16),
 ) {
     let scalar = AdjustmentLayerPipeline::new(
         calibration,
         RollSettings::default(),
         grade,
-        scan.camera_to_ap1,
+        scan.camera_to_ap1(),
     )
     .unwrap();
     let reference = crate::rendering::CpuRenderer::new(target).unwrap();
@@ -324,10 +349,15 @@ fn compare_display(
                 raster
                     .footprint([x, y])
                     .unwrap()
-                    .pixels(scan.area)
+                    .pixels(scan.area())
                     .unwrap()
                     .map(|([sx, sy], weight)| {
-                        let working = scalar.apply(scan.pixel(sx, sy)?, [sx, sy])?.rgb;
+                        let working = scalar
+                            .apply(
+                                crate::flat_field::sample_camera_light(scan, correction, [sx, sy])?,
+                                [sx, sy],
+                            )?
+                            .rgb;
                         reference
                             .render(&[working])
                             .map(|pixels| (pixels[0].as_dvec3(), weight))
@@ -357,7 +387,8 @@ fn compare_display(
 fn display_processing_matches_ocio_before_storage_within_one_rgb16_code() {
     let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let (scan, calibration, grade) = source();
-    let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+    let composition =
+        Composition::new(scan.area(), Default::default(), Default::default()).unwrap();
     for target in [
         crate::rendering::OutputTarget::Srgb,
         crate::rendering::OutputTarget::DisplayP3,
@@ -377,12 +408,12 @@ fn display_processing_matches_ocio_before_storage_within_one_rgb16_code() {
         );
         compare_display(
             &scan,
+            None,
             calibration,
             grade.clone(),
             composition,
             target,
-            &pixels,
-            1,
+            (&pixels, 1),
         );
     }
 }
@@ -391,10 +422,13 @@ fn display_processing_matches_ocio_before_storage_within_one_rgb16_code() {
 #[test]
 fn display_locals_match_ocio_through_correction_permutations_and_rotated_coverage() {
     let (device, queue, renderer) = crate::photographic::test_support::render_context();
-    let (mut scan, calibration, base) = source();
+    let (scan, calibration, base) = source();
     let grade = local_grade(&base);
     for corrected in [false, true] {
-        let field = correction(&mut scan, &device, corrected);
+        let correction = correction(&scan, corrected);
+        let field = correction
+            .clone()
+            .map(|map| Arc::new(GpuFlatField::new(&device, map).unwrap()));
         for angle in [0., 0.13] {
             let composition = oriented_crop(&scan, angle);
             for target in [
@@ -418,12 +452,12 @@ fn display_locals_match_ocio_through_correction_permutations_and_rotated_coverag
                 // exact file storage is checked with supplied samples separately.
                 compare_display(
                     &scan,
+                    correction.as_deref(),
                     calibration,
                     grade.clone(),
                     composition,
                     target,
-                    &pixels,
-                    4,
+                    (&pixels, 4),
                 );
             }
         }

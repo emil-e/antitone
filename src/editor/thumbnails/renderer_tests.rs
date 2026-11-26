@@ -352,8 +352,8 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
         let (device, queue) = crate::gpu::submission::request_device(&adapter, &Default::default())
             .await
             .unwrap();
-        let mut scan = Scan::open(&PathBuf::from("samples/DSC04416.ARW"), None).unwrap();
-        let a = scan.area;
+        let scan = DevelopedSource::open(&PathBuf::from("samples/DSC04416.ARW"), None).unwrap();
+        let a = scan.area();
         let field = Arc::new(
             crate::flat_field::FlatField::from_nodes(
                 [a.x, a.y, a.width, a.height],
@@ -367,7 +367,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
             )
             .unwrap(),
         );
-        scan.set_flat_field(Some(field.clone()));
+        let scan_field = Some(field.clone());
         let gpu_field = Arc::new(GpuFlatField::new(&device, field).unwrap());
         let calibration = (Calibration {
             dmin: DVec3::new(0.28, 0.23, 0.25),
@@ -385,7 +385,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                 calibration,
                 roll,
                 layers,
-                scan.camera_to_ap1,
+                scan.camera_to_ap1(),
             )
         })
         .unwrap();
@@ -394,8 +394,8 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
             calibration,
             roll,
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-            scan.camera_to_ap1,
-            scan.area,
+            scan.camera_to_ap1(),
+            scan.area(),
         )
         .unwrap();
         let renderer = DisplayFixture::for_device(&device)
@@ -446,7 +446,15 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                 for x in bounds.x..bounds.x + bounds.width {
                     working.push(
                         pipeline
-                            .apply(scan.pixel(x, y).unwrap(), [x, y])
+                            .apply(
+                                crate::flat_field::sample_camera_light(
+                                    &scan,
+                                    scan_field.as_deref(),
+                                    [x, y],
+                                )
+                                .unwrap(),
+                                [x, y],
+                            )
                             .unwrap()
                             .rgb,
                     );
@@ -457,7 +465,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                     &renderer,
                     &device,
                     &queue,
-                    (&scan, Some(gpu_field.clone())),
+                    (&scan, Some(gpu_field.clone()), None),
                     parameters.clone(),
                     target,
                     (&generation, 0),
@@ -498,7 +506,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                         &renderer,
                         &device,
                         &queue,
-                        (&scan, Some(gpu_field.clone())),
+                        (&scan, Some(gpu_field.clone()), None),
                         parameters.clone(),
                         target,
                         (&generation, 1),
@@ -516,7 +524,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                         &renderer,
                         &device,
                         &queue,
-                        (&scan, Some(gpu_field.clone())),
+                        (&scan, Some(gpu_field.clone()), None),
                         parameters.clone(),
                         target,
                         (&generation, 0),
@@ -585,8 +593,8 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
             },
             RollSettings::default(),
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-            scan.camera_to_ap1,
-            scan.area,
+            scan.camera_to_ap1(),
+            scan.area(),
         )
         .unwrap();
         let composition = Composition::with_crop(

@@ -324,12 +324,16 @@ fn foreground_and_background_reconstruction_cover_partial_row_chunks_identically
 }
 
 #[test]
-fn scan_consumers_keep_continuous_developed_values() {
+fn original_pixel_reads_keep_continuous_developed_values() {
     let file = source(Order::Little, profile_tags(Order::Little), false, false);
-    let mut scan = antitone::scan::Scan::open(file.path(), Some([1.; 4])).unwrap();
+    let scan = antitone::scan::DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
     let (width, height, preview) = scan.preview_source(64).unwrap();
     assert_eq!((width, height), (64, 64));
-    let tile = scan.tile_region(scan.area, 0, 0, width, height).unwrap();
+    let mut tile = vec![[0.; 4]; (width * height) as usize];
+    scan.camera_image()
+        .unwrap()
+        .copy_samples(scan.area(), &mut tile, width as usize)
+        .unwrap();
     assert_eq!(preview, tile);
     assert!(
         preview
@@ -342,20 +346,24 @@ fn scan_consumers_keep_continuous_developed_values() {
         let expected = DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.;
         assert_eq!(scan.pixel(x, y).unwrap(), expected);
         assert_eq!(
-            scan.reference(antitone::raw::Rect {
-                x,
-                y,
-                width: 1,
-                height: 1
-            })
+            antitone::sampling::camera::reference(
+                &scan,
+                None,
+                antitone::raw::Rect {
+                    x,
+                    y,
+                    width: 1,
+                    height: 1
+                }
+            )
             .unwrap(),
             expected
         );
     }
-    let samples = scan
-        .analysis_samples(scan.area, 16, || false)
-        .unwrap()
-        .unwrap();
+    let samples =
+        antitone::roll_analysis::scalar::samples(&scan, None, scan.area(), 16, |_| true, || false)
+            .unwrap()
+            .unwrap();
     assert!(!samples.pixels.is_empty());
 }
 
@@ -372,7 +380,7 @@ fn resampled_measurements_accept_finite_developed_samples_from_clipped_sensor_si
     let site = offset + 2 * (21 * 64 + 12);
     bytes[site..site + 2].copy_from_slice(&16383u16.to_le_bytes());
     fs::write(file.path(), bytes).unwrap();
-    let mut scan = antitone::scan::Scan::open(file.path(), Some([1.; 4])).unwrap();
+    let scan = antitone::scan::DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
     let point = antitone::raw::Rect {
         x: 10,
         y: 20,
@@ -380,33 +388,40 @@ fn resampled_measurements_accept_finite_developed_samples_from_clipped_sensor_si
         height: 1,
     };
     assert!(scan.pixel(10, 20).unwrap().max_element() < 1.);
-    let measured = scan.reference(point).unwrap();
+    let measured = antitone::sampling::camera::reference(&scan, None, point).unwrap();
     assert_eq!(measured, scan.pixel(10, 20).unwrap());
-    let samples = scan
-        .analysis_samples(
-            antitone::raw::Rect {
-                x: 6,
-                y: 16,
-                width: 8,
-                height: 8,
-            },
-            1,
-            || false,
-        )
-        .unwrap()
-        .unwrap();
+    let samples = antitone::roll_analysis::scalar::samples(
+        &scan,
+        None,
+        antitone::raw::Rect {
+            x: 6,
+            y: 16,
+            width: 8,
+            height: 8,
+        },
+        1,
+        |_| true,
+        || false,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(samples.attempted, 1);
     assert_eq!(samples.pixels, vec![measured]);
 }
 
 #[cfg(feature = "project")]
-fn development(scan: &antitone::scan::Scan) -> antitone::project::SourceDevelopment {
+fn development(scan: &antitone::scan::DevelopedSource) -> antitone::project::SourceDevelopment {
     antitone::project::SourceDevelopment {
-        decode: scan.source().metadata().development(scan.white_balance),
-        dimensions: scan.source().metadata().source_dimensions().unwrap(),
-        active_area: [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
-        camera_model: scan.camera_model.clone(),
-        camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
+        decode: scan.metadata().development(scan.white_balance()),
+        dimensions: scan.metadata().source_dimensions().unwrap(),
+        active_area: [
+            scan.area().x,
+            scan.area().y,
+            scan.area().width,
+            scan.area().height,
+        ],
+        camera_model: scan.camera_model().to_owned(),
+        camera_to_ap1: scan.camera_to_ap1().to_cols_array_2d(),
     }
 }
 
@@ -423,13 +438,13 @@ fn save_open_preserves_the_grade_and_uses_current_lens_development() {
     changed.iter_mut().find(|tag| tag.0 == 0x7037).unwrap().2 =
         Order::Little.signed(&[2, -512, -512]);
     let other_file = source(Order::Little, changed, false, false);
-    let mut scan = antitone::scan::Scan::open(file.path(), Some([1.; 4])).unwrap();
-    let mut other = antitone::scan::Scan::open(other_file.path(), Some([1.; 4])).unwrap();
+    let scan = antitone::scan::DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
+    let other = antitone::scan::DevelopedSource::open(other_file.path(), Some([1.; 4])).unwrap();
     let first_development = development(&scan);
     let second_development = development(&other);
     assert_ne!(
-        scan.source().metadata().lens_identity().unwrap(),
-        other.source().metadata().lens_identity().unwrap()
+        scan.metadata().lens_identity().unwrap(),
+        other.metadata().lens_identity().unwrap()
     );
     assert_eq!(
         first_development, second_development,
@@ -463,15 +478,18 @@ fn save_open_preserves_the_grade_and_uses_current_lens_development() {
         .unwrap();
     let map = Arc::new(
         FlatField::from_nodes(
-            [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+            [
+                scan.area().x,
+                scan.area().y,
+                scan.area().width,
+                scan.area().height,
+            ],
             [2, 2],
             vec![DVec3::ONE; 4],
         )
         .unwrap(),
     );
     let field = FlatFieldSettings::new(project.source(id).unwrap().path.clone(), map.clone());
-    scan.set_flat_field(Some(map.clone()));
-    other.set_flat_field(Some(map));
     project.set_flat_field(Some(field));
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("sony.antitone");
@@ -480,13 +498,13 @@ fn save_open_preserves_the_grade_and_uses_current_lens_development() {
     serde_json::to_value(&reopened).unwrap();
     let recipe = reopened.image_recipe(id).unwrap();
     assert_eq!(recipe, project.image_recipe(id).unwrap());
-    recipe.neutral.require_scan(&scan).unwrap();
-    recipe.neutral.require_scan(&other).unwrap();
+    recipe.neutral.require_source(&scan).unwrap();
+    recipe.neutral.require_source(&other).unwrap();
     let mut different = recipe.neutral.clone();
     let mut development = different.source_development.resolved().unwrap().clone();
     development.decode.white_balance[0] *= 2.;
     different.source_development = development.into();
-    assert!(different.require_scan(&scan).is_err());
+    assert!(different.require_source(&scan).is_err());
     let mut old = reopened;
     old.set_flat_field(None);
     old.sources[0].development.decode.backend_version = "older LibRaw release".into();
@@ -530,21 +548,25 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
             tags.push((0x7032, 8, Order::Little.signed(&[2, 8192, 8192])));
         }
         let file = source(Order::Little, tags, false, false);
-        let mut scan = antitone::scan::Scan::open(file.path(), Some([1.; 4])).unwrap();
-        let field = if flat {
-            let field = Arc::new(
+        let scan = antitone::scan::DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
+        let map = flat.then(|| {
+            Arc::new(
                 FlatField::from_nodes(
-                    [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+                    [
+                        scan.area().x,
+                        scan.area().y,
+                        scan.area().width,
+                        scan.area().height,
+                    ],
                     [2, 2],
                     vec![DVec3::new(0.9, 1.1, 1.2); 4],
                 )
                 .unwrap(),
-            );
-            scan.set_flat_field(Some(field.clone()));
-            Some(Arc::new(GpuFlatField::new(&device, field).unwrap()))
-        } else {
-            None
-        };
+            )
+        });
+        let field = map
+            .clone()
+            .map(|map| Arc::new(GpuFlatField::new(&device, map).unwrap()));
         let calibration = Calibration {
             dmin: DVec3::splat(0.7),
             dmax: DVec3::splat(0.01),
@@ -562,14 +584,14 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
         )
         .unwrap();
         let composition = Composition::new(
-            scan.area,
+            scan.area(),
             RollOrientation::default(),
             PhotoOrientation::default(),
         )
         .unwrap();
         let input = InputSettings::negative((calibration).validate().unwrap());
         let scalar =
-            AdjustmentLayerPipeline::new(input, roll, grade.clone(), scan.camera_to_ap1).unwrap();
+            AdjustmentLayerPipeline::new(input, roll, grade.clone(), scan.camera_to_ap1()).unwrap();
         for format in [
             Format::Tiff(OutputTarget::Srgb),
             Format::Exr(ExrPrecision::Full),
@@ -581,7 +603,8 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
                 &device,
                 &queue,
                 authored_export::Request {
-                    scan: &scan,
+                    source: &scan,
+                    reference_ev: None,
                     field: field.clone(),
                     input,
                     roll,
@@ -603,7 +626,14 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
                         composition,
                         target,
                         Overwrite::Confirmed,
-                        |x, y| scalar.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb),
+                        |x, y| {
+                            let camera = antitone::flat_field::sample_camera_light(
+                                &scan,
+                                map.as_deref(),
+                                [x, y],
+                            )?;
+                            scalar.apply(camera, [x, y]).map(|p| p.rgb)
+                        },
                     )
                     .unwrap();
                     let decode = |path| {
@@ -630,7 +660,14 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
                         composition,
                         precision,
                         Overwrite::Confirmed,
-                        |x, y| scalar.apply(scan.pixel(x, y)?, [x, y]).map(|p| p.rgb),
+                        |x, y| {
+                            let camera = antitone::flat_field::sample_camera_light(
+                                &scan,
+                                map.as_deref(),
+                                [x, y],
+                            )?;
+                            scalar.apply(camera, [x, y]).map(|p| p.rgb)
+                        },
                     )
                     .unwrap();
                     let actual = read_first_flat_layer_from_file(actual).unwrap();

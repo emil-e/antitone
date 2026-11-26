@@ -49,7 +49,7 @@ impl Resources {
         request: Arc<Request>,
         index: usize,
         cancelled: Cancellation,
-    ) -> Result<Option<Scan>, Error> {
+    ) -> Result<Option<Arc<DevelopedSource>>, Error> {
         let physical = request
             .document
             .source_input(request.document.project.order[index], &self.initialization)?;
@@ -62,7 +62,7 @@ impl Resources {
                 physical
                     .source(self.sources.as_ref(), crate::source::Priority::Foreground)
                     .await
-                    .map(|acquired| Some(acquired.prepared.scan()))
+                    .map(|acquired| Some(acquired.prepared.source))
             },
         )
         .await
@@ -146,6 +146,31 @@ fn input(services: &Resources, request: &Request) -> Option<Arc<Correction>> {
 }
 
 #[test]
+fn local_support_finds_the_bare_light_opening_and_reuses_acquisition_for_sampling() {
+    let (mut request, _directory, device, queue) = request();
+    let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/bare-light.dng");
+    request.document = crate::editor::document::Document::default();
+    request.document.import(&[file]).unwrap();
+    request.selected = request.document.project.order[0];
+    request.local_support = true;
+
+    let (scheduler, developments) = observed();
+    let services = Resources {
+        sources: scheduler.provider(None),
+        sampling_inputs: Default::default(),
+        initialization: Arc::default(),
+        renderers: Arc::new(crate::editor::display::DisplayFixture::for_device(&device)),
+        device,
+        queue,
+    };
+    let fit = services.fit(request, None).unwrap();
+    assert_eq!(fit.support, Some([10, 10, 364, 300].into()));
+    assert_eq!(fit.cameras.len(), 1);
+    assert_eq!(developments.load(std::sync::atomic::Ordering::Relaxed), 1);
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
 fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_frame() {
     let (mut request, _directory, device, queue) = request();
     approved(&mut request);
@@ -170,36 +195,29 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
     let mut retained_state = services.fit(request.clone(), captured.clone()).unwrap();
     retained_state.geometry().unwrap();
     for index in 0..before.order.len() {
-        let scan = futures_lite::future::block_on(services.acquire(
+        let source = futures_lite::future::block_on(services.acquire(
             Arc::new(request.clone()),
             index,
             Cancellation::default(),
         ))
         .unwrap()
         .unwrap();
-        let source = scan.source().clone();
         let retained = Arc::new(
-            crate::scan::AnalysisInput::capture(&scan, || false)
+            crate::scan::AnalysisInput::capture(&source, || false)
                 .unwrap()
                 .unwrap(),
         );
         if index == 0 {
-            let mut smaller = Scan::from_source(source.clone());
-            smaller.area.width -= 8;
-            let wrong_grid = Arc::new(
-                crate::scan::AnalysisInput::capture(&smaller, || false)
-                    .unwrap()
-                    .unwrap(),
-            );
+            let mut smaller = source.area();
+            smaller.width -= 8;
+            let wrong_grid = Arc::new(crate::scan::AnalysisInput::authored(
+                crate::geometry::SourceRaster::new(smaller, [1, 1]).unwrap(),
+                vec![[1.; 3]],
+            ));
             let mut rejected = services.fit(request.clone(), captured.clone()).unwrap();
             rejected.geometry().unwrap();
             assert!(matches!(
-                rejected.sample(
-                    index,
-                    Scan::from_source(source.clone()),
-                    Some(wrong_grid),
-                    || false
-                ),
+                rejected.sample(index, source.clone(), Some(wrong_grid), || false),
                 Err(Error::InvalidParameter(
                     "captured camera grid differs from source"
                 ))
@@ -209,15 +227,10 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
                 "incompatible retained data must not silently fall back to native statistics"
             );
         }
-        assert!(state.sample(index, scan, None, || false).unwrap());
+        assert!(state.sample(index, source.clone(), None, || false).unwrap());
         assert!(
             retained_state
-                .sample(
-                    index,
-                    Scan::from_source(source),
-                    Some(retained.clone()),
-                    || false
-                )
+                .sample(index, source, Some(retained.clone()), || false)
                 .unwrap()
         );
         let id = request.document.project.order[index];

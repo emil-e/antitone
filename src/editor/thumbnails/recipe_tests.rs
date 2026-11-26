@@ -58,12 +58,12 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
     let mut document = document();
     let id = document.project.order[0];
     let source = document.project.source(id).unwrap().clone();
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &document.source_path(id).unwrap(),
         document.project.acquisition_wb(),
     )
     .unwrap();
-    let proxy = Arc::new(Proxy::from_scan(&scan).unwrap());
+    let proxy = Arc::new(Proxy::from_source(&scan).unwrap());
     thumbnails = thumbnails.with_sources(document.cache.clone());
     thumbnails.seed(
         &source,

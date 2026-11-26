@@ -57,7 +57,7 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
             .unwrap();
         let kernels = ViewKernels::new(&device).await.unwrap();
 
-        let scan = Scan::open(
+        let scan = DevelopedSource::open(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures/raw/patches.dng"),
             None,
@@ -65,11 +65,11 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
         .unwrap();
         let input = source::Context {
             reference: None,
-            source: scan.source().clone(),
+            source: scan.clone(),
             correction: Default::default(),
         };
         let composition =
-            Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+            Composition::new(scan.area(), Default::default(), Default::default()).unwrap();
         let dimensions = composition.size();
         let frame = FrameRaster::new(
             composition,
@@ -82,7 +82,7 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
             dmin: DVec3::new(0.19, 0.14, 0.12),
             dmax: DVec3::new(0.008, 0.004, 0.002),
         };
-        let first = SourceRequest::new(frame, cal, scan.camera_to_ap1, None)
+        let first = SourceRequest::new(frame, cal, scan.camera_to_ap1(), None)
             .unwrap()
             .with_identity(crate::acquisition::camera::identity::Identity::camera(
                 input.source.identity(),
@@ -135,7 +135,7 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
                             gamma: 0.7,
                             balance: Default::default(),
                         },
-                        scan.camera_to_ap1,
+                        scan.camera_to_ap1(),
                         None,
                     )
                     .unwrap(),

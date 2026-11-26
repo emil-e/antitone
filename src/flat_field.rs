@@ -2,6 +2,9 @@
 use crate::Error;
 use glam::DVec3;
 
+#[cfg(feature = "raw")]
+pub mod reference;
+
 const MAXIMUM: usize = 256;
 const SIGMA: f64 = 6.;
 
@@ -162,6 +165,20 @@ impl FlatField {
             + self.gains[(y0 + 1) * self.size[0] + x0 + 1] * dx;
         Ok(a * (1. - dy) + b * dy)
     }
+}
+
+/// Read original camera light with the optional illumination gain at its pixel centre.
+#[cfg(feature = "raw")]
+pub fn sample_camera_light(
+    source: &crate::scan::DevelopedSource,
+    field: Option<&FlatField>,
+    [x, y]: [u32; 2],
+) -> Result<DVec3, Error> {
+    let mut camera = source.camera_image()?.pixel(x, y)?;
+    if let Some(field) = field {
+        camera *= field.gain([f64::from(x) + 0.5, f64::from(y) + 0.5])?;
+    }
+    Ok(camera)
 }
 
 /// Propose central rectangular illumination from block luminance profiles.
