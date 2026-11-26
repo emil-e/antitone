@@ -57,6 +57,13 @@ fn controls_and_layers_remain_authorable_until_calibration_can_render() {
             });
             if !missing {
                 h.get_by_label_contains("Positive preview unavailable:");
+                assert!(
+                    h.query_by_role_and_label(
+                        egui::accesskit::Role::ProgressIndicator,
+                        "Preparing photo view"
+                    )
+                    .is_none()
+                );
                 adjustment_layers::show_layers(&mut h);
                 adjustment_layers::click(&mut h, "Add linear");
                 let image = h.read(|editor| editor.active_canvas().last_layout.unwrap().0.image);
