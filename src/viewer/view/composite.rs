@@ -1,5 +1,54 @@
 use super::*;
 
+/// Retain the navigation composite independently of whichever image can cover the viewport now.
+#[cfg(feature = "editor")]
+#[derive(Default)]
+pub(crate) struct Navigation {
+    previous: Option<Arc<RenderedView>>,
+}
+
+#[cfg(feature = "editor")]
+impl Navigation {
+    pub(crate) fn present(
+        &mut self,
+        device: &wgpu::Device,
+        detail: &Arc<RenderedView>,
+        underlay: Option<&Arc<RenderedView>>,
+        frame: FrameRaster,
+    ) -> Result<Arc<RenderedView>, Error> {
+        let candidate = match underlay {
+            Some(underlay) => RenderedView::composite(
+                device,
+                detail.clone(),
+                underlay.clone(),
+                frame,
+                self.previous.as_ref(),
+            )?,
+            None => detail.clone(),
+        };
+        if candidate.composite.is_some() {
+            self.previous = Some(candidate.clone());
+        } else if !self.previous.as_ref().is_some_and(|old| old.in_flight()) {
+            self.previous = None;
+        }
+
+        let covers = |view: &RenderedView| {
+            let raster = view.spec.frame();
+            raster.composition == frame.composition
+                && (0..2)
+                    .all(|i| raster.min.0[i] <= frame.min.0[i] && raster.max.0[i] >= frame.max.0[i])
+        };
+        // Drawing a held viewport after a pan can expose pixels beyond its texture. Use the
+        // coherent whole-image underlay until the latest viewport can have its own composite.
+        if !covers(&candidate)
+            && let Some(underlay) = underlay.filter(|underlay| covers(underlay))
+        {
+            return Ok(underlay.clone());
+        }
+        Ok(candidate)
+    }
+}
+
 pub(super) struct Composite {
     detail: Arc<RenderedView>,
     underlay: Arc<RenderedView>,
@@ -40,9 +89,8 @@ impl RenderedView {
         }) {
             return Ok(old.clone());
         }
-        // Navigation must not accumulate full-display targets behind the GPU. Keep the last
-        // accepted mapping until its submission completes, then compose the latest requested
-        // frame. Its completion wakes the UI; callers must not relabel the held frame as current.
+        // Navigation must not accumulate full-display targets behind the GPU. Completion wakes
+        // the UI to compose the latest viewport. The held composite still covers only its own raster.
         if let Some(old) = previous.filter(|p| {
             p.composite.is_some()
                 && p.in_flight()

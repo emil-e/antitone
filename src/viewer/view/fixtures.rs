@@ -16,6 +16,17 @@ impl SourceRequest {
     }
 }
 
+#[cfg(feature = "ui-tests")]
+impl RenderedView {
+    pub(crate) fn with_completion_deferred(&self, test: impl FnOnce()) {
+        // Model a delayed completion notification without pausing the GPU or the UI.
+        assert!(*self.submitted.lock().unwrap());
+        assert!(self.complete.swap(false, Ordering::AcqRel));
+        test();
+        self.complete.store(true, Ordering::Release);
+    }
+}
+
 impl ViewImage {
     pub(super) fn from_neutral_samples(
         spec: SourceRequest,

@@ -6,9 +6,7 @@ use crate::photographic::graph::view_source::SourceRequest;
 use crate::photographic::stages::{display_rendering as drt, look::Looks};
 #[cfg(test)]
 use crate::photographic::test_inputs::AuthoredPhotograph;
-use crate::viewer::view::RenderedView;
-use crate::viewer::view::ViewImage;
-use crate::viewer::view::ViewKernels;
+use crate::viewer::view::{Navigation, RenderedView, ViewImage, ViewKernels};
 use std::sync::{Mutex, OnceLock};
 
 #[cfg(test)]
@@ -199,6 +197,7 @@ pub(super) struct WorkingView {
     wanted: Option<Arc<Demand>>,
     failed: Option<Arc<Demand>>,
     rendered: Option<Arc<RenderedView>>,
+    navigation: Navigation,
     pub displayed: Option<Arc<RenderedView>>,
     pub updating: bool,
     pub error: Option<Error>,
@@ -288,8 +287,8 @@ impl WorkingView {
     }
 
     pub(super) fn hold(&mut self, target: OutputTarget) -> Option<Arc<RenderedView>> {
-        self.displayed = self.wanted.as_ref().and_then(|wanted| {
-            self.present(wanted.frame, self.displayed.as_ref())
+        self.displayed = self.wanted.clone().and_then(|wanted| {
+            self.present(wanted.frame)
                 .ok()
                 .flatten()
                 .or_else(|| self.rendered.clone())
@@ -325,6 +324,7 @@ impl WorkingView {
         self.wanted = None;
         self.failed = None;
         self.rendered = None;
+        self.navigation = Navigation::default();
         self.displayed = None;
         self.updating = false;
         self.error = None;
@@ -676,11 +676,7 @@ impl WorkingView {
             .any(|rendered| rendered.in_flight())
     }
 
-    fn present(
-        &self,
-        frame: FrameRaster,
-        previous: Option<&Arc<RenderedView>>,
-    ) -> Result<Option<Arc<RenderedView>>, Error> {
+    fn present(&mut self, frame: FrameRaster) -> Result<Option<Arc<RenderedView>>, Error> {
         let is_current_source = |rendered: &RenderedView| {
             self.wanted.as_ref().is_some_and(|wanted| {
                 crate::acquisition::camera::identity::Identity::camera(
@@ -697,17 +693,14 @@ impl WorkingView {
             return Ok(None);
         };
 
-        match &self.underlay_rendered {
-            Some(underlay) => RenderedView::composite(
-                self.device().unwrap(),
-                detail.clone(),
-                underlay.clone(),
+        self.navigation
+            .present(
+                &self.gpu.as_ref().unwrap().0,
+                detail,
+                self.underlay_rendered.as_ref(),
                 frame,
-                previous,
             )
-            .map(Some),
-            None => Ok(Some(detail.clone())),
-        }
+            .map(Some)
     }
 }
 
@@ -1006,7 +999,6 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) -> Result<Option<Arc<RenderedView>>, Error> {
         let target = self.document.target();
-        let previous = self.document.visit.working_view.displayed.take();
         if !self.document.visit.working_view.enabled() {
             return Ok(None);
         }
@@ -1029,42 +1021,22 @@ impl Editor {
             },
             cx,
         );
-        self.document.visit.working_view.render(context)?;
-
-        self.document.visit.working_view.displayed = self
-            .document
-            .visit
-            .working_view
-            .present(frame, previous.as_ref())?
-            .filter(|rendered| rendered.target == self.document.target());
-        self.document.visit.working_view.updating |= self
-            .document
-            .visit
-            .working_view
-            .displayed
-            .as_ref()
-            .is_none_or(|rendered| {
-                self.document
-                    .visit
-                    .working_view
-                    .wanted
-                    .as_ref()
-                    .is_none_or(|wanted| {
-                        !(rendered.spec.frame() == wanted.frame
-                            && rendered.matches_capture(
-                                &rendered.spec,
-                                capture,
-                                self.document.target(),
-                            ))
-                    })
-            });
-        if self.document.visit.working_view.displayed.is_none()
-            && self.document.visit.working_view.error.is_none()
-        {
+        let working = &mut self.document.visit.working_view;
+        working.render(context)?;
+        working.displayed = working
+            .present(frame)?
+            .filter(|rendered| rendered.target == target);
+        working.updating |= working.displayed.as_ref().is_none_or(|rendered| {
+            working.wanted.as_ref().is_none_or(|wanted| {
+                !(rendered.spec.frame() == wanted.frame
+                    && rendered.matches_capture(&rendered.spec, capture, target))
+            })
+        });
+        if working.displayed.is_none() && working.error.is_none() {
             context.request_repaint_after(Duration::from_millis(16));
         }
 
-        Ok(self.document.visit.working_view.displayed.clone())
+        Ok(working.displayed.clone())
     }
 }
 
