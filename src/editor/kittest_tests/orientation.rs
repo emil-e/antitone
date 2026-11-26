@@ -18,6 +18,13 @@ fn pending_preview_pixels_follow_turn_and_flip_buttons_before_source_completion(
         h.enter(|editor, cx| editor.load(fixture("patches.dng"), cx));
         h.step();
         h.render().unwrap();
+        assert!(
+            h.query_by_role_and_label(
+                egui::accesskit::Role::ProgressIndicator,
+                "Preparing photo view"
+            )
+            .is_some()
+        );
         let read_preview = |editor: &Editor| {
             assert!(editor.document.visit.source.pending());
             assert!(editor.document.visit.canvas.ready.is_none());

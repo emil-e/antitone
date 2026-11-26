@@ -671,7 +671,11 @@ fn fullscreen_adds_dust_repairs_and_keeps_them_after_exit_and_done() {
         let stored = h.read(|editor| serde_json::to_value(&editor.document.state.project).unwrap());
         assert_eq!(stored, serde_json::to_value(&project).unwrap());
         ready(&mut h, 2);
-        assert!(h.get_by_label("Display P3").rect().height() > 0.);
+        assert!(
+            !h.get_by_role_and_label(egui::accesskit::Role::RadioButton, "Single photo")
+                .accesskit_node()
+                .is_disabled()
+        );
     });
 }
 

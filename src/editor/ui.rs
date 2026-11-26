@@ -39,7 +39,7 @@ mod parameter;
 pub(super) use parameter::ParameterRow;
 
 mod progress;
-pub(super) use progress::{ACTIVITY_BAR_HEIGHT, Progress, ProgressContent};
+pub(super) use progress::{ACTIVITY_BAR_HEIGHT, Progress, ProgressContent, spinner};
 
 mod segments;
 pub(super) use segments::{SegmentLayout, Segments};

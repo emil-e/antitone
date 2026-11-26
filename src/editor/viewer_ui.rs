@@ -174,12 +174,6 @@ impl Editor {
         let tool = hosted
             .as_ref()
             .map(|tool| (tool.identity.icon, tool.identity.title));
-        let has_repairs = self
-            .document
-            .visit
-            .current_source
-            .and_then(|id| self.dust_repairs(id))
-            .is_some_and(|repairs| !repairs.repairs().is_empty());
 
         let mut cancel = false;
         let mut apply = false;
@@ -204,11 +198,10 @@ impl Editor {
             .as_ref()
             .and_then(|tool| tool.warning.clone())
             .or_else(|| self.viewer_warning());
-        let painted_source = self
-            .canvas_frame
-            .displayed
-            .as_ref()
-            .is_some_and(|painted| painted.view.capture.is_inspection());
+        let visit = &self.document.visit;
+        let working = &visit.working_view;
+        let view_pending = visit.source.pending()
+            || (working.error.is_none() && (working.updating || visit.canvas.preview.pending()));
         let bar = if fullscreen {
             ui::ViewerBar::Overlay
         } else {
@@ -221,11 +214,6 @@ impl Editor {
             }
             ui.spacing_mut().item_spacing.x = VIEWER_ITEM_GAP;
             ui::icons::row(ui, |ui| {
-                let target = if self.document.target() == OutputTarget::DisplayP3 {
-                    "Display P3"
-                } else {
-                    "sRGB"
-                };
                 if show_view_selector {
                     ui.add_enabled_ui(can_switch_view, |ui| {
                         ui::Segments {
@@ -243,44 +231,10 @@ impl Editor {
                     let enabled = !self.interaction_blocked();
                     self.document.lightbox.size_controls(ui, enabled);
                     toggle_fullscreen = self.fullscreen_button(ui, fullscreen);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(target).small().weak()).truncate(),
-                        );
-                    });
                     return;
                 }
-                let quality = if self.document.visit.working_view.error.is_some() {
-                    ""
-                } else if self.document.visit.working_view.updating
-                    && self.document.visit.working_view.displayed.is_some()
-                {
-                    " · Updating preview"
-                } else if self.document.visit.pending_preview.is_some() {
-                    " · Cached preview"
-                } else if painted_source
-                    || self.canvas_inspection()
-                    || self.active_canvas().ready.is_none()
-                {
-                    ""
-                } else if self.document.visit.working_view.enabled() {
-                    if self.document.visit.working_view.displayed.is_none() {
-                        " · Acquiring view"
-                    } else {
-                        ""
-                    }
-                } else if self.active_canvas().original.refining() {
-                    " · Refining"
-                } else if self.active_canvas().original.settled().is_none() {
-                    " · Approximate"
-                } else {
-                    ""
-                };
-                let state = if has_repairs && self.dusting() {
-                    format!("{target}{quality} · {}", self.dust_render_state())
-                } else {
-                    format!("{target}{quality}")
-                };
+
+                const SPINNER_SIZE: f32 = 16.;
                 let trailing_width = ui::CONTROL_HEIGHT
                     + VIEWER_ITEM_GAP
                     + if let Some((group, tool)) = tool_group.zip(hosted.as_ref()) {
@@ -290,21 +244,8 @@ impl Editor {
                             tool.dismiss,
                         )
                     } else {
-                        ui.painter()
-                            .layout_no_wrap(
-                                state.clone(),
-                                egui::TextStyle::Small.resolve(ui.style()),
-                                ui.visuals().text_color(),
-                            )
-                            .size()
-                            .x
+                        SPINNER_SIZE
                     };
-                let view_error_width = if self.document.visit.working_view.error.is_some() {
-                    ui::CONTROL_HEIGHT + VIEWER_ITEM_GAP
-                } else {
-                    0.
-                };
-                let trailing_width = trailing_width + view_error_width;
                 let layout = self.canvas_frame.layout.map(|(layout, _)| layout);
                 let zoom = layout.map_or("—".into(), |layout| {
                     format!("{:.0}%", 100. * layout.scale * ui.ctx().pixels_per_point())
@@ -444,10 +385,8 @@ impl Editor {
                             .inner;
                         cancel = actions.dismiss.clicked();
                         apply = actions.primary.is_some_and(|response| response.clicked());
-                    } else {
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(state).small().weak()).truncate(),
-                        );
+                    } else if view_pending {
+                        ui::spinner(ui, SPINNER_SIZE, "Preparing photo view");
                     }
                 });
             });

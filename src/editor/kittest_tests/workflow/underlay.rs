@@ -174,13 +174,9 @@ fn warm_physical_view_underlay_keeps_navigation_covered_during_blocked_acquisiti
                 stage(&mut harness, "Photo");
             }
             // Exercise the actual exposure widget without waiting for acquisition to become idle.
-            harness
-                .get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
-                .scroll_to_me();
-            harness.try_run_realtime().unwrap();
-            harness
-                .get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
-                .click();
+            let role = egui::accesskit::Role::SpinButton;
+            scroll_to_control(&mut harness, role, "Exposure");
+            harness.get_by_role_and_label(role, "Exposure").click();
             harness.step();
             harness.event(egui::Event::Text(format!("{}", 0.6 + index as f64 * 0.2)));
             harness.event(egui::Event::Key {

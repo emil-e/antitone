@@ -46,8 +46,8 @@ In the four shots taken after analysis (`getting-started-filmstrip`, `viewer-bar
 - **Neutral.** A cast means the input was not one whole roll — a partial set, or the exposed
   leader and frame-edge frames from the start of a strip, skews Dmin and the shared white
   balance for every photograph.
-- **Settled.** The viewer status shows no "Acquiring view" or "Cached preview"; the capture
-  waits for the displayed view to match the current processing.
+- **Settled.** The viewer bar shows no spinner; the capture waits for the displayed view
+  to match the current processing.
 - **Developed.** Filmstrip cards show graded positives rather than empty previews.
 - **Consistent.** The export dialog counts match the roll you loaded.
 

@@ -1,5 +1,8 @@
 use super::*;
 
+use egui::accesskit::Role;
+
+const PREPARING_VIEW: &str = "Preparing photo view";
 const STALE: &str = "Preview not updated — showing previous image: not enough graphics memory";
 const UNAVAILABLE: &str = "Preview unavailable: not enough graphics memory";
 
@@ -56,6 +59,10 @@ fn proxy_that_needs_production_paints_before_the_working_view_without_a_failure(
 
         wait_for(&mut h, |e| e.canvas_frame.displayed.is_some());
         h.render().unwrap();
+        let spinner = h.get_by_role_and_label(Role::ProgressIndicator, PREPARING_VIEW);
+        let help = h.get_by_role_and_label(Role::Button, "Viewer help").rect();
+        assert!(spinner.rect().is_positive() && spinner.rect().left() >= help.right());
+        assert!(spinner.accesskit_node().numeric_value().is_none());
         h.read(|e| {
             let proxy = e.active_canvas().preview.rendered().unwrap();
             assert!(Arc::ptr_eq(
@@ -68,19 +75,33 @@ fn proxy_that_needs_production_paints_before_the_working_view_without_a_failure(
 
         h.update(|e| e.document.visit.working_view.task = None);
         wait_for(&mut h, |e| {
-            e.canvas_frame.displayed.as_ref().is_some_and(|painted| {
-                e.document
-                    .visit
-                    .working_view
-                    .displayed
-                    .as_ref()
-                    .is_some_and(|working| Arc::ptr_eq(working, &painted.view))
-            })
+            let working = &e.document.visit.working_view;
+            !working.updating
+                && e.canvas_frame.displayed.as_ref().is_some_and(|painted| {
+                    working
+                        .displayed
+                        .as_ref()
+                        .is_some_and(|rendered| Arc::ptr_eq(rendered, &painted.view))
+                })
         });
         h.read(|e| {
             assert!(e.active_canvas().preview.demand().is_none());
             assert!(e.document.visit.working_view.error.is_none());
         });
+        // The bar is painted before the canvas and observes its result on the next frame.
+        h.step();
+        assert!(
+            h.query_by_role_and_label(Role::ProgressIndicator, PREPARING_VIEW)
+                .is_none()
+        );
+        assert!(
+            h.query_by_role_and_label(Role::Label, "Display P3")
+                .is_none()
+        );
+        assert_eq!(
+            h.get_by_role_and_label(Role::Button, "Viewer help").rect(),
+            help
+        );
     });
 }
 
@@ -113,6 +134,10 @@ fn edit_exposure(h: &mut Harness<'_, Editor>, value: &str) {
 
 fn assert_passive_status(h: &Harness<'_, Editor>, label: &str) {
     assert!(h.query_by_label(label).is_some());
+    assert!(
+        h.query_by_role_and_label(Role::ProgressIndicator, PREPARING_VIEW)
+            .is_none()
+    );
     assert!(h.query_by_label("Retry").is_none());
     assert!(h.query_by_label("Details").is_none());
     let status = h.get_by_label(label).rect();

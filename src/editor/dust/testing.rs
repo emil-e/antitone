@@ -58,6 +58,38 @@ impl Editor {
         .expect("Dust fixture is not already executing")
     }
 
+    pub(in crate::editor) fn dust_render_state(&self) -> &'static str {
+        if !self.dusting() {
+            return "Repairs";
+        }
+        if self.document.source {
+            return "Repairs hidden";
+        }
+        let Some(source) = self.document.visit.current_source else {
+            return "Repairs pending";
+        };
+        let Ok(capture) = self.positive_recipe(
+            self.input(),
+            self.document.project_snapshot().roll,
+            self.photo_settings(),
+        ) else {
+            return "Repairs pending";
+        };
+        let mut pending = self.dust_pending_supports(source).next().is_some();
+        for repair in capture.repairs.iter().filter(|repair| repair.enabled) {
+            match self.dust_repair_feedback(&capture, repair) {
+                RepairFeedback::Failed => return "Repair failed",
+                RepairFeedback::Pending => pending = true,
+                RepairFeedback::Ready => {}
+            }
+        }
+        if pending {
+            "Repairs pending"
+        } else {
+            "Repairs"
+        }
+    }
+
     pub(in crate::editor) fn set_dust_outlines(&mut self, value: bool) {
         self.with_dust_fixture(|tool, _| tool.interaction.edit.borrow_mut().show_masks = value);
     }

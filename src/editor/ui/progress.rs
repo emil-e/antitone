@@ -36,19 +36,15 @@ fn indeterminate_segment(track: egui::Rect, time: f64) -> egui::Rect {
     )
 }
 
-impl ProgressContent<'_> {
-    fn spinner(&self, ui: &mut Ui, size: f32) -> egui::Response {
-        let response = ui.add(egui::Spinner::new().size(size));
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(
-                egui::WidgetType::ProgressIndicator,
-                ui.is_enabled(),
-                self.title,
-            )
-        });
-        response
-    }
+pub(in crate::editor) fn spinner(ui: &mut Ui, size: f32, name: &str) -> egui::Response {
+    let response = ui.add(egui::Spinner::new().size(size));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::ProgressIndicator, ui.is_enabled(), name)
+    });
+    response
+}
 
+impl ProgressContent<'_> {
     fn bar(&self, ui: &mut Ui) {
         match self.progress {
             Progress::Measured { fraction, label } => {
@@ -110,7 +106,7 @@ impl ProgressContent<'_> {
         ui.horizontal(|ui| {
             let label = match self.progress {
                 Progress::Indeterminate => {
-                    self.spinner(ui, 16.);
+                    spinner(ui, 16., self.title);
                     self.title.to_owned()
                 }
                 Progress::Measured { fraction, label } => {
