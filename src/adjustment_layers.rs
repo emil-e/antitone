@@ -435,7 +435,7 @@ impl AdjustmentLayerStack {
         Ok(Self { layers })
     }
 
-    /// Takes Roll-graded AP1 at an original source pixel centre, preserving floor flags.
+    /// Takes Roll-graded AP1 at an original source pixel centre.
     pub fn apply(
         &self,
         mut pixel: InvertedPixel,

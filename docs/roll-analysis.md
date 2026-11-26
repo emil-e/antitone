@@ -19,7 +19,7 @@ Analysis retains one regular raster of uncorrected original camera samples per s
 
 Film and picture statistics select bounded two-dimensional strata on this source-wide grid, then mask them against reviewed support. Film samples supply the low-density reference; picture samples supply dense tails, WB and exposure statistics. Reviewed regions can move or resize without recapturing either population.
 
-Spatial support excludes the holder and unsuitable material; numerical checks establish usable developed values. Statistical anchors and median exposure statistics limit the influence of isolated extremes.
+Spatial support excludes the holder and unsuitable material. Statistical anchors and median exposure statistics limit the influence of isolated extremes.
 
 **Analyze** on the Roll tool shelf requests reusable [shared film/picture metadata and automatic sampling windows](spatial-metadata.md), then opens one review for the roll. Either Analyze or Auto-crop can prepare the shared description without accepting the other's edits. The viewer shows the uncropped source with both opening and picture areas — direct canvas selection, corner resizing and dragging; automatic film exclusions stay visible, and warning icons identify missing areas and the consequence of replacing existing Photo adjustments. Browsing, selection and reordering remain available during review. Reviewed areas follow source IDs, so reordering neither retargets the areas nor changes which photos Analyze fits. Browse to edit individual exceptions, then confirm the complete set with **Analyze roll**; Cancel leaves accepted areas and grading unchanged. Finishing or cancelling keeps the currently displayed photo.
 
@@ -27,7 +27,7 @@ The suggestions assume photographs from one actual roll/stock and a consistent s
 
 Authored windows replace corresponding automatic area suggestions without moving shared physical boundaries. Opening edits remain per-photo exceptions. Matching accepted support is reused; incomplete support or older automatic local-only windows use the finished shared suggestions. Missing automatic areas stay visible for manual review rather than triggering another detector.
 
-Before numerical estimation, selected original sample sites must satisfy film/material/holder support, including its source-scaled inward safety band. Native-floor and corrected-value checks establish numerical eligibility independently. Picture statistics additionally obey nominal picture boundaries, even when an authored window extends farther; film-base statistics may include valid film outside the picture. Camera limits add no invented film edge. These sampling safeguards do not trim photographic crops. Previews supply spatial evidence, never the numerical samples. Every ordered photo must supply adequate picture statistics; analysis never silently drops a difficult photo to make the roll succeed.
+Selected original sample sites must satisfy film/material/holder support, including its source-scaled inward safety band. Picture statistics additionally obey nominal picture boundaries, even when an authored window extends farther; film-base statistics may include valid film outside the picture. Camera limits add no invented film edge. These sampling safeguards do not trim photographic crops. Previews supply spatial evidence, never the numerical samples. Every ordered photo must supply adequate picture statistics; analysis never silently drops a difficult photo to make the roll succeed.
 
 ## 2. Estimate the two anchors
 
@@ -35,7 +35,7 @@ Before numerical estimation, selected original sample sites must satisfy film/ma
 
 **Dmax** uses each channel's 0.5% picture quantile, after equal-count sampling gives photos equal population weight. Each channel is estimated independently: requiring a single RGB pixel to supply all three anchors would couple the result to that object's colour.
 
-These are useful statistical anchors, not guaranteed observations of clean film base and maximum physical density. A damaged dense tail or holder contamination can still bias them.
+The quantiles use finite camera readings, including near-zero values. The resulting anchors must satisfy `Dmin > Dmax > 0` in every channel so inversion can use their ratios. A damaged dense tail or holder contamination can still bias an otherwise valid result.
 
 ## 3. Estimate channel balance from the anchors
 
@@ -84,7 +84,7 @@ Fitting validates the complete proposal—including every photo's resulting nume
 
 ## Where the estimate can fail
 
-Faint/off-image or scene-confounded boundaries can defeat area suggestions; holder fuzz and narrow rebates remain uncertain at bounded evidence resolution. A damaged frame can still dominate independent Dmax tails, and correlated scene colour can bias the channel spans and WB. These are limitations, not permission for silent source exclusion, repair or hidden clamps: area review and numerical rejection are complementary safeguards, not photographic guarantees.
+Faint/off-image or scene-confounded boundaries can defeat area suggestions; holder fuzz and narrow rebates remain uncertain at bounded evidence resolution. A damaged frame can still dominate independent Dmax tails, and correlated scene colour can bias the channel spans and WB. Review the sampling areas and check the resulting grade across the roll before relying on it.
 
 ## Working on this area
 

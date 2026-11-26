@@ -26,13 +26,13 @@ Negative shares RGB calibration across the roll; both stages use each photograph
 
 LibRaw supplies three-channel camera RGB from both CFA and non-CFA RAWs, including reduced-size Sony YCbCr. Standard Bayer sources use DHT's ratio-based reconstruction, reducing green-texture transfer into weak channels in unbalanced scans. The editor uses the [GPU formulation](../native/dht/README.md) when admitted, with LibRaw quality 11 as CPU fallback; native-only callers retain that fallback. X-Trans retains three-pass interpolation (quality 3); other CFA layouts use LibRaw's fallback, and already-interpolated sources bypass demosaicing. Requested WB and the camera basis remain unchanged. Admission requires three camera colour channels and usable interpretation metadata, rather than a CFA pattern.
 
-LibRaw undoes any declared capture-time WB before applying the requested balance. Its highlight-safe development divides the resulting effective gains by their maximum; for pre-balanced sources, the unused fourth RGB slot shares effective green. [Immutable source reads](../src/scan.rs) restore `max(effective WB) / green(effective WB)` in floating point before camera conversion, retaining above-one headroom and scaling the precision floor with the signal. CPU sampling, proxies, GPU views, repairs and exports share these samples. Direct SDK DNG keeps its own scale. This decoder correction leaves photographic exposure controls and deliberate capture exposure differences intact; camera/ISO exposure-reference calibration is a separate concern.
+LibRaw undoes any declared capture-time WB before applying the requested balance. Its highlight-safe development divides the resulting effective gains by their maximum; for pre-balanced sources, the unused fourth RGB slot shares effective green. [Immutable source reads](../src/scan.rs) restore `max(effective WB) / green(effective WB)` in floating point before camera conversion, retaining above-one headroom. CPU sampling, proxies, GPU views, repairs and exports share these samples. Direct SDK DNG keeps its own scale. This decoder correction leaves photographic exposure controls and deliberate capture exposure differences intact; camera/ISO exposure-reference calibration is a separate concern.
 
 Negative inverts before the camera-to-working-space matrix: a matrix mixes channels, while inversion applies a different nonlinear response to each channel. An optional [flat-field map](flat-field.md) corrects scan illumination in these camera coordinates before inversion.
 
 ### Direct DNG development
 
-The SDK backend defines the current bounded integer-Bayer domain: header and opcode inspection establish geometry, basis and precision without decoding every offscreen sensor, and required unsupported instructions reject — there is no uncorrected LibRaw fallback. One immutable developed camera-RGB source supplies all consumers. [Project reopening](projects.md#source-interpretation-and-identity) keeps recorded development choices; acquisition checks current decoder observations when the source is needed.
+The SDK backend defines the current bounded integer-Bayer domain: header and opcode inspection establish geometry and colour basis without decoding every offscreen sensor, and required unsupported instructions reject — there is no uncorrected LibRaw fallback. One immutable developed camera-RGB source supplies all consumers. [Project reopening](projects.md#source-interpretation-and-identity) keeps recorded development choices; acquisition checks current decoder observations when the source is needed.
 
 ### Early highlight handling
 
@@ -69,7 +69,7 @@ For inversion, Dmin's measured value must be greater than Dmax's in each channel
 
 Between the anchors, the curve works with relative log attenuation: how much less light a sample transmits than the Dmin reference. Gamma controls the response through that interval; toe and shoulder change its shape. Toe 1 with no shoulder removes that shaping; gamma still sets the curve's contrast between the anchors.
 
-New grades and gamma resets start at **0.60**, a shared practical response prior rather than a measured film gamma: using one common value leaves stock/process contrast differences available. Analyze fits relative channel balance while preserving the selected global gamma. The anchors are not clipping limits: samples beyond film base retain signed outputs, and denser samples retain above-one highlights. Calibration and inversion use camera-light ratios independently of decoder quantization; sampling precision is a separate measurement estimate.
+New grades and gamma resets start at **0.60**, a shared practical response prior rather than a measured film gamma: using one common value leaves stock/process contrast differences available. Analyze fits relative channel balance while preserving the selected global gamma. The anchors are not clipping limits: samples beyond film base retain signed outputs, and denser samples retain above-one highlights. Calibration and inversion use camera-light ratios independently of decoder quantization.
 
 ### Finite continuation beyond the calibrated range
 
@@ -102,7 +102,7 @@ Standalone WB picks estimate a replacement at their own scope. The Photo pick me
 
 Each gesture samples the selected photo's crop, accepted picture area, or inset active raster, in that order. From up to 4096 original samples it retains corrected camera RGB for the middle luminance half of usable ungraded positives. The evidence and camera matrix stay fixed for the gesture.
 
-Each proposed gamma inverts the frozen originals through the shared GPU response before positive averaging. Camera-to-AP1 and Bradford conversion give log-cone opponents; the difference between starting and proposed chromaticity is added to Roll WB. Undefined colour, source-floor evidence and out-of-range compensation reject the whole edit. A continuous gesture references its starting gamma/WB pair, allowing an exact return with no net edit.
+Each proposed gamma inverts the frozen originals through the shared GPU response before positive averaging. Camera-to-AP1 and Bradford conversion give log-cone opponents; the difference between starting and proposed chromaticity is added to Roll WB. The edit requires defined chromaticity and compensation within the Roll WB range. A continuous gesture references its starting gamma/WB pair, allowing an exact return with no net edit.
 
 ## Grade in a common working space
 

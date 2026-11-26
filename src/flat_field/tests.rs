@@ -206,26 +206,6 @@ fn corner_trend_is_not_mistaken_for_dust() {
 }
 
 #[test]
-fn measurement_precision_accounts_for_the_largest_gain_and_identity_outside_support() {
-    let nodes = vec![
-        DVec3::new(0.8, 1.3, 0.9),
-        DVec3::new(1.4, 0.9, 1.1),
-        DVec3::ONE,
-        DVec3::new(1.1, 1.2, 0.7),
-    ];
-    let field = FlatField::from_nodes([100, 200, 80, 40], [2, 2], nodes.clone()).unwrap();
-    let base = 1. / 65535.;
-    let expected = nodes
-        .iter()
-        .map(|g| g.max_element() / 65535.)
-        .fold(base, f64::max);
-    assert_eq!(field.precision_floor().unwrap(), expected);
-    let attenuating =
-        FlatField::from_nodes([100, 200, 80, 40], [2, 2], vec![DVec3::splat(0.8); 4]).unwrap();
-    assert_eq!(attenuating.precision_floor().unwrap(), base);
-}
-
-#[test]
 fn unusable_reference_inputs_do_not_produce_a_field() {
     let size = [7, 7];
     let means = vec![DVec3::splat(0.1); 49];

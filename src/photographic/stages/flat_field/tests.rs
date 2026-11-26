@@ -16,7 +16,7 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 #[test]
-fn corrected_conversion_and_processing_preserve_spatial_gains_and_floor_flags() {
+fn corrected_conversion_and_processing_preserve_spatial_gains() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
@@ -322,18 +322,14 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                 queue.submit([encoder.finish()]);
                 let values = read(&device, &readback, bytes);
                 for (pixel, value) in expected.iter().zip(values) {
-                    let (reference, flags) = match &pipeline {
-                        Some(p) => {
-                            let r = p.apply(*pixel, [0, 0]).unwrap();
-                            (r.rgb, r.floored)
-                        }
-                        None => (
+                    let reference = match &pipeline {
+                        Some(p) => p.apply(*pixel, [0, 0]).unwrap().rgb,
+                        None => {
                             matrix
                                 * pixel
                                 * (parameters.post[0].x / ProcessingParameters::source().post[0].x)
-                                    as f64,
-                            [false; 3],
-                        ),
+                                    as f64
+                        }
                     };
                     for c in 0..3 {
                         assert!(
@@ -342,11 +338,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                             "actual={value:?} expected={reference:?}"
                         );
                     }
-                    let mask = flags
-                        .iter()
-                        .enumerate()
-                        .fold(0u32, |m, (c, f)| m | ((*f as u32) << c));
-                    assert_eq!(value.w, mask as f32);
+                    assert_eq!(value.w, 0.);
                 }
             }
         }

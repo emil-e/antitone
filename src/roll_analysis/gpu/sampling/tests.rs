@@ -71,10 +71,6 @@ fn cached_camera_sampling_preserves_original_correction_coordinates_and_omits_re
         .unwrap()
         .unwrap();
     let expected_points = positions(a, area, a.x + 20, 16);
-    assert_eq!(
-        [actual.attempted, actual.rejected_floor],
-        [expected_points.len(), 0]
-    );
     assert_eq!(actual.pixels.len(), expected_points.len());
     let mut coordinate_control: f64 = 0.;
     for (actual, [x, y]) in actual.pixels.iter().zip(expected_points) {
@@ -138,7 +134,7 @@ fn gathered_work_reads_only_selected_cached_centres_after_the_original_is_releas
 }
 
 #[test]
-fn numerical_admission_checks_the_original_and_corrected_sample_that_is_actually_used() {
+fn flat_corrected_camera_samples_are_kept_even_with_very_low_signal() {
     let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([2; 3]);
     let mut scan = Scan::open(file.path(), None).unwrap();
@@ -166,11 +162,10 @@ fn numerical_admission_checks_the_original_and_corrected_sample_that_is_actually
     let expected: Vec<_> = points
         .iter()
         .map(|&[x, y]| scan.pixel(x, y).unwrap())
-        .filter(|p| p.min_element() > scan.effective_floor())
         .collect();
-    assert!(!expected.is_empty() && expected.len() < points.len());
-    assert_eq!(actual.attempted, points.len());
-    assert_eq!(actual.rejected_floor, points.len() - expected.len());
+    assert!(expected.iter().any(|p| p.min_element() < 1. / 65535.));
+    assert!(expected.iter().any(|p| p.min_element() > 1. / 65535.));
+    assert_eq!(actual.positions, points);
     assert_eq!(actual.pixels.len(), expected.len());
     for (actual, expected) in actual.pixels.iter().zip(expected) {
         assert!((*actual - expected).abs().max_element() < 2e-6 * expected.abs().max_element());
@@ -196,7 +191,6 @@ fn one_cached_payload_supports_changed_regions_and_correction_without_original_p
                 CameraSampler::retained(renderer.evaluation(), &queue, input.clone(), field)
                     .unwrap();
             assert!(Arc::ptr_eq(&sampler.input, &input));
-            assert_eq!(sampler.effective_floor(), reference.effective_floor());
             for minimum_x in [a.x, a.x + 12] {
                 let actual = sampler
                     .sample(a, 16, |p| p.x >= minimum_x, || false)
@@ -205,7 +199,6 @@ fn one_cached_payload_supports_changed_regions_and_correction_without_original_p
                 let expected: Vec<_> = positions(a, a, minimum_x, 16)
                     .iter()
                     .map(|&[x, y]| reference.pixel(x, y).unwrap())
-                    .filter(|p| p.min_element() > reference.effective_floor())
                     .collect();
                 assert_eq!(actual.pixels.len(), expected.len());
                 for (actual, expected) in actual.pixels.iter().zip(expected) {
@@ -236,7 +229,5 @@ fn native_white_remains_usable_evidence() {
         .sample(scan.area, 1, |_| true, || false)
         .unwrap()
         .unwrap();
-    assert_eq!(actual.attempted, 1);
     assert_eq!(actual.pixels, vec![DVec3::ONE]);
-    assert_eq!(actual.rejected_floor, 0);
 }

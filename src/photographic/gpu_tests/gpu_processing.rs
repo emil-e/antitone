@@ -73,7 +73,7 @@ fn capture(
 }
 
 #[test]
-fn native_negative_and_digital_primitives_preserve_analytic_values_order_and_floor_flags() {
+fn native_negative_and_digital_primitives_preserve_analytic_values_and_order() {
     pollster::block_on(async {
         let adapter = antitone::gpu::instance()
             .request_adapter(&Default::default())
@@ -134,13 +134,11 @@ fn native_negative_and_digital_primitives_preserve_analytic_values_order_and_flo
                     let transform = antitone::color::wb_matrix(roll.wb).unwrap() * matrix;
                     for (pixel, code) in actual.iter().zip(codes) {
                         let camera = DVec3::new(code[0] as f64, code[1] as f64, code[2] as f64);
-                        let (native, flags) = if input.is_negative() {
+                        let native = if input.is_negative() {
                             // Gamma-one, unshaped inversion is an elementary ratio in code units.
                             let denominator = base / dense - DVec3::ONE;
                             let join = base / (DVec3::ONE + 65536. * denominator);
-                            let flags = (0..3)
-                                .fold(0, |bits, c| bits | (u32::from(camera[c] < join[c]) << c));
-                            let native = DVec3::from_array(std::array::from_fn(|c| {
+                            DVec3::from_array(std::array::from_fn(|c| {
                                 if camera[c] <= join[c] {
                                     65536.
                                         + (65536. + 1. / denominator[c])
@@ -148,15 +146,14 @@ fn native_negative_and_digital_primitives_preserve_analytic_values_order_and_flo
                                 } else {
                                     (base[c] / camera[c] - 1.) / denominator[c]
                                 }
-                            }));
-                            (native, flags)
+                            }))
                         } else {
-                            (camera / 65535., 0)
+                            camera / 65535.
                         };
                         let expected = transform * native * roll.exposure.exp2();
                         signed |= expected.min_element() < 0.;
                         hdr |= expected.max_element() > 1.;
-                        assert_eq!(pixel[3] as u32, flags);
+                        assert_eq!(pixel[3], 0.);
                         let allowed = 2e-5 + 2e-4 * expected.abs().max_element();
                         for c in 0..3 {
                             assert!(
@@ -182,10 +179,7 @@ fn native_negative_and_digital_primitives_preserve_analytic_values_order_and_flo
                 for c in 0..3 {
                     assert!((pixel[c] as f64 - expected[c]).abs() < 1e-6);
                 }
-                assert_eq!(
-                    pixel[3], 0.,
-                    "inspection does not inherit negative floor flags"
-                );
+                assert_eq!(pixel[3], 0.);
             }
         }
         assert!(
@@ -279,7 +273,7 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
     let input = grade_input[id.x];
     let rgb = colour_apply(array<f32, 3>(input.x, input.y, input.z),
         0.0, primitive.amounts.x, primitive.amounts.y, primitive.amounts.z, primitive.amounts.w, primitive.vibrance.x);
-    grade_output[id.x] = finish_pixel(ProcessedPixel(rgb, 0u));
+    grade_output[id.x] = vec4f(rgb[0], rgb[1], rgb[2], 0.0);
 }
 "#.to_owned(),
                 ]

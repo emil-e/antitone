@@ -231,7 +231,7 @@ cargo test --locked --offline --release --features editor --lib \
 
 The [diagnostic](../src/viewer/view/tests/adjustment_layer_resources.rs) uses an authored RAW, a 1080p detail grid and the production whole-composition underlay with correction off/on, numeric/geometry edits and both targets. It samples same-process footprint/resident/Metal allocation and checkpoints current/building, deferred encoded consumers and retirement. Set `ANTITONE_SCREEN_RAW=1 ANTITONE_RAW_SAMPLES=/absolute/samples` for the supplied native-size source. Concurrent work can affect timings; report them as observations rather than isolated interaction latency.
 
-Original-sample processing shares the editor's f32 inversion for integer and continuous inputs. [Continuous-source checks](../src/photographic/gpu_tests/gpu_continuous.rs), [film-response checks](../src/photographic/gpu_tests/gpu_film_response.rs) and [original export checks](../src/gpu_export/tests.rs) exercise the model and exact floor flags.
+Original-sample processing shares the editor's f32 inversion for integer and continuous inputs. [Continuous-source checks](../src/photographic/gpu_tests/gpu_continuous.rs), [film-response checks](../src/photographic/gpu_tests/gpu_film_response.rs) and [original export checks](../src/gpu_export/tests.rs) exercise the response, including signed light and the finite continuation at zero.
 
 ## Equivalent ACES execution
 
@@ -280,7 +280,7 @@ cargo test --locked --offline --features editor --lib viewer::view::tests::colou
   -- --nocapture
 ```
 
-[Model and geometry checks](../src/viewer/view/tests/colour/model.rs) cover Digital coverage, exactly-once exposure, asymmetric crops and rounded proxy dimensions. [Scalar/sampling/lifetime checks](../src/viewer/view/tests/colour/oracles.rs) cover continuous original-coordinate masks, corrected footprints, floor provenance and deferred encoded consumers after owner release. These isolate stage and sampling behavior from the working view's filtering-before-grading approximation.
+[Model and geometry checks](../src/viewer/view/tests/colour/model.rs) cover Digital coverage, exactly-once exposure, asymmetric crops and rounded proxy dimensions. [Scalar/sampling/lifetime checks](../src/viewer/view/tests/colour/oracles.rs) cover continuous original-coordinate masks, corrected footprints and deferred encoded consumers after owner release. These isolate stage and sampling behavior from the working view's filtering-before-grading approximation.
 
 ## Digital starting brightness
 
@@ -360,7 +360,7 @@ cargo test --locked --offline --features raw,gpu,export,project,ocio-reference -
 
 For scale, bounded release-build runs on an Apple M5 Pro / 48 GiB with ILCE-1M2 / 24–70mm GM II photographs measured roughly 0.22–0.27 s per ~50-MP source for distortion/CA reconstruction (0.42–0.49 s with embedded shading), ~600 MB corrected RGB storage per source and ~1.2 GB peak footprint for the serial CLI probe, with exact sampled repeatability and passing matrix gates. These are spot-checks, not vendor calibration or editor-switching latency acceptance.
 
-Full mode reports flooring rates and checks repeatability and eligible in-sRGB LibRaw matrix comparisons — inspect `compared_grid`; zero eligible comparisons cannot establish agreement. [Authored RAW checks](development.md#feature-specific-checks) preserve Scan immutability, measured anchors (`2e-12`), flooring (at most 1%) and sampled LibRaw matrix agreement (`2/65535`).
+Full mode reports zero and nonpositive sample counts and checks repeatability and eligible in-sRGB LibRaw matrix comparisons — inspect `compared_grid`; zero eligible comparisons cannot establish agreement. [Authored RAW checks](development.md#feature-specific-checks) preserve Scan immutability, measured anchors (`2e-12`) and sampled LibRaw matrix agreement (`2/65535`).
 
 For independent upstream OCIO → Metal:
 
@@ -383,7 +383,7 @@ cargo test --locked --offline --release --features editor,ocio-reference --lib \
 
 ### Sony source storage precision
 
-The opt-in [storage study](../src/photographic/gpu_tests/lens_precision.rs) holds development and numerical sampling support fixed while comparing retained f32 camera codes with whole-code rounding and an eight-fractional-bit diagnostic alternative (within the native range these correspond to RGB16 and Q16.8). Synthetic cases blend declared integer neighbours; supplied negatives use diagnostic calibration and borrowed Sony warps, because their adapted lens has no usable profile — those warps test resampling/rounding, not physical lens calibration. Storage errors use the f64 scalar pipeline followed by independent pinned OCIO rendering to sRGB; GPU timing arms are checked against their scalar inputs under the existing numerical gate.
+The opt-in [storage study](../src/photographic/gpu_tests/lens_precision.rs) holds development and sample locations fixed while comparing retained f32 camera codes with whole-code rounding and an eight-fractional-bit diagnostic alternative (within the native range these correspond to RGB16 and Q16.8). Synthetic cases blend declared integer neighbours; supplied negatives use diagnostic calibration and borrowed Sony warps, because their adapted lens has no usable profile — those warps test resampling/rounding, not physical lens calibration. Storage errors use the f64 scalar pipeline followed by independent pinned OCIO rendering to sRGB; GPU timing arms are checked against their scalar inputs under the existing numerical gate.
 
 On one M5 Pro / 48-GiB distortion/CA-only run, maximum differences expressed in encoded 8-bit-level equivalents were:
 

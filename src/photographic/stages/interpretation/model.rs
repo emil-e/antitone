@@ -86,7 +86,6 @@ pub struct Inversion {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InvertedPixel {
     pub rgb: DVec3,
-    pub floored: [bool; 3],
 }
 
 /// The input stage: source sample → scene-referred native-camera positive.
@@ -102,17 +101,14 @@ impl Interpretation {
         match self {
             Self::Negative(inversion) => inversion.apply(scan),
             // A digital source is already a scene-referred positive; no polarity
-            // flip and no density flooring.
+            // flip or film response.
             Self::Digital => {
                 for c in 0..3 {
                     if !scan[c].is_finite() {
                         return Err(Error::NonFinitePixel { channel: c });
                     }
                 }
-                Ok(InvertedPixel {
-                    rgb: scan,
-                    floored: [false; 3],
-                })
+                Ok(InvertedPixel { rgb: scan })
             }
         }
     }
@@ -128,7 +124,6 @@ impl Inversion {
     /// Scan, calibration and output are native-camera RGB.
     pub fn apply(&self, scan: DVec3) -> Result<InvertedPixel, Error> {
         let mut rgb = DVec3::ZERO;
-        let mut floored = [false; 3];
         let parameters = &self.parameters;
         let (toe, shoulder) = parameters.shape;
         for c in 0..3 {
@@ -137,12 +132,10 @@ impl Inversion {
             }
             let [join, value, slope] = parameters.tail[c];
             if scan[c] <= 0. {
-                floored[c] = true;
                 rgb[c] = value + slope;
                 continue;
             }
             let l = log_ratio(parameters.base[c], scan[c]);
-            floored[c] = l > join;
             if l >= join {
                 rgb[c] = value + slope * (1. - (join - l).exp());
                 continue;
@@ -164,7 +157,7 @@ impl Inversion {
                 return Err(Error::NumericalOverflow);
             }
         }
-        Ok(InvertedPixel { rgb, floored })
+        Ok(InvertedPixel { rgb })
     }
 }
 

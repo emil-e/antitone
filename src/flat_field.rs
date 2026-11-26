@@ -143,16 +143,6 @@ impl FlatField {
             })
     }
 
-    /// One camera RGB16 code amplified by the largest gain, including identity outside support.
-    /// Bilinear gain extrema occur at nodes.
-    pub fn precision_floor(&self) -> Result<f64, Error> {
-        let floor = crate::processing::CAMERA_INPUT_FLOOR * self.bounds().1.max_element();
-        if !floor.is_finite() || floor <= 0. {
-            return Err(Error::NumericalOverflow);
-        }
-        Ok(floor)
-    }
-
     pub fn gain(&self, point: [f64; 2]) -> Result<DVec3, Error> {
         if point.iter().any(|v| !v.is_finite()) {
             return Err(Error::InvalidParameter("nonfinite flat-field coordinate"));

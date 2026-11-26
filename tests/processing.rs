@@ -107,7 +107,6 @@ fn ungraded_positive_excludes_photographic_roll_controls_but_preserves_inversion
     for input in [cal.dmin * 1.1, cal.dmin, cal.dmax, cal.dmax * 0.5] {
         let actual = neutral.apply(input).unwrap();
         let inverted = reference.apply(input).unwrap();
-        assert_eq!(actual.floored, inverted.floored);
         assert_eq!(actual.rgb, matrix * inverted.rgb);
         assert_eq!(
             actual,
@@ -140,7 +139,6 @@ fn digital_input_is_already_positive_and_reuses_the_shared_grade() {
         DVec3::splat(0.0),
     ] {
         let actual = pipeline.apply(input).unwrap();
-        assert_eq!(actual.floored, [false; 3]);
         assert_eq!(actual.rgb, matrix * input);
     }
     // Ungraded digital positive is camera→AP1, before roll/photo controls.
@@ -295,11 +293,10 @@ fn preserves_negative_outputs_and_values_above_one() {
 }
 
 #[test]
-fn floors_only_scan_inputs_and_reports_each_affected_channel() {
+fn nonpositive_scan_inputs_use_the_zero_light_endpoint() {
     let cal = calibration();
     let inversion = Inversion::new(neg(cal, DEFAULT_GAMMA, Balance::default())).unwrap();
     let result = inversion.apply(DVec3::new(0.0, -0.01, 0.02)).unwrap();
-    assert_eq!(result.floored, [true, true, false]);
     close_rgb(
         result.rgb,
         inversion.apply(DVec3::new(0., 0., 0.02)).unwrap().rgb,
@@ -415,7 +412,6 @@ fn exposure_scopes_combine_without_changing_inversion() {
     .apply(scan, [0, 0])
     .unwrap();
     close_rgb(combined.rgb, base.rgb * 1.5_f64.exp2());
-    assert_eq!(combined.floored, base.floored);
 }
 
 #[test]
@@ -529,7 +525,6 @@ fn roll_pick_rejects_both_anchors_and_unusable_inputs_without_mutation() {
     for patch in [
         vec![cal.dmin],
         vec![cal.dmax],
-        vec![DVec3::ZERO],
         vec![DVec3::splat(f64::NAN)],
         vec![],
     ] {
@@ -579,7 +574,6 @@ fn pipeline_maps_camera_positive_to_ap1_and_ap0_export_preserves_xyz() {
     assert!(processed.rgb.min_element() < 0.0);
     assert!(processed.rgb.max_element() > 1.0);
     close_rgb(ap1_to_ap0() * processed.rgb, inverted.rgb);
-    assert_eq!(processed.floored, inverted.floored);
 }
 
 #[test]

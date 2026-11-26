@@ -147,7 +147,7 @@ fn map_and_development_validate_independently() {
 
 #[test]
 fn dense_calibration_remains_usable_with_or_without_correction() {
-    use antitone::processing::{CAMERA_INPUT_FLOOR, Inversion, Response};
+    use antitone::processing::{Inversion, Response};
 
     let directory = tempfile::tempdir().unwrap();
     for (index, (anchor_scale, flat_gain)) in [
@@ -171,7 +171,7 @@ fn dense_calibration_remains_usable_with_or_without_correction() {
             )));
         }
 
-        let floor = CAMERA_INPUT_FLOOR * anchor_scale * flat_gain;
+        let floor = anchor_scale * flat_gain / 65535.;
         if let InputSettings::Negative {
             dmin,
             dmax,

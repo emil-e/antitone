@@ -397,7 +397,6 @@ fn resampled_measurements_accept_finite_developed_samples_from_clipped_sensor_si
         .unwrap();
     assert_eq!(samples.attempted, 1);
     assert_eq!(samples.pixels, vec![measured]);
-    assert_eq!(samples.rejected_floor, 0);
 }
 
 #[cfg(feature = "project")]

@@ -89,7 +89,7 @@ fn partial_presentation_maps_coverage_clears_old_padding_and_preserves_supplied_
 }
 
 #[test]
-fn inspection_transforms_only_covered_signed_hdr_light_and_preserves_floor_flags() {
+fn inspection_transforms_only_covered_signed_hdr_light_and_preserves_metadata() {
     let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let raster = crate::acquisition::raster::Raster::frame(
         crate::frame_raster::FrameRaster::full(

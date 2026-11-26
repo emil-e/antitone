@@ -110,7 +110,6 @@ fn render_roll(editor: &Editor, output: &Path) -> Result<Vec<Value>, Box<dyn std
             "local_support": scan.propose_flat_field_area()?.map(array),
             "picture_attempted": eligibility.attempted,
             "picture_accepted": eligibility.pixels.len(),
-            "floor_rejected": eligibility.rejected_floor,
             "preview_picture_ap1_luminance_median": luminances.get(luminances.len()/2),
             "picture_channel_lower_half_percent": lower_tail,
             "picture_count_at_or_below_roll_dmax": global_tail_count,

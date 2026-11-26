@@ -368,7 +368,6 @@ fn spatial_pipeline_uses_snapshot_and_full_source_pixel_centres() {
         for c in 0..3 {
             assert!((after.rgb[c] - expected[c]).abs() <= 2e-12 + 2e-11 * expected[c].abs());
         }
-        assert_eq!(after.floored, before.floored);
     }
     let empty = project.source(id).unwrap().grade_snapshot().unwrap();
     let empty = AdjustmentLayerPipeline::new(input, roll, empty, DMat3::IDENTITY).unwrap();

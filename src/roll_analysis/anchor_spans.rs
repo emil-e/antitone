@@ -20,7 +20,6 @@ pub(crate) fn balance_from_anchors(calibration: Calibration) -> Option<Balance> 
 
 pub(crate) fn estimate_anchor_spans(
     frames: &[FrameSamples<'_>],
-    effective_floor: f64,
     input: InputSettings,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
@@ -43,7 +42,7 @@ pub(crate) fn estimate_anchor_spans(
             "roll analysis requires a negative input",
         ));
     };
-    let Some(calibration) = calibrate(frames, effective_floor, cancelled)? else {
+    let Some(calibration) = calibrate(frames, cancelled)? else {
         return Ok(None);
     };
     let negative = NegativeInput {

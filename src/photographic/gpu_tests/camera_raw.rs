@@ -109,10 +109,7 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
         for (code, actual) in codes.iter().zip(actual) {
             let camera = glam::DVec3::new(code[0] as f64, code[1] as f64, code[2] as f64) / 65535.;
             let reference = pipeline.apply(camera, [0, 0]).unwrap();
-            let flags = (0..3).fold(0u32, |bits, c| {
-                bits | (u32::from(reference.floored[c]) << c)
-            });
-            assert_eq!(actual.w as u32, flags);
+            assert_eq!(actual.w, 0.);
             for c in 0..3 {
                 let ratio = (actual[c] as f64 - reference.rgb[c]).abs()
                     / (2e-5 + 2e-4 * reference.rgb[c].abs());

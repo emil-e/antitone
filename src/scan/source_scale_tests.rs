@@ -60,10 +60,6 @@ fn source_reads_restore_green_scale_without_rewriting_native_rgb16() {
         }
         assert_eq!(view.is_continuous(), gain != 1.);
         assert_eq!(
-            scan.source.precision_floor(),
-            crate::processing::CAMERA_INPUT_FLOOR * gain
-        );
-        assert_eq!(
             scan.source
                 .raw
                 .camera_image()
@@ -138,7 +134,7 @@ fn normalized_source_samples_preserve_above_one_headroom() {
 }
 
 #[test]
-fn source_normalization_scales_continuous_lens_samples_and_their_precision_together() {
+fn source_normalization_scales_continuous_lens_samples() {
     use crate::raw::sony_fixture as sony;
     let order = sony::Order::Little;
     let file = sony::source_with_as_shot(order, sony::profile_tags(order), [4, 1, 2]);
@@ -154,10 +150,6 @@ fn source_normalization_scales_continuous_lens_samples_and_their_precision_toget
         .pixel_samples(32, 32)
         .unwrap();
     assert_eq!(normalized, original.map(|value| value * 4.));
-    assert_eq!(
-        scan.source.precision_floor(),
-        scan.source.metadata().precision_floor().unwrap() * 4.
-    );
 }
 
 #[cfg(feature = "dng-sdk")]
@@ -170,10 +162,6 @@ fn sdk_developed_samples_are_not_rescaled_by_the_libraw_gain() {
     assert_eq!(
         view.pixel_samples(32, 32).unwrap(),
         native.pixel_samples(32, 32).unwrap()
-    );
-    assert_eq!(
-        scan.source.precision_floor(),
-        scan.source.metadata().precision_floor().unwrap()
     );
     let ap1 = crate::processing::InputPipeline::new(InputSettings::Digital, scan.camera_to_ap1)
         .unwrap()

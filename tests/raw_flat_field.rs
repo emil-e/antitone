@@ -165,11 +165,6 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
     );
     assert_eq!(map.gain([8.5, 8.5]).unwrap(), DVec3::ONE);
     assert_eq!(scan.pixel(8, 8).unwrap(), plain.pixel(8, 8).unwrap());
-    assert_eq!(
-        scan.effective_floor(),
-        scan.source().precision_floor() * map.bounds().1.max_element()
-    );
-    assert!(scan.effective_floor() > scan.source().precision_floor());
     let partial = Arc::new(
         FlatField::from_nodes([372, 0, 16, 16], [2, 2], vec![DVec3::splat(3.); 4]).unwrap(),
     );
@@ -262,7 +257,6 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
         }
         scan.set_flat_field(None);
         assert_eq!(scan.pixel(32, 32).unwrap(), plain.pixel(32, 32).unwrap());
-        assert_eq!(scan.effective_floor(), scan.source().precision_floor());
     }
     for (path, original) in originals {
         assert_eq!(fs::read(path).unwrap(), original);

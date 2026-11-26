@@ -6,7 +6,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use antitone::processing::{Calibration, Inversion, NegativeInput, Response};
 use antitone::raw::{Developed, RawFile, Rect, version};
 use antitone::sampling::mean;
 use glam::{DMat3, DVec3};
@@ -146,10 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         let mut min = DVec3::splat(f64::INFINITY);
         let mut max = DVec3::splat(f64::NEG_INFINITY);
-        let floor = metadata.precision_floor()?;
         let mut nonpositive = [0u64; 3];
-        let mut below_floor = [0u64; 3];
-        let mut floored_pixels = 0u64;
         let mut zeros = [0u64; 3];
         let mut at_native_white = [0u64; 3];
         let mut above_native_white = [0u64; 3];
@@ -161,10 +157,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 min = min.min(camera);
                 max = max.max(camera);
                 sum += camera;
-                floored_pixels += u64::from(camera.min_element() < floor);
                 for c in 0..3 {
                     nonpositive[c] += u64::from(camera[c] <= 0.0);
-                    below_floor[c] += u64::from(camera[c] < floor);
                     zeros[c] += u64::from(camera[c] == 0.0);
                     at_native_white[c] += u64::from(camera[c] == 1.0);
                     above_native_white[c] += u64::from(camera[c] > 1.0);
@@ -182,13 +176,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "camera_nonpositive={nonpositive:?} camera_zero={zeros:?} camera_at_native_white={at_native_white:?} camera_above_native_white={above_native_white:?}"
         );
-        println!(
-            "camera_below_precision_floor={below_floor:?} affected_pixels={floored_pixels}/{count}"
-        );
-        println!(
-            "developed_camera_floor={floor:.12e} (amplified native quantum, not a measured noise estimate)"
-        );
-
         let mut repeat_error = 0.0_f64;
         let repeated = raw.develop_camera(wb)?;
         for &(x, y, _, camera) in &points {
@@ -285,24 +272,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|(_, _, _, camera)| *camera)
             .collect();
         println!("central_scan_patch_grid_mean={:?}", mean(&center_scan)?);
-        let synthetic_cal = Calibration {
-            dmin: DVec3::splat(0.5),
-            dmax: DVec3::splat(0.002),
-        };
-        let inversion = Inversion::new(NegativeInput {
-            calibration: synthetic_cal,
-            response: Response::film(),
-            gamma: antitone::processing::DEFAULT_GAMMA,
-            balance: antitone::color::Balance::default(),
-        })?;
-        let mut affected = 0usize;
-        for &(_, _, _, camera) in &points {
-            affected += usize::from(inversion.apply(camera)?.floored.iter().any(|v| *v));
-        }
-        println!(
-            "synthetic_anchor_grid_floored={affected}/{} (not real roll calibration)",
-            points.len()
-        );
         println!("elapsed_total_seconds={:.3}", start.elapsed().as_secs_f64());
     }
     Ok(())

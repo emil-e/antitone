@@ -37,7 +37,6 @@ struct Dataset {
     label: String,
     size: [u32; 2],
     codes: Vec<[f32; 4]>,
-    eligible: Vec<bool>,
     calibration: Option<Calibration>,
     matrix: DMat3,
     flat: bool,
@@ -64,7 +63,6 @@ fn sample(
     let dimensions = geometry.map_or([image.width, image.height], EmbeddedLensGeometry::size);
     let size = if tile { [384, 384] } else { [256, 171] };
     let mut codes = Vec::new();
-    let mut eligible = Vec::new();
     for y in 0..size[1] {
         for x in 0..size[0] {
             let position = if tile {
@@ -99,11 +97,6 @@ fn sample(
             } else {
                 image.pixel_samples(position[0], position[1]).unwrap()
             };
-            eligible.push(
-                pixel[..3]
-                    .iter()
-                    .all(|&v| v as f64 > scan.effective_floor() * 65535.),
-            );
             codes.push(pixel);
         }
     }
@@ -111,7 +104,6 @@ fn sample(
         label: label.into(),
         size,
         codes,
-        eligible,
         calibration,
         matrix: scan.camera_to_ap1,
         flat: false,
@@ -155,7 +147,6 @@ fn synthetic(near_base: bool) -> Dataset {
         }
         .into(),
         size,
-        eligible: vec![true; codes.len()],
         codes,
         calibration: Some(calibration),
         matrix: DMat3::IDENTITY,
@@ -388,23 +379,16 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
         .iter()
         .filter(|p| p[..3].iter().any(|v| v.fract() != 0.))
         .count();
-    let floor_changes = dataset
-        .codes
-        .iter()
-        .filter(|p| p[..3].iter().any(|&v| v > 1. && v.round() <= 1.))
-        .count();
     let white_changes = dataset
         .codes
         .iter()
         .filter(|p| p[..3].iter().any(|&v| v < 65535. && v.round() >= 65535.))
         .count();
     println!(
-        "precision source={} pixels={} eligible={} fractional={} floor_crossings={} white_crossings={} fits_rgb16={fits_rgb16} gpu_source_bytes=f32:{},u16:{:?}",
+        "precision source={} pixels={} fractional={} white_crossings={} fits_rgb16={fits_rgb16} gpu_source_bytes=f32:{},u16:{:?}",
         dataset.label,
         dataset.codes.len(),
-        dataset.eligible.iter().filter(|v| **v).count(),
         fractional,
-        floor_changes,
         white_changes,
         float_source.byte_len(),
         integer_source.as_ref().map(ProcessingSource::byte_len)
@@ -469,10 +453,7 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
             let mut worst = (0usize, 0f64);
             let mut changed8 = 0usize;
             let mut changed8_max = 0f64;
-            for (i, (&valid, p)) in dataset.eligible.iter().zip(&dataset.codes).enumerate() {
-                if !valid {
-                    continue;
-                }
+            for (i, p) in dataset.codes.iter().enumerate() {
                 ap1_max = ap1_max.max((candidate[i] - reference[i]).abs().max_element());
                 let q = quantized(*p, bits);
                 for c in 0..3 {

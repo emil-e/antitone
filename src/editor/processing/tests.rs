@@ -252,7 +252,7 @@ fn dense_calibration_is_shared_by_editor_and_recipe_inversion() {
         source.adjustment_layers = None;
         let second = editor.document.project.add_source(source).unwrap();
         let calibration = Calibration {
-            dmax: DVec3::splat(crate::processing::CAMERA_INPUT_FLOOR / 2.),
+            dmax: DVec3::splat(0.5 / 65535.),
             ..editor.calibration().unwrap()
         };
         editor.set_dmax(Some(calibration.dmax));

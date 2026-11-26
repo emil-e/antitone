@@ -93,7 +93,7 @@ fn synthetic(kind: &str) -> Source {
                         thin
                     }
                 }
-                "signed-hdr-floor" => match (x + 3 * y) % 4 {
+                "signed-hdr-zero-light" => match (x + 3 * y) % 4 {
                     0 => DVec3::new(0., 0.002, 0.003),
                     1 => calibration.dmin * DVec3::new(1.03, 1.06, 1.02),
                     2 => DVec3::new(0.002, 0.01, 0.05),
@@ -283,14 +283,9 @@ fn mean(values: impl Iterator<Item = (DVec3, f64)>) -> DVec3 {
     crate::sampling::weighted_mean_iter(values.map(Ok)).unwrap()
 }
 
-fn flags(values: impl Iterator<Item = [bool; 3]>) -> [bool; 3] {
-    values.fold([false; 3], |a, b| std::array::from_fn(|i| a[i] || b[i]))
-}
-
 struct Comparison {
     exact: Vec<DVec3>,
     candidates: Vec<(&'static str, Vec<DVec3>)>,
-    floor_loss_pixels: usize,
     exact_contributions: usize,
     exact_unique_originals: usize,
 }
@@ -332,7 +327,6 @@ fn compare(
     .into_iter()
     .map(|name| (name, Vec::new()))
     .collect();
-    let mut floor_loss_pixels = 0;
     let mut exact_contributions = 0;
     let mut exact_unique_originals = std::collections::BTreeSet::new();
     for y in 0..frame.output[1] {
@@ -351,7 +345,6 @@ fn compare(
                     .map(|&(p, w)| (rendered[source.index(p)].as_dvec3(), w)),
             );
             exact.push(reference);
-            let exact_flags = flags(coverage.iter().map(|&(p, _)| full[source.index(p)].floored));
             let camera_mean = mean(
                 coverage
                     .iter()
@@ -361,7 +354,6 @@ fn compare(
             let centre = frame.source_point([f64::from(x) + 0.5, f64::from(y) + 0.5]);
             let camera_filtered =
                 stages.after_creative(stages.before_creative(camera_mean), centre);
-            floor_loss_pixels += usize::from(camera_filtered.floored != exact_flags);
             let precreative_mean = mean(
                 coverage
                     .iter()
@@ -370,7 +362,6 @@ fn compare(
             let ap1_filtered = stages.after_creative(
                 InvertedPixel {
                     rgb: precreative_mean,
-                    floored: exact_flags,
                 },
                 centre,
             );
@@ -401,7 +392,6 @@ fn compare(
     Comparison {
         exact,
         candidates,
-        floor_loss_pixels,
         exact_contributions,
         exact_unique_originals: exact_unique_originals.len(),
     }
@@ -437,9 +427,8 @@ fn report(
             _ => 0,
         };
         println!(
-            "view_sampling fixture={kind} corrected={corrected} rotated={rotated} grade={case} target={target:?} candidate={name} output_pixels={} rms_linear_target={rms:.9} max_linear_target={max:.9} camera_filter_floor_loss_pixels={} quadrature_samples={quadrature_samples} exact_contributions={} exact_unique_originals={} metric=approximation_error_not_implementation_tolerance",
+            "view_sampling fixture={kind} corrected={corrected} rotated={rotated} grade={case} target={target:?} candidate={name} output_pixels={} rms_linear_target={rms:.9} max_linear_target={max:.9} quadrature_samples={quadrature_samples} exact_contributions={} exact_unique_originals={} metric=approximation_error_not_implementation_tolerance",
             comparison.exact.len(),
-            comparison.floor_loss_pixels,
             comparison.exact_contributions,
             comparison.exact_unique_originals
         );
@@ -448,9 +437,8 @@ fn report(
 
 #[test]
 fn split_scalar_stages_preserve_original_sample_processing() {
-    let source = synthetic("signed-hdr-floor").corrected();
+    let source = synthetic("signed-hdr-zero-light").corrected();
     let stages = Stages::new(&source, snapshot(source.area, "layers", 1));
-    let mut saw_floor = false;
     let mut saw_signed = false;
     let mut saw_hdr = false;
     for p in source.pixels() {
@@ -460,15 +448,13 @@ fn split_scalar_stages_preserve_original_sample_processing() {
         saw_signed |= before.rgb.min_element() < 0.;
         saw_hdr |= before.rgb.max_element() > 1.;
         let actual = stages.after_creative(before, SourcePoint(p.map(|v| f64::from(v) + 0.5)));
-        assert_eq!(actual.floored, expected.floored);
-        saw_floor |= actual.floored.contains(&true);
         for c in 0..3 {
             assert!(
                 (actual.rgb[c] - expected.rgb[c]).abs() <= 2e-12 + 2e-11 * expected.rgb[c].abs()
             );
         }
     }
-    assert!(saw_floor && saw_signed && saw_hdr);
+    assert!(saw_signed && saw_hdr);
 }
 
 #[test]
@@ -512,12 +498,11 @@ fn native_pixel_permutations_need_no_additional_support_for_grading() {
 }
 
 #[test]
-fn filtered_representations_are_not_exact_and_can_lose_native_floor_evidence() {
-    let source = synthetic("signed-hdr-floor").corrected();
+fn filtered_representations_differ_from_original_sample_processing() {
+    let source = synthetic("signed-hdr-zero-light").corrected();
     let frame = raster(source.area, true, [8, 6]);
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let result = compare(&source, frame, snapshot(source.area, "layers", 0), target);
-        assert!(result.floor_loss_pixels > 0);
         for (_, output) in &result.candidates[..3] {
             assert!(
                 error(&result.exact, output).1 > 1e-4,
@@ -631,7 +616,7 @@ fn retaining_acquired_exact_support_preserves_detail_across_grade_and_target_edi
 #[test]
 #[ignore = "sampling approximation comparison; synthetic fixtures are not photographic acceptance"]
 fn synthetic_view_sampling_quality() {
-    for kind in ["smooth", "checker", "edge", "signed-hdr-floor"] {
+    for kind in ["smooth", "checker", "edge", "signed-hdr-zero-light"] {
         for corrected in [false, true] {
             let source = if corrected {
                 synthetic(kind).corrected()

@@ -19,7 +19,7 @@ impl Raster {
     pub fn planned(plan: &crate::acquisition::Plan) -> Self {
         let mut raster =
             if let crate::acquisition::Sampling::CameraCells { region, size } = plan.sampling() {
-                // Every supplied camera cell exists; w carries native flags, not footprint coverage.
+                // Every supplied camera cell exists, so no footprint coverage bit is needed.
                 Self::region(region, size)
             } else {
                 match plan.input() {

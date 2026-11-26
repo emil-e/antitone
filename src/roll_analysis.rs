@@ -64,8 +64,7 @@ pub struct GraynessStatistics {
     pub wb_rejection: Option<String>,
 }
 
-/// A transient proposal, not an installed grade. References are RGB-only; the
-/// caller retains the native stored floor and preflights the effective correction.
+/// A transient proposal, not an installed grade.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Proposal {
     pub input: InputSettings,
@@ -74,7 +73,7 @@ pub struct Proposal {
     pub frames: Vec<FrameStatistics>,
 }
 
-fn check_samples(pixels: &[DVec3], floor: f64) -> Result<(), Error> {
+fn check_samples(pixels: &[DVec3]) -> Result<(), Error> {
     if pixels.len() > MAX_SAMPLES_PER_FRAME {
         return Err(Error::InvalidParameter(
             "roll analysis sample budget exceeded",
@@ -84,11 +83,6 @@ fn check_samples(pixels: &[DVec3], floor: f64) -> Result<(), Error> {
         for (channel, value) in p.to_array().into_iter().enumerate() {
             if !value.is_finite() {
                 return Err(Error::NonFinitePixel { channel });
-            }
-            if value <= floor {
-                return Err(Error::UnusableSample(
-                    "roll analysis contains floored inputs",
-                ));
             }
         }
     }
@@ -113,27 +107,16 @@ fn centre_sample<T: Copy>(pixels: &[T], count: usize, i: usize) -> T {
 /// Cancellation returns no proposal; every frame must supply picture statistics.
 pub fn estimate(
     frames: &[FrameSamples<'_>],
-    effective_floor: f64,
     current: impl Into<InputSettings>,
     mut cancelled: impl FnMut() -> bool,
 ) -> Result<Option<Proposal>, Error> {
-    estimate_with_model(
-        frames,
-        effective_floor,
-        current,
-        &mut model::ScalarReference,
-        &mut cancelled,
-    )
+    estimate_with_model(frames, current, &mut model::ScalarReference, &mut cancelled)
 }
 
 fn calibrate(
     frames: &[FrameSamples<'_>],
-    effective_floor: f64,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<Calibration>, Error> {
-    if !effective_floor.is_finite() || effective_floor <= 0. {
-        return Err(Error::InvalidParameter("invalid roll analysis floor"));
-    }
     if frames.is_empty() {
         return Err(Error::UnusableSample("empty analysis roll"));
     }
@@ -142,8 +125,8 @@ fn calibrate(
         if cancelled() {
             return Ok(None);
         }
-        check_samples(frame.film, effective_floor)?;
-        check_samples(frame.picture, effective_floor)?;
+        check_samples(frame.film)?;
+        check_samples(frame.picture)?;
         if frame.picture.is_empty() {
             return Err(Error::UnusableSample(
                 "analysis frame has no picture samples",
@@ -151,7 +134,7 @@ fn calibrate(
         }
         film.extend_from_slice(frame.film);
     }
-    let dmin = sampling::roll_dmin(&film, effective_floor)?;
+    let dmin = sampling::roll_dmin(&film)?;
     drop(film);
     if cancelled() {
         return Ok(None);
@@ -172,7 +155,6 @@ fn calibrate(
 
 pub(crate) fn estimate_with_model(
     frames: &[FrameSamples<'_>],
-    effective_floor: f64,
     current: impl Into<InputSettings>,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
@@ -195,7 +177,7 @@ pub(crate) fn estimate_with_model(
             "roll analysis requires a negative input",
         ));
     };
-    let Some(calibration) = calibrate(frames, effective_floor, cancelled)? else {
+    let Some(calibration) = calibrate(frames, cancelled)? else {
         return Ok(None);
     };
     let current = NegativeInput {
@@ -216,7 +198,7 @@ pub(crate) fn estimate_with_model(
         if !y.is_finite() {
             return Err(Error::NumericalOverflow);
         }
-        if positive.min_element() > 1e-8 && y > 1e-8 {
+        if positive.min_element() > 0. && y > 0. {
             eligible[frame].push(frames[frame].picture[sample]);
         }
         Ok(())
@@ -339,7 +321,7 @@ fn meter(
         if !y.is_finite() {
             return Err(Error::NumericalOverflow);
         }
-        if y > 1e-8 {
+        if y > 0. {
             luminances[frame].push(y);
         }
         Ok(())

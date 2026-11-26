@@ -354,10 +354,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
                         f64::from(pixel[2]),
                     ) / 65535.;
                     let reference = pipeline.apply(camera, xy).unwrap();
-                    let flags = (0..3).fold(0u32, |bits, c| {
-                        bits | (u32::from(reference.floored[c]) << c)
-                    });
-                    assert_eq!(actual.w as u32, flags);
+                    assert_eq!(actual.w, 0.);
                     for c in 0..3 {
                         let ratio = (f64::from(actual[c]) - reference.rgb[c]).abs()
                             / (2e-5 + 2e-4 * reference.rgb[c].abs());

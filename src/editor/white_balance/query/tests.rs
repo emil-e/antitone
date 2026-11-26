@@ -179,6 +179,89 @@ fn layer_queries_reject_zero_effective_coverage_and_cancel_without_poisoning_lat
 }
 
 #[test]
+fn white_balance_queries_include_black_camera_samples_in_a_usable_patch() {
+    let file = crate::raw::fixture::bayer_dng_with_as_shot_samples([1; 3], |x, y| {
+        if (20..36).contains(&x) && (20..36).contains(&y) {
+            [0; 3]
+        } else {
+            [1800, 2000, 2200]
+        }
+    });
+    let path = file.path().to_str().unwrap();
+    let dmin = DVec3::splat(0.5);
+    let dmax = DVec3::splat(0.025);
+    let negative = InputSettings::Negative {
+        dmin: Some(dmin),
+        dmax: Some(dmax),
+        response: crate::processing::Response::film(),
+        gamma: crate::processing::DEFAULT_GAMMA,
+        balance: Balance::default(),
+    };
+
+    for input in [InputSettings::Digital, negative] {
+        let editor = crate::editor::tests::authored_fixture(&[path]);
+        let editor = if input == InputSettings::Digital {
+            crate::editor::tests::accepted_input(editor, input)
+        } else {
+            editor
+        };
+        let services = editor.source_services.as_ref().unwrap();
+        let mut scan = measurement::capture_scan(&editor).unwrap();
+        let coverage = Coverage::rectangle(scan.area);
+        let mut black = false;
+        let mut lit = false;
+        for ([x, y], _) in coverage.pixels(scan.area).unwrap() {
+            let pixel = scan.pixel(x, y).unwrap();
+            black |= pixel == DVec3::ZERO;
+            lit |= pixel.min_element() > 0.;
+        }
+        assert!(
+            black && lit,
+            "the developed patch must contain both black and lit samples"
+        );
+
+        let expected = scan
+            .white_balance_coverage(
+                coverage,
+                &input,
+                RollSettings::default(),
+                AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+                None,
+            )
+            .unwrap();
+        let recipe = editor
+            .positive_recipe(
+                input,
+                RollSettings::default(),
+                AdjustmentLayerSettings::default(),
+            )
+            .unwrap();
+        let gpu = (&services.evaluation, &services.queue);
+        let roll_balance = roll(gpu, &mut scan, None, coverage, recipe.clone(), &|| false).unwrap();
+        let layer_balance = layer(
+            gpu,
+            &mut scan,
+            None,
+            coverage,
+            LayerInput { recipe, index: 0 },
+            &|| false,
+        )
+        .unwrap();
+
+        for actual in [roll_balance, layer_balance] {
+            assert!(
+                (actual.warmth - expected.warmth).abs() < 2e-6,
+                "{actual:?} {expected:?}"
+            );
+            assert!(
+                (actual.tint - expected.tint).abs() < 2e-6,
+                "{actual:?} {expected:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn white_balance_queries_keep_signed_working_light_and_recorded_hdr_exposure() {
     let file = crate::raw::fixture::bayer_dng_with_camera(
         [260, 1000, 600],

@@ -57,7 +57,7 @@ fn averages_log_chroma_within_each_photo_then_uses_the_median_across_photos() {
     let matrix = DMat3::from_diagonal(DVec3::new(0.7, 1.1, 1.4));
     let from_ap1 = matrix.inverse();
     let first = [
-        from_ap1 * cast(-0.6, 0.8, 0.01),
+        from_ap1 * cast(-0.6, 0.8, 1e-12),
         from_ap1 * cast(0.2, 0., 30.),
     ];
     let middle = [from_ap1 * cast(0.1, -0.2, 0.18)];
@@ -89,7 +89,7 @@ fn a_strong_vote_is_not_clamped_until_after_pooling() {
 #[cfg(feature = "editor")]
 #[test]
 fn semantic_refit_only_grades_the_roll_and_meters_abstaining_photos() {
-    let first = vec![cast(-0.4, 0.2, 0.18); 300];
+    let first = vec![cast(-0.4, 0.2, 1e-12); 300];
     let second = vec![cast(0.2, -0.2, 0.18); 300];
     let withheld = vec![cast(0.9, 0.7, 0.18); 300];
     let matrices = [
@@ -151,6 +151,7 @@ fn semantic_refit_only_grades_the_roll_and_meters_abstaining_photos() {
             .iter()
             .all(|p| p.wb == Balance::default() && p.exposure == 0.)
     );
+    assert_eq!(proposal.frames[0].exposure_samples, 300);
     assert_eq!(proposal.frames[2].balance_samples, 0);
     assert_eq!(proposal.frames[2].exposure_samples, 300);
 }

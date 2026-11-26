@@ -142,7 +142,7 @@ pub(super) fn select_admitted(
         }
         for x in 0..width {
             let i = y * width + x;
-            let bad = !valid[i] || !rgb[i].is_finite() || rgb[i].min_element() <= 1e-8;
+            let bad = !valid[i] || !rgb[i].is_finite() || rgb[i].min_element() <= 0.;
             integral[(y + 1) * (width + 1) + x + 1] = usize::from(bad)
                 + integral[y * (width + 1) + x + 1]
                 + integral[(y + 1) * (width + 1) + x]
@@ -153,7 +153,7 @@ pub(super) fn select_admitted(
         rgb.iter()
             .zip(valid)
             .map(|(p, ok)| {
-                if *ok && p.is_finite() && p.min_element() > 1e-8 {
+                if *ok && p.is_finite() && p.min_element() > 0. {
                     p[c] * gain
                 } else {
                     0.
@@ -171,7 +171,7 @@ pub(super) fn select_admitted(
             .map(|i| {
                 let total = smooth[0][i] + smooth[1][i] + smooth[2][i];
                 if smooth[c][i] > 0. && total > 0. {
-                    (smooth[c][i] / total).ln()
+                    smooth[c][i].ln() - total.ln()
                 } else {
                     0.
                 }

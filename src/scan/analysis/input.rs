@@ -5,7 +5,6 @@ use crate::geometry::SourceRaster;
 /// Camera codes remain uncorrected; positions follow the full active-source grid.
 pub(crate) struct AnalysisInput {
     grid: SourceRaster,
-    floor: f64,
     pixels: Box<[[f32; 3]]>,
 }
 
@@ -34,12 +33,11 @@ impl AnalysisWindow {
 
 impl AnalysisInput {
     #[cfg(test)]
-    pub(crate) fn authored(grid: SourceRaster, pixels: Vec<[f32; 3]>, floor: f64) -> Self {
+    pub(crate) fn authored(grid: SourceRaster, pixels: Vec<[f32; 3]>) -> Self {
         assert_eq!(pixels.len(), (grid.size()[0] * grid.size()[1]) as usize);
         Self {
             grid,
             pixels: pixels.into_boxed_slice(),
-            floor,
         }
     }
 
@@ -67,7 +65,6 @@ impl AnalysisInput {
         }
         Ok((!cancelled()).then(|| Self {
             grid,
-            floor: scan.source.precision_floor,
             pixels: pixels.into_boxed_slice(),
         }))
     }
@@ -90,22 +87,6 @@ impl AnalysisInput {
             "camera sample is outside captured source grid",
         ))?;
         Ok([p[0], p[1], p[2], 0.])
-    }
-
-    pub(crate) fn above_native_floor(&self, index: usize) -> Result<bool> {
-        let p = self.pixel(index)?;
-        let rgb = DVec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])) / 65535.;
-        if !rgb.is_finite() {
-            return Err(Error::NumericalOverflow);
-        }
-        Ok(rgb.min_element() > self.floor)
-    }
-
-    pub(crate) fn effective_floor(&self, field: Option<&FlatField>) -> Result<f64> {
-        match field {
-            Some(field) => Ok(self.floor * field.bounds().1.max_element()),
-            None => Ok(self.floor),
-        }
     }
 
     /// Explicit owned payload; excludes Arc/allocator bookkeeping and process/driver memory.

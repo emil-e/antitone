@@ -289,10 +289,6 @@ impl EmbeddedLensGeometry {
         Ok(points)
     }
 
-    pub fn maximum_gain(&self) -> f64 {
-        self.profile.maximum_gain()
-    }
-
     /// Gain at an original developed pixel, not at the distorted output coordinate.
     #[cfg(feature = "raw")]
     pub(crate) fn source_gain(&self, x: u32, y: u32) -> f64 {

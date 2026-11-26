@@ -58,8 +58,8 @@ fn unity_wb_roll_analysis_matches_as_shot_look() {
     let matrix = first_shot.camera_to_ap1;
     drop(first_shot);
 
-    let mut unity_samples = (Vec::new(), Vec::new(), 0f64);
-    let mut as_shot_samples = (Vec::new(), Vec::new(), 0f64);
+    let mut unity_samples = (Vec::new(), Vec::new());
+    let mut as_shot_samples = (Vec::new(), Vec::new());
     for id in &project.order {
         let source = project.source(*id).unwrap();
         let entry = project
@@ -74,11 +74,9 @@ fn unity_wb_roll_analysis_matches_as_shot_look() {
         ] {
             let mut scan = Scan::open(&source.path, wb).unwrap();
             assert_eq!(scan.camera_to_ap1, matrix);
-            let floor = scan.effective_floor();
             let (film, picture) = samples(&mut scan, area, &entry.areas);
             target.0.push(film);
             target.1.push(picture);
-            target.2 = target.2.max(floor);
         }
     }
 
@@ -97,10 +95,8 @@ fn unity_wb_roll_analysis_matches_as_shot_look() {
         })
         .collect();
     let current = Project::default().input;
-    let unity = estimate(&unity_frames, unity_samples.2, current, || false)
-        .unwrap()
-        .unwrap();
-    let as_shot = estimate(&as_shot_frames, as_shot_samples.2, current, || false)
+    let unity = estimate(&unity_frames, current, || false).unwrap().unwrap();
+    let as_shot = estimate(&as_shot_frames, current, || false)
         .unwrap()
         .unwrap();
     let un = unity.input.negative_input().unwrap();

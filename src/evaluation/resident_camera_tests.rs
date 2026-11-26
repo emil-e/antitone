@@ -223,7 +223,6 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                 let mut correction_effect = 0_f64;
                 let mut grade_effect = 0_f64;
                 let mut repair_effect = 0_f64;
-                let mut flags_present = false;
                 let mut signed_hdr = [false; 2];
                 for (i, value) in values.iter().enumerate() {
                     let x = i as u32 % size[0];
@@ -247,12 +246,6 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                             .abs()
                             .max_element(),
                     );
-                    let flags = base
-                        .floored
-                        .iter()
-                        .enumerate()
-                        .fold(0u32, |v, (i, on)| v | ((*on as u32) << i));
-                    flags_present |= flags != 0;
                     let neutral = repaired.as_ref().map_or(base.rgb, |repair| {
                         DVec3::from_array(
                             repair
@@ -281,7 +274,7 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                         .iter_mut()
                         .zip([base.rgb, neutral, roll_rgb, complete])
                     {
-                        dst.push([rgb.x, rgb.y, rgb.z, flags as f64]);
+                        dst.push([rgb.x, rgb.y, rgb.z, 0.]);
                     }
                 }
                 assert!(correction_effect > 0.01 && grade_effect > 0.01);
@@ -289,10 +282,6 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                     signed_hdr,
                     [true, true],
                     "each resident fixture must exercise signed/HDR AP1"
-                );
-                assert_eq!(
-                    flags_present,
-                    matches!(settings, InputSettings::Negative { .. })
                 );
                 if native {
                     assert!(repair_effect > 0.01);

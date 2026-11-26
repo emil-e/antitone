@@ -7,7 +7,6 @@ use antitone::{
 };
 use glam::{DMat3, DVec3};
 
-const FLOOR: f64 = 1. / 65535.;
 const BASE: DVec3 = DVec3::new(0.8, 0.4, 0.2);
 
 fn picture(n: usize, lo: f64, hi: f64) -> Vec<DVec3> {
@@ -36,7 +35,7 @@ fn proposal(
     frames: &[FrameSamples<'_>],
     current: NegativeInput,
 ) -> antitone::roll_analysis::Proposal {
-    estimate(frames, FLOOR, current, || false).unwrap().unwrap()
+    estimate(frames, current, || false).unwrap().unwrap()
 }
 
 fn negative(p: &antitone::roll_analysis::Proposal) -> NegativeInput {
@@ -373,7 +372,6 @@ fn out_of_range_shared_wb_is_rejected_not_clamped_or_replaced_by_identity() {
                 film: &film,
                 picture: &source,
             }],
-            FLOOR,
             default_current(),
             || false
         ),
@@ -398,7 +396,7 @@ fn isolated_hdr_sample_does_not_move_median_exposure_or_clip_working_pixels() {
         )
     };
     let before = fit(&source);
-    // One sample cannot move either endpoint quantile; every channel stays above the floor.
+    // One sample cannot move either endpoint quantile.
     source[0] = BASE * 0.0001;
     let after = fit(&source);
     close(calibration(&before).dmin, calibration(&after).dmin);
@@ -445,7 +443,7 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
         film: &film,
         picture: &source,
     };
-    assert!(estimate(&[], FLOOR, default_current(), || false).is_err());
+    assert!(estimate(&[], default_current(), || false).is_err());
     assert!(
         estimate(
             &[FrameSamples {
@@ -453,7 +451,6 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
                 picture: &[],
                 ..frame
             }],
-            FLOOR,
             default_current(),
             || false
         )
@@ -466,20 +463,17 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
                 film: &[],
                 ..frame
             }],
-            FLOOR,
             default_current(),
             || false
         )
         .is_err()
     );
-    assert!(estimate(&[frame], 0., default_current(), || false).is_err());
     assert!(
         estimate(
             &[FrameSamples {
                 camera_to_ap1: DMat3::ZERO,
                 ..frame
             }],
-            FLOOR,
             default_current(),
             || false
         )
@@ -493,13 +487,12 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
                 film: &too_many,
                 ..frame
             }],
-            FLOOR,
             default_current(),
             || false
         ),
         Err(Error::InvalidParameter(_))
     ));
-    for value in [f64::NAN, FLOOR, 0.] {
+    for value in [f64::NAN, 0.] {
         let bad = [DVec3::new(value, 0.1, 0.1)];
         assert!(
             estimate(
@@ -508,7 +501,6 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
                     picture: &bad,
                     ..frame
                 }],
-                FLOOR,
                 default_current(),
                 || false
             )
@@ -526,7 +518,6 @@ fn invalid_inputs_and_unusable_frames_do_not_produce_partial_proposals() {
                     picture: &at_base
                 }
             ],
-            FLOOR,
             default_current(),
             || false
         )
@@ -558,7 +549,7 @@ fn cooperative_cancellation_at_start_during_fitting_and_before_completion_change
     };
     let mut checkpoints = 0;
     assert!(
-        estimate(&frames, FLOOR, current, || {
+        estimate(&frames, current, || {
             checkpoints += 1;
             false
         })
@@ -575,7 +566,7 @@ fn cooperative_cancellation_at_start_during_fitting_and_before_completion_change
         checkpoints,
     ] {
         let mut calls = 0;
-        let result = estimate(&frames, FLOOR, current, || {
+        let result = estimate(&frames, current, || {
             calls += 1;
             calls >= stop
         })

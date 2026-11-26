@@ -51,6 +51,41 @@ fn measured_reference(editor: &Editor, region: crate::coverage::Coverage) -> DVe
 }
 
 #[test]
+fn reference_accepts_positive_camera_light_below_one_code_but_not_zero() {
+    for code in [0, 1] {
+        let file = crate::raw::fixture::bayer_dng_with_rgb([code; 3]);
+        let editor = setup(file.path().to_str().unwrap());
+        let services = editor.source_services.as_ref().unwrap();
+        let mut scan = measurement::capture_scan(&editor).unwrap();
+        let area = scan.area;
+        let map = crate::flat_field::FlatField::from_nodes(
+            [area.x, area.y, area.width, area.height],
+            [2, 2],
+            vec![DVec3::splat(0.25); 4],
+        )
+        .unwrap();
+        let field = crate::photographic::stages::flat_field::GpuFlatField::new(
+            services.evaluation.device(),
+            std::sync::Arc::new(map),
+        )
+        .unwrap();
+        let measured = query::reference(
+            (&services.evaluation, &services.queue),
+            &mut scan,
+            Some(std::sync::Arc::new(field)),
+            patch(&editor),
+            &|| false,
+        );
+        if code == 0 {
+            assert!(matches!(measured, Err(crate::Error::UnusableSample(_))));
+        } else {
+            let expected = DVec3::splat(0.25 / 65535.);
+            assert!((measured.unwrap() - expected).abs().max_element() < 1e-11);
+        }
+    }
+}
+
+#[test]
 fn each_reference_feature_awaits_the_same_camera_measurement_and_changes_only_its_endpoint() {
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     for kind in [PickerCase::Dmin, PickerCase::Dmax] {

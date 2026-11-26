@@ -266,7 +266,6 @@ fn cold_reopened_exports_apply_successful_heals_and_leave_failed_targets_unchang
                     .grade_neutral(
                         crate::processing::InvertedPixel {
                             rgb: DVec3::from_array(neutral.map(f64::from)),
-                            floored: [false; 3],
                         },
                         point,
                     )

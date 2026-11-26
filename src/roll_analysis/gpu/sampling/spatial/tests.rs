@@ -120,7 +120,7 @@ fn spatial_camera_sites_keep_physical_correction_support_and_omit_reference_expo
 }
 
 #[test]
-fn corrected_site_admission_does_not_depend_on_unused_original_neighbours() {
+fn corrected_spatial_samples_retain_low_light_inside_support() {
     let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([2; 3]);
     let mut scan = Scan::open(file.path(), None).unwrap();
@@ -129,12 +129,7 @@ fn corrected_site_admission_does_not_depend_on_unused_original_neighbours() {
         crate::flat_field::FlatField::from_nodes(
             [a.x, a.y, a.width, a.height],
             [2, 2],
-            vec![
-                DVec3::splat(0.4),
-                DVec3::splat(2.),
-                DVec3::splat(0.4),
-                DVec3::splat(2.),
-            ],
+            vec![DVec3::splat(0.1), DVec3::ONE, DVec3::splat(0.1), DVec3::ONE],
         )
         .unwrap(),
     )));
@@ -144,20 +139,11 @@ fn corrected_site_admission_does_not_depend_on_unused_original_neighbours() {
         .spatial(area, |f| area.contains_region(f), || false)
         .unwrap()
         .unwrap();
-    assert!(scan.pixel(a.x + 26, a.y + 26).unwrap().min_element() > scan.effective_floor());
-    assert!(scan.pixel(a.x + 22, a.y + 22).unwrap().min_element() <= scan.effective_floor());
-    assert!(
-        raster.eligibility()[18 * 48 + 18],
-        "the retained centre is above its bound"
-    );
-    assert!(
-        !raster.eligibility()[14 * 48 + 14],
-        "a retained site below the bound stays unusable"
-    );
-    assert!(
-        raster.eligibility()[18 * 48 + 30],
-        "contrasting valid sites remain usable"
-    );
+    let low = scan.pixel(a.x + 22, a.y + 22).unwrap();
+    assert!(low.min_element() < 1. / 65535.);
+    let index = 14 * 48 + 14;
+    assert!(raster.eligibility()[index]);
+    assert!((raster.camera_samples()[index] - low).abs().max_element() < 1e-10);
 }
 
 #[test]

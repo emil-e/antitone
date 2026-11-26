@@ -29,7 +29,6 @@ pub struct AnalysisSamples {
     #[cfg(feature = "editor")]
     pub(crate) positions: Vec<[u32; 2]>,
     pub attempted: usize,
-    pub rejected_floor: usize,
 }
 
 /// Immutable native development shared by independent Scan consumers.
@@ -60,7 +59,6 @@ pub struct DevelopedSource {
     area: Rect,
     white_balance: [f64; 4],
     source_scale: f64,
-    precision_floor: f64,
 }
 
 impl DevelopedSource {
@@ -73,7 +71,6 @@ impl DevelopedSource {
         raw.develop_camera(wb)?;
         let wb = raw.white_balance(wb);
         let source_scale = raw.metadata.source_scale(wb)?;
-        let precision_floor = raw.metadata.source_precision_floor(wb)?;
         Ok(Self {
             file: raw.file.clone(),
             raw: Arc::new(raw.freeze()?),
@@ -82,7 +79,6 @@ impl DevelopedSource {
             area,
             white_balance: wb,
             source_scale,
-            precision_floor,
         })
     }
 
@@ -137,11 +133,6 @@ impl DevelopedSource {
             ));
         }
         Ok(())
-    }
-
-    /// Conservative developed-source quantum before an optional measured flat field.
-    pub fn precision_floor(&self) -> f64 {
-        self.precision_floor
     }
 
     /// Source camera light, with LibRaw's WB-normalization scale already restored.
@@ -285,10 +276,7 @@ pub struct Scan {
     pub camera_model: String,
     pub area: Rect,
     pub white_balance: [f64; 4],
-    /// Sampling precision before the consumer's optional flat-field correction.
-    pub precision_floor: f64,
     flat_field: Option<Arc<FlatField>>,
-    corrected_floor: f64,
 }
 
 impl Scan {
@@ -334,8 +322,6 @@ impl Scan {
             camera_model: source.camera_model.clone(),
             area: source.area,
             white_balance: source.white_balance,
-            precision_floor: source.precision_floor,
-            corrected_floor: source.precision_floor,
             flat_field: None,
             source,
         }
@@ -351,13 +337,7 @@ impl Scan {
     }
 
     pub fn set_flat_field(&mut self, field: Option<Arc<FlatField>>) {
-        let floor = if let Some(field) = &field {
-            self.source.precision_floor * field.bounds().1.max_element()
-        } else {
-            self.source.precision_floor
-        };
         self.flat_field = field;
-        self.corrected_floor = floor;
     }
 
     pub fn propose_flat_field_area(&self) -> Result<Option<Rect>> {
@@ -461,10 +441,6 @@ impl Scan {
         self.flat_field.as_ref()
     }
 
-    pub fn effective_floor(&self) -> f64 {
-        self.corrected_floor
-    }
-
     pub fn pixel(&self, x: u32, y: u32) -> Result<DVec3> {
         let mut camera = self.source.camera_image()?.pixel(x, y)?;
         if let Some(field) = &self.flat_field {
@@ -473,7 +449,7 @@ impl Scan {
         Ok(camera)
     }
 
-    /// Bounded original-pixel centres, checked in local 8×8 numerical footprints.
+    /// Bounded original-pixel centres with local 8×8 spatial footprints.
     /// The rectangle selects sampling support, not an output crop or film mask.
     pub fn analysis_samples(
         &mut self,
@@ -484,7 +460,7 @@ impl Scan {
         self.analysis_samples_in(area, budget, |_| true, cancelled)
     }
 
-    /// Select complete spatial footprints before checking numerical eligibility.
+    /// Select original centres whose complete footprints lie within the supplied support.
     /// The grid remains canonical to `area`; support never resizes/rephases it.
     pub fn analysis_samples_in(
         &mut self,
@@ -500,23 +476,11 @@ impl Scan {
             if cancelled() {
                 return Ok(None);
             }
-            let mut floor = false;
-            for y in footprint.region.y..footprint.region.y + footprint.region.height {
-                for x in footprint.region.x..footprint.region.x + footprint.region.width {
-                    let pixel = self.pixel(x, y)?;
-                    if !pixel.is_finite() {
-                        return Err(Error::NumericalOverflow);
-                    }
-                    floor |= pixel.min_element() <= self.corrected_floor;
-                }
+            let pixel = self.pixel(footprint.centre[0], footprint.centre[1])?;
+            if !pixel.is_finite() {
+                return Err(Error::NumericalOverflow);
             }
-            if floor {
-                plan.samples.rejected_floor += 1;
-            } else {
-                plan.samples
-                    .pixels
-                    .push(self.pixel(footprint.centre[0], footprint.centre[1])?);
-            }
+            plan.samples.pixels.push(pixel);
         }
         Ok((!cancelled()).then_some(plan.samples))
     }
@@ -536,9 +500,9 @@ impl Scan {
                 .camera_image()?
                 .sample_mean(region, DMat3::IDENTITY)?
         };
-        if !mean.is_finite() || mean.min_element() <= self.corrected_floor {
+        if !mean.is_finite() || mean.min_element() <= 0. {
             return Err(Error::UnusableSample(
-                "reference mean is at/below the scan precision floor",
+                "reference mean must be finite and positive in every channel",
             ));
         }
         Ok(mean)
@@ -550,11 +514,6 @@ impl Scan {
         for y in region.y..region.y + region.height {
             for x in region.x..region.x + region.width {
                 let pixel = self.pixel(x, y)?;
-                if !pixel.is_finite() || pixel.min_element() < self.corrected_floor {
-                    return Err(Error::UnusableSample(
-                        "patch contains nonfinite or floored scan inputs",
-                    ));
-                }
                 pixels.push(pixel);
             }
         }
@@ -578,9 +537,9 @@ impl Scan {
                 .pixels(self.area)?
                 .map(|([x, y], weight)| self.pixel(x, y).map(|p| (p, weight))),
         )?;
-        if mean.min_element() <= self.corrected_floor {
+        if mean.min_element() <= 0. {
             return Err(Error::UnusableSample(
-                "reference mean is at/below the scan precision floor",
+                "reference mean must be finite and positive in every channel",
             ));
         }
         Ok(mean)
@@ -591,11 +550,6 @@ impl Scan {
             .pixels(self.area)?
             .map(|([x, y], weight)| {
                 let pixel = self.pixel(x, y)?;
-                if !pixel.is_finite() || pixel.min_element() < self.corrected_floor {
-                    return Err(Error::UnusableSample(
-                        "patch contains nonfinite or floored scan inputs",
-                    ));
-                }
                 Ok((pixel, weight))
             })
             .collect()
@@ -635,17 +589,7 @@ impl Scan {
             .pixels(self.area)?
             .map(|([x, y], area)| {
                 let pixel = self.pixel(x, y)?;
-                if !pixel.is_finite() || pixel.min_element() < self.corrected_floor {
-                    return Err(Error::UnusableSample(
-                        "patch contains nonfinite or floored scan inputs",
-                    ));
-                }
                 let result = pipeline.apply(pixel, [x, y])?;
-                if result.floored.into_iter().any(|v| v) {
-                    return Err(Error::UnusableSample(
-                        "WB patch contains inputs below the calibration floor",
-                    ));
-                }
                 let weight = match layer {
                     Some(layer) => layer.weight(crate::geometry::SourcePoint([
                         f64::from(x) + 0.5,

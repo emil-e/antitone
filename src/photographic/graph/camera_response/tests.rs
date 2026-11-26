@@ -21,7 +21,7 @@ impl Source for CameraLight {
 }
 
 #[test]
-fn native_response_preserves_finite_zero_light_signed_values_and_continuation_flags() {
+fn native_response_preserves_finite_zero_light_and_signed_values() {
     let (device, queue, _) = crate::photographic::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let domain = Domain {
@@ -111,14 +111,7 @@ fn native_response_preserves_finite_zero_light_signed_values_and_continuation_fl
             "{index}: {decoded:?} != {:?}",
             expected.rgb
         );
-        let flags = expected
-            .floored
-            .iter()
-            .enumerate()
-            .fold(0u32, |mask, (c, continued)| {
-                mask | (u32::from(*continued) << c)
-            });
-        assert_eq!(actual[3] as u32, flags);
+        assert_eq!(actual[3], 0.);
     }
 
     assert!(actual[0][0].is_finite() && actual[0][0] > 65536.);

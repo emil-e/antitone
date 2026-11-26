@@ -263,7 +263,6 @@ fn grade_follows_exposure_wb_and_preserves_camera_floor_flags() {
         let before = original.apply(scan, [0, 0]).unwrap();
         let after = pipeline.apply(scan, [0, 0]).unwrap();
         near(after.rgb, grade.apply(before.rgb).unwrap());
-        assert_eq!(after.floored, before.floored);
     }
 }
 

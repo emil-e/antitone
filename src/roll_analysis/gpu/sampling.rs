@@ -25,7 +25,6 @@ pub(crate) struct PreviewSamples {
 
 pub(crate) struct CameraSampler<'a> {
     input: Arc<AnalysisInput>,
-    floor: f64,
     context: &'a evaluation::Context,
     queue: &'a crate::gpu::submission::Queue,
     field: Option<Arc<GpuFlatField>>,
@@ -83,21 +82,15 @@ impl<'a> CameraSampler<'a> {
         input: Arc<AnalysisInput>,
         field: Option<Arc<GpuFlatField>>,
     ) -> Result<Self, Error> {
-        let floor = input.effective_floor(field.as_ref().map(|f| f.field().as_ref()))?;
         if let Some(field) = &field {
             field.validate_matrix(glam::DMat3::IDENTITY, crate::processing::MAX_SOURCE_GAIN)?;
         }
         Ok(Self {
             input,
-            floor,
             context,
             queue: gpu,
             field,
         })
-    }
-
-    pub(crate) fn effective_floor(&self) -> f64 {
-        self.floor
     }
 
     fn gathered(&self, indices: Vec<usize>) -> Result<evaluation::Value, Error> {
@@ -131,40 +124,20 @@ impl<'a> CameraSampler<'a> {
         let Some(selected) = self.input.select(area, budget, inside, &mut cancelled)? else {
             return Ok(None);
         };
-        let mut result = AnalysisSamples {
-            attempted: selected.len(),
-            ..Default::default()
-        };
-        let mut indices = Vec::with_capacity(selected.len());
-        for index in selected {
-            if cancelled() {
-                return Ok(None);
-            }
-            if self.input.above_native_floor(index)? {
-                indices.push(index);
-            } else {
-                result.rejected_floor += 1;
-            }
+        if selected.is_empty() {
+            return Ok(Some(AnalysisSamples::default()));
         }
-        if indices.is_empty() {
-            return Ok(Some(result));
-        }
-        let source_positions = indices
+        let positions = selected
             .iter()
             .map(|&i| self.input.position(i))
             .collect::<Result<Vec<_>, _>>()?;
-        let Some(pixels) = self.read_centres(indices, &mut cancelled)? else {
-            return Ok(None);
-        };
-        for (position, pixel) in source_positions.into_iter().zip(pixels) {
-            if pixel.min_element() > self.floor {
-                result.positions.push(position);
-                result.pixels.push(pixel);
-            } else {
-                result.rejected_floor += 1;
-            }
-        }
-        Ok(Some(result))
+        Ok(self
+            .read_centres(selected, &mut cancelled)?
+            .map(|pixels| AnalysisSamples {
+                attempted: pixels.len(),
+                pixels,
+                positions,
+            }))
     }
 
     pub(crate) fn preview_centres(

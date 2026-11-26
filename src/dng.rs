@@ -59,7 +59,6 @@ pub struct Header {
     pub camera_to_xyz_d50: DMat3,
     pub daylight_to_xyz_d50: DMat3,
     pub as_shot_to_xyz_d50: DMat3,
-    pub precision_floor: f64,
     pub interpretation_id: [u8; 32],
 }
 
@@ -84,7 +83,6 @@ impl Header {
             camera_to_xyz_d50: DMat3::from_cols_array(&v.camera_to_xyz_d50).transpose(),
             daylight_to_xyz_d50: DMat3::from_cols_array(&v.daylight_to_xyz_d50).transpose(),
             as_shot_to_xyz_d50: DMat3::from_cols_array(&v.as_shot_to_xyz_d50).transpose(),
-            precision_floor: v.precision_floor,
             interpretation_id: hash_interpretation(v),
         }
     }
@@ -135,7 +133,6 @@ struct NativeView {
     wb: [f64; 3],
     as_shot_wb: [f64; 3],
     camera_to_xyz_d50: [f64; 9],
-    precision_floor: f64,
     daylight_to_xyz_d50: [f64; 9],
     as_shot_to_xyz_d50: [f64; 9],
     retained_bytes: u64,
@@ -344,9 +341,6 @@ impl Source {
     pub fn camera_to_xyz_d50(&self) -> DMat3 {
         self.header.camera_to_xyz_d50
     }
-    pub fn precision_floor(&self) -> f64 {
-        self.header.precision_floor
-    }
     pub fn opcode_counts(&self) -> ([u32; 3], [u32; 3]) {
         (self.allocation.view.applied, self.allocation.view.skipped)
     }
@@ -382,7 +376,7 @@ fn hash_interpretation(v: &NativeView) -> [u8; 32] {
     ] {
         hash.update(&field.to_le_bytes());
     }
-    for field in [v.black, v.white, v.precision_floor]
+    for field in [v.black, v.white]
         .into_iter()
         .chain(v.wb)
         .chain(v.camera_to_xyz_d50)

@@ -1,7 +1,5 @@
 use super::*;
-use antitone::processing::{
-    CAMERA_INPUT_FLOOR, Calibration, DEFAULT_GAMMA, InputSettings, Response,
-};
+use antitone::processing::{Calibration, DEFAULT_GAMMA, InputSettings, Response};
 
 fn vignette(order: Order, coefficients: &[i16]) -> Entry {
     (0x7032, 8, order.signed(coefficients))
@@ -32,19 +30,12 @@ fn selected_ifd_shading_is_signed_bounded_independent_and_padding_is_not_data() 
             geometry.sample_positions(9, 13).unwrap(),
             [glam::DVec2::new(9., 13.); 3]
         );
-        assert!(
-            (raw.metadata.precision_floor().unwrap() / CAMERA_INPUT_FLOOR
-                - std::f64::consts::SQRT_2)
-                .abs()
-                < 1e-14
-        );
         let mut padded = vec![11];
         padded.extend([0; 11]);
         padded.extend([i16::MAX; 5]);
         let file = source(order, vec![vignette(order, &padded)], false, true);
         let mut raw = RawFile::open(file.path()).unwrap();
         assert!(raw.metadata.lens_identity().unwrap().is_none());
-        assert_eq!(raw.metadata.precision_floor().unwrap(), CAMERA_INPUT_FLOOR);
         assert!(!raw.develop_camera([1.; 4]).unwrap().is_continuous());
         for tags in [
             vec![(0x7032, 3, order.signed(&[2, 0, 8192]))],
@@ -72,7 +63,7 @@ fn selected_ifd_shading_is_signed_bounded_independent_and_padding_is_not_data() 
 }
 
 #[test]
-fn shading_curve_provenance_differs_even_with_equal_geometry_and_precision_floor() {
+fn shading_curve_provenance_differs_even_with_equal_geometry() {
     let a = source(
         Order::Little,
         vec![vignette(Order::Little, &[3, 0, 8192, 16384])],
@@ -90,7 +81,6 @@ fn shading_curve_provenance_differs_even_with_equal_geometry_and_precision_floor
     let first = development(&a);
     let second = development(&b);
     assert_eq!(first.dimensions, second.dimensions);
-    assert_eq!(a.source().precision_floor(), b.source().precision_floor());
     assert_ne!(
         a.source().metadata().lens_identity().unwrap(),
         b.source().metadata().lens_identity().unwrap()
@@ -164,7 +154,7 @@ fn gains_are_applied_at_original_sites_before_the_combined_channel_reconstructio
 }
 
 #[test]
-fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
+fn headroom_measurements_compose_with_residual_flat_field() {
     use antitone::{
         flat_field::FlatField,
         project::{FlatFieldSettings, Project, Save, Source, SourceId},
@@ -181,10 +171,6 @@ fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
         dmin: DVec3::splat(0.7),
         dmax: DVec3::splat(0.01),
     };
-    assert_eq!(scan.precision_floor, scan.source().precision_floor());
-    let developed_floor = scan.source().precision_floor();
-    assert!(developed_floor > CAMERA_INPUT_FLOOR);
-    assert_eq!(scan.effective_floor(), developed_floor);
     let region = antitone::raw::Rect::from([56, 56, 8, 8]);
     assert!(scan.pixel(60, 60).unwrap().max_element() > 1.);
     assert!(scan.reference(region).unwrap().max_element() > 1.);
@@ -247,7 +233,6 @@ fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
         (base).validate().unwrap(),
         recipe.neutral.input.calibration().unwrap()
     );
-    assert_eq!(scan.effective_floor(), developed_floor * 3.);
     recipe.neutral.require_scan(&scan).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let saved = directory.path().join("shaded.antitone");
@@ -269,12 +254,9 @@ fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
             .require_scan(&scan)
             .is_err()
     );
-    // Small positive anchors remain usable independently of the measurement precision estimate.
     let mut low_light = reopened;
     if let InputSettings::Negative { dmax, .. } = &mut low_light.input {
-        *dmax = Some(DVec3::splat(CAMERA_INPUT_FLOOR));
+        *dmax = Some(DVec3::splat(1. / 65535.));
     }
     serde_json::to_value(&low_light).unwrap();
-    scan.set_flat_field(None);
-    assert_eq!(scan.effective_floor(), developed_floor);
 }

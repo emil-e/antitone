@@ -19,7 +19,7 @@ impl Source for Codes {
 }
 
 #[test]
-fn neutral_readout_bounds_extreme_samples_and_keeps_representable_hdr_and_floor_flags() {
+fn neutral_readout_bounds_extreme_samples_and_keeps_representable_hdr() {
     let (device, queue, _) = crate::photographic::test_support::render_context();
     let region = SourceRegion::from([11, 17, 3, 2]);
     let mut input = InputSettings::negative(Calibration {
@@ -71,7 +71,7 @@ fn neutral_readout_bounds_extreme_samples_and_keeps_representable_hdr_and_floor_
                 |_, pixels| {
                     for pixel in pixels {
                         assert!(pixel[..3].iter().all(|value| value.is_finite()));
-                        assert_eq!(pixel[3] as u32, if raw == DVec3::ZERO { 7 } else { 0 });
+                        assert_eq!(pixel[3], 0.);
                         sum += DVec3::new(
                             f64::from(pixel[0]),
                             f64::from(pixel[1]),

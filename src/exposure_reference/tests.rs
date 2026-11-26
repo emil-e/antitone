@@ -37,13 +37,7 @@ fn normalized_ap1_precedes_repairs_and_is_not_normalized_again_by_grading() {
     );
     assert!(
         (pipeline
-            .grade_neutral(
-                InvertedPixel {
-                    rgb: ungraded.rgb,
-                    floored: [false; 3]
-                },
-                [0, 0]
-            )
+            .grade_neutral(InvertedPixel { rgb: ungraded.rgb }, [0, 0])
             .unwrap()
             .rgb
             - expected)

@@ -1,64 +1,6 @@
 use super::*;
 
 #[test]
-fn precision_eligibility_keeps_the_strict_floor_boundary_in_the_evaluated_representation() {
-    struct Codes {
-        domain: evaluation::Domain,
-        value: f32,
-    }
-
-    impl evaluation::Source for Codes {
-        fn domain(&self) -> evaluation::Domain {
-            self.domain
-        }
-
-        fn read(&self, region: crate::evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
-            let region = region.source()?;
-            Ok(vec![
-                [self.value, self.value, self.value, 0.];
-                (region.width * region.height) as usize
-            ])
-        }
-    }
-
-    let file = crate::raw::fixture::bayer_dng_with_rgb([2; 3]);
-    let editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
-    let services = editor.source_services.as_ref().unwrap();
-    let mut scan = super::super::capture_scan(&editor).unwrap();
-    let coverage = Coverage::rectangle(crate::geometry::SourceRegion {
-        x: scan.area.x + 8,
-        y: scan.area.y + 8,
-        width: 32,
-        height: 32,
-    });
-    assert_eq!(
-        scan.effective_floor(),
-        crate::processing::CAMERA_INPUT_FLOOR
-    );
-    let mut samples = Samples::new(
-        (&services.evaluation, &services.queue),
-        &mut scan,
-        None,
-        coverage,
-        &|| false,
-    )
-    .unwrap();
-
-    for value in [0.5, 1., 2.] {
-        samples.source = evaluation::source(Arc::new(Codes {
-            domain: samples.source.domain(),
-            value,
-        }));
-        let result = samples.require_precision(&|| false);
-        if value < 1. {
-            assert!(matches!(result, Err(Error::UnusableSample(_))));
-        } else {
-            result.unwrap();
-        }
-    }
-}
-
-#[test]
 fn camera_measurements_accept_native_white_through_the_production_query() {
     let file = crate::raw::fixture::bayer_dng_with_rgb([65535; 3]);
     let editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
@@ -73,7 +15,6 @@ fn camera_measurements_accept_native_white_through_the_production_query() {
         &|| false,
     )
     .unwrap();
-    samples.require_precision(&|| false).unwrap();
     assert_eq!(
         samples
             .mean(samples.camera_light().unwrap(), &|| false)

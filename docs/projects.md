@@ -50,7 +50,7 @@ The current format is **schema 24 with processing model 8**. It has no migration
 
 Reproducibility is best effort. Development stores recorded `white_balance`, an explicit LibRaw/DNG SDK backend and diagnostic pixel-producer provenance, including the decoder release and development revision. Source records also describe geometry and camera conversion. Open restores these records unchanged. Acquisition uses the current decoder and checks geometry, camera conversion and development against that photograph's recorded facts when needed; diagnostic release differences alone do not reject it. Decoder fixes and upgrades can change pixels, and runtime cache identity distinguishes current pixel producers.
 
-Already-applied capture WB and sampling-precision estimates stay with runtime decoder metadata. Lens/opcode fingerprints and fixed colour-space labels are not saved. [Calibration and inversion](processing.md#two-anchors-define-the-response) operate on camera light and measured RGB anchors.
+Already-applied capture WB stays with runtime decoder metadata. Lens/opcode fingerprints and fixed colour-space labels are not saved. [Calibration and inversion](processing.md#two-anchors-define-the-response) operate on camera light and measured RGB anchors.
 
 RAWs are assumed immutable; Antitone does not hash them to establish photograph identity. Best-effort file revisions captured at Import/Open validate disposable persisted caches. Missing or corrupt photos remain in the opened document with their IDs, paths, order and settings, even when every source is unavailable. Acquisition failures belong to those photos. Source records and filmstrip order must describe the same photos; nonordered records reject. Relinking UI is not implemented.
 

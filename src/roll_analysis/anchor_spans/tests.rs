@@ -14,7 +14,6 @@ fn anchor_spans_set_proportional_channel_gammas_without_moving_the_anchors() {
     }];
     let result = estimate_anchor_spans(
         &frames,
-        1e-4,
         NegativeInput::from(Calibration {
             dmin: base,
             dmax: dense,
@@ -39,6 +38,43 @@ fn anchor_spans_set_proportional_channel_gammas_without_moving_the_anchors() {
 }
 
 #[test]
+fn isolated_black_pixels_do_not_block_calibration_but_a_black_anchor_does() {
+    let base = DVec3::splat(0.5);
+    let dense = DVec3::splat(0.05);
+    let mut film = [base; 1024];
+    film[0] = DVec3::ZERO;
+    let mut picture = [dense; 1024];
+    picture[0] = DVec3::ZERO;
+    let estimate = |picture: &[DVec3]| {
+        estimate_anchor_spans(
+            &[FrameSamples {
+                camera_to_ap1: DMat3::IDENTITY,
+                film: &film,
+                picture,
+            }],
+            NegativeInput::from(Calibration {
+                dmin: base,
+                dmax: dense,
+            })
+            .into(),
+            &mut model::ScalarReference,
+            &mut || false,
+        )
+    };
+
+    let proposal = estimate(&picture).unwrap().unwrap();
+    let calibration = proposal.input.calibration().unwrap();
+    assert!((calibration.dmin - base).abs().max_element() < 1e-12);
+    assert!((calibration.dmax - dense).abs().max_element() < 1e-12);
+
+    picture[..8].fill(DVec3::ZERO);
+    assert!(matches!(
+        estimate(&picture),
+        Err(Error::InvalidCalibration { .. })
+    ));
+}
+
+#[test]
 fn unrepresentable_anchor_spans_keep_the_incoming_balance_without_clamping() {
     let base = DVec3::splat(0.8);
     let dense = base * (-DVec3::new(0.02, 0.2, 2.)).exp();
@@ -59,7 +95,6 @@ fn unrepresentable_anchor_spans_keep_the_incoming_balance_without_clamping() {
     };
     let result = estimate_anchor_spans(
         &frames,
-        1e-4,
         input.into(),
         &mut model::ScalarReference,
         &mut || false,

@@ -246,17 +246,6 @@ fn bad_pixel_marker_and_phase_reject_instead_of_sdk_integer_truncation() {
 }
 
 #[test]
-fn precision_floor_covers_integer_gain_rounding_before_float_linearization() {
-    let mut fixture = Fixture::default();
-    fixture.lists[0].push(Opcode::gain(1.1, 0));
-    let file = fixture.write();
-    let header = Header::read(file.path(), options(), &Cancellation::default()).unwrap();
-    let source = Source::develop(file.path(), options(), &Cancellation::default()).unwrap();
-    assert_eq!(header.precision_floor, 2. / 4096.);
-    assert_eq!(source.precision_floor(), header.precision_floor);
-}
-
-#[test]
 fn header_inspection_matches_development_without_reading_sensor_payload() {
     let mut fixture = Fixture::default();
     fixture.lists[1].push(Opcode::gain(2., 1));
@@ -267,7 +256,6 @@ fn header_inspection_matches_development_without_reading_sensor_payload() {
     let source = Source::develop(file.path(), options(), &cancel).unwrap();
     assert_eq!(header.interpretation_id, source.interpretation_id());
     assert_eq!(header.camera_to_xyz_d50, source.camera_to_xyz_d50());
-    assert_eq!(header.precision_floor, 4. / 4096.);
     let mut bytes = std::fs::read(file.path()).unwrap();
     bytes.truncate(bytes.len() - 64 * 64 * 2);
     std::fs::write(file.path(), bytes).unwrap();

@@ -2,7 +2,7 @@
 
 use antitone::{
     dng::{Cancellation, Header, Options},
-    processing::{CAMERA_INPUT_FLOOR, InputSettings},
+    processing::InputSettings,
     project::{Project, Save, Source, SourceDevelopment, SourceId},
     raw::{RawFile, Rect},
     scan::Scan,
@@ -63,7 +63,7 @@ fn record(path: &Path, scan: &Scan) -> Source {
 }
 
 #[test]
-fn sdk_scan_uses_original_quantum_fixed_basis_and_continuous_samples() {
+fn sdk_scan_preserves_the_fixed_basis_and_continuous_samples() {
     let mut fixture = Fixture {
         marker: Some((30, 28, 4160)),
         ..Default::default()
@@ -84,14 +84,13 @@ fn sdk_scan_uses_original_quantum_fixed_basis_and_continuous_samples() {
     let scan = Scan::open(file.path(), Some(wb)).unwrap();
     assert_eq!(scan.white_balance, wb);
     assert_eq!(scan.area, Rect::from([3, 5, 48, 46]));
-    assert_eq!(scan.source().precision_floor(), 4. / 4096.);
-    assert_eq!(scan.precision_floor, scan.source().precision_floor());
-    assert_eq!(
-        scan.source().metadata().precision_floor().unwrap(),
-        header.precision_floor
-    );
     assert!(scan.source().metadata().lens_identity().unwrap().is_none());
-    assert!(scan.source().metadata().dng_identity().is_some());
+    assert_eq!(
+        scan.source().metadata().dng_identity().unwrap(),
+        blake3::Hash::from_bytes(header.interpretation_id)
+            .to_hex()
+            .as_str()
+    );
     let image = scan.source().camera_image().unwrap();
     assert!(image.is_continuous());
     let actual = image.pixel(12, 12).unwrap();
@@ -110,7 +109,7 @@ fn sdk_scan_uses_original_quantum_fixed_basis_and_continuous_samples() {
 }
 
 #[test]
-fn lossless_jpeg_14bit_preserves_developed_pixels_and_shared_sdk_precision() {
+fn lossless_jpeg_14bit_preserves_developed_pixels() {
     let plain = Fixture {
         bits: 14,
         ramp: true,
@@ -128,7 +127,6 @@ fn lossless_jpeg_14bit_preserves_developed_pixels_and_shared_sdk_precision() {
     .write();
     let a = Scan::open(plain.path(), None).unwrap();
     let b = Scan::open(compressed.path(), None).unwrap();
-    assert_eq!(b.source().precision_floor(), 1. / 4096.);
     assert_eq!(a.dimensions().unwrap(), b.dimensions().unwrap());
     let (width, height) = a.dimensions().unwrap();
     for y in 0..height {
@@ -168,7 +166,6 @@ fn shared_sdk_measurements_accept_repaired_sensor_black() {
             .max_element()
             < 1e-7
     );
-    assert_eq!(scan.source().precision_floor(), 2. / 4096.);
 }
 
 fn uniform_source(code: u16) -> fixture_path::FixturePath {
@@ -193,7 +190,6 @@ fn developed_white_remains_usable_for_reference_analysis_and_flat_field_estimati
         .unwrap();
     assert_eq!(samples.attempted, 1);
     assert_eq!(samples.pixels, vec![DVec3::ONE]);
-    assert_eq!(samples.rejected_floor, 0);
 
     // A constant reference has no spatial illumination variation, even at sensor white.
     let field = scan.estimate_flat_field(scan.area).unwrap();
@@ -210,7 +206,7 @@ fn developed_white_remains_usable_for_reference_analysis_and_flat_field_estimati
 }
 
 #[test]
-fn zero_signal_still_fails_measurement_and_flat_field_numerical_checks() {
+fn zero_signal_is_sampled_but_cannot_define_a_reference_or_flat_field() {
     let file = uniform_source(64);
     let mut scan = Scan::open(file.path(), None).unwrap();
     assert!(matches!(
@@ -222,8 +218,7 @@ fn zero_signal_still_fails_measurement_and_flat_field_numerical_checks() {
         .unwrap()
         .unwrap();
     assert_eq!(samples.attempted, 1);
-    assert!(samples.pixels.is_empty());
-    assert_eq!(samples.rejected_floor, 1);
+    assert_eq!(samples.pixels, vec![DVec3::ZERO]);
     assert!(matches!(
         scan.estimate_flat_field(scan.area),
         Err(antitone::Error::UnusableSample(_))
@@ -244,7 +239,6 @@ fn sdk_project_roundtrip_restores_accepted_wb_and_cache_keeps_interpretations_di
         input: InputSettings::Digital,
         ..Project::default()
     };
-    let _ = CAMERA_INPUT_FLOOR;
     let id = project.add_source(source).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("sdk.antitone");
@@ -332,16 +326,15 @@ fn sdk_flat_reference_uses_camera_coordinates_without_saved_opcode_fingerprints(
 }
 
 #[test]
-fn coarse_sampling_precision_does_not_prevent_usable_sdk_development() {
+fn large_corner_gain_keeps_picture_samples_usable() {
     let mut fixture = Fixture::default();
     let mut gain = Opcode::gain(1., 1);
-    // Only the far corner has large amplification; the conservative estimate covers the whole source.
+    // Apply the large gain only at the far corner of the gain map.
     let last = gain.data.len() - 4;
     gain.data[last..].copy_from_slice(&32_f32.to_be_bytes());
     fixture.lists[1].push(gain);
     let file = fixture.write();
     let scan = Scan::open(file.path(), Some([1.; 4])).unwrap();
-    assert_eq!(scan.source().precision_floor(), 32. / 4096.);
     let pixel = scan.pixel(4, 6).unwrap();
     assert!(
         pixel.is_finite()
@@ -425,8 +418,7 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
         let destination = temporary.path().join("camera.antitone");
         project.save(&destination, Save::New).unwrap();
         println!(
-            "{name} dimensions={dimensions:?} area={area:?} WB={wb:?} floor={} retained_bytes={:?} cold_seconds={:.3}",
-            scan.source().precision_floor(),
+            "{name} dimensions={dimensions:?} area={area:?} WB={wb:?} retained_bytes={:?} cold_seconds={:.3}",
             scan.source().retained_bytes(),
             started.elapsed().as_secs_f64()
         );
@@ -496,8 +488,7 @@ fn supplied_m9_shared_source_and_project_roundtrip() {
         before
     );
     println!(
-        "M9 shared/project dimensions={dimensions:?} WB={wb:?} floor={} retained_bytes={:?} proxy={w}x{h}",
-        scan.source().precision_floor(),
+        "M9 shared/project dimensions={dimensions:?} WB={wb:?} retained_bytes={:?} proxy={w}x{h}",
         scan.source().retained_bytes()
     );
 }

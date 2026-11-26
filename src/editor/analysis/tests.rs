@@ -3,60 +3,6 @@ use crate::photographic::parameters::ProcessingParameters;
 use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::project::Development;
 use crate::project::SourceDevelopment;
-use glam::DMat3;
-
-#[test]
-fn mixed_developed_floors_use_one_conservative_analysis_bound_and_recheck_sample_counts() {
-    let native = crate::processing::CAMERA_INPUT_FLOOR;
-    let frame = |floor| FrameMeasurements {
-        camera_to_ap1: DMat3::IDENTITY,
-        floor,
-        film: crate::scan::AnalysisSamples {
-            pixels: vec![DVec3::splat(0.8); 2048],
-            ..Default::default()
-        },
-        picture: crate::scan::AnalysisSamples {
-            pixels: (0..1024)
-                .map(|i| DVec3::splat(0.005 * 100f64.powf(i as f64 / 1023.)))
-                .collect(),
-            ..Default::default()
-        },
-    };
-    let mut owned = vec![frame(native), frame(native * 2.)];
-    owned[0]
-        .picture
-        .pixels
-        .extend([DVec3::splat(native * 1.5), DVec3::splat(native * 2.)]);
-    let floor = restrict_to_common_floor(&mut owned).unwrap();
-    assert_eq!(floor, native * 2.);
-    assert_eq!(owned[0].picture.pixels.len(), 1024);
-    assert_eq!(owned[0].picture.rejected_floor, 2);
-    assert_eq!(owned[1].picture.rejected_floor, 0);
-    let frames: Vec<_> = owned
-        .iter()
-        .map(|f| FrameSamples {
-            camera_to_ap1: DMat3::IDENTITY,
-            film: &f.film.pixels,
-            picture: &f.picture.pixels,
-        })
-        .collect();
-    let proposal = roll_analysis::estimate(
-        &frames,
-        floor,
-        crate::processing::NegativeInput::from(Calibration {
-            dmin: DVec3::splat(0.8),
-            dmax: DVec3::splat(0.02),
-        }),
-        || false,
-    )
-    .unwrap()
-    .unwrap();
-    assert_eq!(proposal.photos.len(), 2);
-    require_statistics(4096, &proposal.frames).unwrap();
-    let mut sparse = vec![frame(native), frame(native * 2.)];
-    sparse[0].picture.pixels = vec![DVec3::splat(native * 1.5); 1024];
-    assert!(restrict_to_common_floor(&mut sparse).is_err());
-}
 
 #[test]
 fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_open_state() {
@@ -628,9 +574,7 @@ fn sparse_eligibility_is_rejected_before_any_grade_installation() {
     let request = capture_request(&editor);
     let samples = crate::scan::AnalysisSamples {
         pixels: vec![DVec3::splat(0.1)],
-        attempted: 8192,
-        rejected_floor: 8191,
-        positions: Vec::new(),
+        ..Default::default()
     };
     let error = require_picture(&samples).unwrap_err();
     editor.accept_analysis(

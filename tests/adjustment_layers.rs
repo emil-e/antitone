@@ -49,10 +49,7 @@ fn adjustment(photo: AdjustmentLayerSettings) -> AdjustmentLayer {
 }
 
 fn pixel(rgb: DVec3) -> InvertedPixel {
-    InvertedPixel {
-        rgb,
-        floored: [true, false, true],
-    }
+    InvertedPixel { rgb }
 }
 
 fn inputs() -> Vec<DVec3> {
@@ -242,7 +239,6 @@ fn exposure_feather_scales_ev_not_pixel_output() {
     let output = grade.apply(input, SourcePoint([14., 20.])).unwrap();
     near_rgb(output.rgb, input.rgb * 2_f64.sqrt());
     assert!((output.rgb.x - input.rgb.x * 1.5).abs() > 0.1);
-    assert_eq!(output.floored, input.floored);
 }
 
 #[test]
@@ -351,7 +347,6 @@ fn full_weight_matches_existing_photographic_operators() {
             output.rgb,
             Grade::new(photo).unwrap().apply(matrix * rgb).unwrap()
         );
-        assert_eq!(output.floored, [true, false, true]);
     }
 }
 
@@ -395,7 +390,6 @@ fn fractional_signed_hdr_stages_match_independent_control_space_reference() {
                             reference::saturation(contrasted, s, w * photo.vibrance).unwrap();
                         let output = grade.apply(pixel(rgb), SourcePoint([x, 20.])).unwrap();
                         near_rgb(output.rgb, expected);
-                        assert_eq!(output.floored, [true, false, true]);
                     }
                 }
             }
@@ -496,7 +490,6 @@ fn locals_follow_unchanged_global_pipeline_and_preserve_floor_flags() {
         assert_eq!(empty.apply(global, point).unwrap(), global);
         let local = exposure.apply(global, point).unwrap();
         near_rgb(local.rgb, global.rgb * 2.);
-        assert_eq!(local.floored, global.floored);
     }
 }
 
@@ -763,8 +756,6 @@ fn whole_image_contrast_can_finish_a_gradient_or_precede_it_without_a_special_ba
         (after.rgb.x - before.rgb.x).abs() > 0.01,
         "fixture must distinguish processing order"
     );
-    assert_eq!(after.floored, input.floored);
-    assert_eq!(before.floored, input.floored);
 }
 
 #[test]

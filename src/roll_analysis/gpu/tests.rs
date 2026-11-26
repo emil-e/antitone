@@ -25,7 +25,7 @@ fn response_batches_keep_sample_order_signed_hdr_values_and_reuse_parameterized_
     let negative = negative();
     let kinds = [
         negative.calibration.dmin * 1.1,
-        DVec3::splat(crate::processing::CAMERA_INPUT_FLOOR * 1.05),
+        DVec3::splat(1.05 / 65535.),
         DVec3::new(0.04, 0.03, 0.05),
         DVec3::new(0.018, 0.006, 0.003),
         DVec3::splat(2.),
@@ -163,24 +163,11 @@ fn roll_estimation_keeps_corrected_camera_headroom_and_statistical_inputs() {
                 tint: -0.2,
             },
         };
-        let reference = estimate(
-            &frames,
-            crate::processing::CAMERA_INPUT_FLOOR,
-            current,
-            || false,
-        )
-        .unwrap()
-        .unwrap();
+        let reference = estimate(&frames, current, || false).unwrap().unwrap();
         let mut model = ResponseModel::new(&context, &queue);
-        let actual = estimate_with_model(
-            &frames,
-            crate::processing::CAMERA_INPUT_FLOOR,
-            current,
-            &mut model,
-            &mut || false,
-        )
-        .unwrap()
-        .unwrap();
+        let actual = estimate_with_model(&frames, current, &mut model, &mut || false)
+            .unwrap()
+            .unwrap();
         assert_eq!(actual.input.calibration(), reference.input.calibration());
         assert_eq!(actual.frames, reference.frames);
         let actual_balance = actual.input.negative_input().unwrap().balance;
@@ -217,7 +204,7 @@ fn roll_estimation_keeps_corrected_camera_headroom_and_statistical_inputs() {
                         &mut || false,
                         &mut |_, positive| {
                             let y = luminance.dot(positive);
-                            assert!(y > 1e-8, "all fixture samples must be exposure-eligible");
+                            assert!(y > 0., "all fixture samples must be exposure-eligible");
                             values.push(y);
                             Ok(())
                         },

@@ -40,7 +40,6 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
     fixture.lists[1].push(Opcode::gain(0.5, 1));
     let file = fixture.write();
     let scan = Scan::open(file.path(), None).unwrap();
-    assert_eq!(scan.source().precision_floor(), 1. / 4096.);
     let calibration = Calibration {
         dmin: DVec3::splat(0.75),
         dmax: DVec3::splat(0.01),

@@ -235,16 +235,6 @@ impl Metadata {
         crate::lens::EmbeddedLensGeometry::new(profile, self.native_image_area()?).map(Some)
     }
 
-    /// Original-code precision amplified conservatively by development; never a clipping limit.
-    pub fn precision_floor(&self) -> Result<f64, Error> {
-        #[cfg(feature = "dng-sdk")]
-        if let Some(header) = self.sdk {
-            return Ok(header.precision_floor);
-        }
-        Ok(crate::processing::CAMERA_INPUT_FLOOR
-            * self.lens_geometry()?.map_or(1., |g| g.maximum_gain()))
-    }
-
     pub(crate) fn source_scale(&self, white_balance: [f64; 4]) -> Result<f64, Error> {
         if self.uses_sdk() {
             Ok(1.)
@@ -253,16 +243,6 @@ impl Metadata {
                 crate::processing::libraw_effective_wb(white_balance, self.pre_applied_wb())?;
             crate::processing::libraw_green_scale(effective)
         }
-    }
-
-    pub(crate) fn source_precision_floor(&self, white_balance: [f64; 4]) -> Result<f64, Error> {
-        let floor = self.precision_floor()? * self.source_scale(white_balance)?;
-        if !floor.is_finite() || floor <= 0. {
-            return Err(Error::Raw(
-                "source precision is not finite and positive".into(),
-            ));
-        }
-        Ok(floor)
     }
 
     pub fn source_dimensions(&self) -> Result<[u32; 2], Error> {

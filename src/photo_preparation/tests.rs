@@ -50,7 +50,7 @@ fn positive_low_signal_matches_the_same_preview_without_a_decoder_precision_thre
             *value *= 2_f32.powi(-16);
         }
     }
-    assert!(f64::from(dim.pixels[0][0]) / 65535. < crate::processing::CAMERA_INPUT_FLOOR);
+    assert!(dim.pixels[0][0] < 1.);
     let ReferenceExposure::Matched(normal) = estimate(&normal, &reference) else {
         panic!("normal positive control must meter");
     };

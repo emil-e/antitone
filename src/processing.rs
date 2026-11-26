@@ -8,7 +8,6 @@ pub use crate::photographic::stages::{
     interpretation::{InputPipeline, Inversion, InvertedPixel},
 };
 
-pub const CAMERA_INPUT_FLOOR: f64 = 1. / 65535.;
 /// Continuous-source admission envelope, covering the full signed Sony shading table (< 2^8).
 pub const MAX_SOURCE_GAIN: f64 = 256.;
 pub const MAX_CAMERA_SOURCE_CODE: f32 = 65535. * MAX_SOURCE_GAIN as f32;

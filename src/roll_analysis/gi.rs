@@ -57,16 +57,10 @@ impl SpatialSamples {
     fn response(
         &self,
         negative: NegativeInput,
-        effective_floor: f64,
         model: &mut impl ForwardModel,
         cancelled: &mut impl FnMut() -> bool,
     ) -> Result<Option<PositiveRaster>, Error> {
-        let valid: Vec<_> = self
-            .camera
-            .iter()
-            .zip(&self.valid)
-            .map(|(p, ok)| *ok && p.min_element() > effective_floor)
-            .collect();
+        let valid = self.valid.clone();
         let indices: Vec<_> = (0..valid.len()).filter(|&i| valid[i]).collect();
         let points: Vec<_> = indices.iter().map(|&i| self.camera[i]).collect();
         let batch = SampleBatch::new([points.as_slice()]);
@@ -93,75 +87,53 @@ pub struct SpatialFrameSamples<'a> {
 /// No settings are installed; cancellation returns no proposal.
 pub fn estimate_spatial(
     frames: &[SpatialFrameSamples<'_>],
-    effective_floor: f64,
     current: impl Into<InputSettings>,
     mut cancelled: impl FnMut() -> bool,
 ) -> Result<Option<Proposal>, Error> {
-    estimate_spatial_with_model(
-        frames,
-        effective_floor,
-        current,
-        &mut model::ScalarReference,
-        &mut cancelled,
-    )
+    estimate_spatial_with_model(frames, current, &mut model::ScalarReference, &mut cancelled)
 }
 
 pub(crate) fn estimate_spatial_with_model(
     frames: &[SpatialFrameSamples<'_>],
-    effective_floor: f64,
     current: impl Into<InputSettings>,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<Proposal>, Error> {
     let statistics: Vec<_> = frames.iter().map(|f| f.statistics).collect();
-    estimate_spatial_with_provider(
-        &statistics,
-        effective_floor,
-        current,
-        model,
-        cancelled,
-        |index, _| Ok(Some(frames[index].spatial)),
-    )
+    estimate_spatial_with_provider(&statistics, current, model, cancelled, |index, _| {
+        Ok(Some(frames[index].spatial))
+    })
 }
 
 /// Spatial camera evidence is evaluated per photograph and released between selections.
 pub(crate) fn estimate_spatial_with_provider<S: AsRef<SpatialSamples>>(
     frames: &[FrameSamples<'_>],
-    effective_floor: f64,
     current: impl Into<InputSettings>,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
     image: impl FnMut(usize, &mut dyn FnMut() -> bool) -> Result<Option<S>, Error>,
 ) -> Result<Option<Proposal>, Error> {
-    let Some(seed) = estimate_with_model(frames, effective_floor, current, model, cancelled)?
-    else {
+    let Some(seed) = estimate_with_model(frames, current, model, cancelled)? else {
         return Ok(None);
     };
-    refine_from(frames, effective_floor, seed, model, cancelled, image)
+    refine_from(frames, seed, model, cancelled, image)
 }
 
 #[cfg(test)]
 fn refine(
     frames: &[FrameSamples<'_>],
     images: &[&SpatialSamples],
-    effective_floor: f64,
     proposal: Proposal,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<Proposal>, Error> {
-    refine_from(
-        frames,
-        effective_floor,
-        proposal,
-        model,
-        cancelled,
-        |index, _| Ok(Some(images[index])),
-    )
+    refine_from(frames, proposal, model, cancelled, |index, _| {
+        Ok(Some(images[index]))
+    })
 }
 
 fn refine_from<S: AsRef<SpatialSamples>>(
     frames: &[FrameSamples<'_>],
-    effective_floor: f64,
     mut proposal: Proposal,
     model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
@@ -181,9 +153,7 @@ fn refine_from<S: AsRef<SpatialSamples>>(
             return Ok(None);
         };
         let image = samples.as_ref();
-        let Some(PositiveRaster { rgb, valid }) =
-            image.response(initial, effective_floor, model, cancelled)?
-        else {
+        let Some(PositiveRaster { rgb, valid }) = image.response(initial, model, cancelled)? else {
             return Ok(None);
         };
         // Native-positive GI can favour saturated colours outside the log-cone domain.
@@ -232,8 +202,7 @@ fn refine_from<S: AsRef<SpatialSamples>>(
             return Ok(None);
         };
         let image = samples.as_ref();
-        let Some(PositiveRaster { rgb, valid }) =
-            image.response(negative, effective_floor, model, cancelled)?
+        let Some(PositiveRaster { rgb, valid }) = image.response(negative, model, cancelled)?
         else {
             return Ok(None);
         };

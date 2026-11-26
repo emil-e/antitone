@@ -13,7 +13,6 @@ pub struct CameraIdentity {
     area: Rect,
     matrix: DMat3,
     scale: f64,
-    floor: f64,
 }
 
 impl PartialEq for CameraIdentity {
@@ -30,7 +29,6 @@ impl PartialEq for CameraIdentity {
             && self.area == other.area
             && self.matrix == other.matrix
             && self.scale == other.scale
-            && self.floor == other.floor
     }
 }
 
@@ -45,13 +43,10 @@ impl std::hash::Hash for CameraIdentity {
         self.area.hash(state);
         self.lens_correction.hash(state);
         self.dng_interpretation.hash(state);
-        for value in self
-            .white_balance
-            .into_iter()
-            .chain([self.scale, self.floor])
-        {
+        for value in self.white_balance {
             crate::float_hash::f64(value, state);
         }
+        crate::float_hash::f64(self.scale, state);
     }
 }
 
@@ -77,7 +72,6 @@ impl DevelopedSource {
             area: self.area,
             matrix: self.camera_to_ap1,
             scale: self.source_scale,
-            floor: self.precision_floor,
         }
     }
 }

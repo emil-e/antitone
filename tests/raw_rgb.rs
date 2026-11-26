@@ -108,9 +108,6 @@ fn selected_ycbcr_raw_ifd_supplies_automatic_sony_shading() {
     let scan = Scan::open(fixture.path(), None).unwrap();
     assert!(scan.source().metadata().lens_identity().unwrap().is_some());
     let gain = 2_f64.sqrt();
-    // Reciprocal exp2 profile decoding and the precision-scale product can round separately.
-    let floor = gain / 65535.;
-    assert!((scan.source().precision_floor() - floor).abs() <= 4. * f64::EPSILON * floor);
     for (index, y) in sony_ycc::LUMINANCE.into_iter().enumerate() {
         let light = f64::from(y - 1024) / (17536. - 1024.);
         assert_light(
@@ -301,15 +298,14 @@ fn prebalanced_source_save_open_and_cold_development_retain_the_photographic_bas
     let fixture = sony_ycc::source();
     let path = fixture.path();
     let directory = tempfile::tempdir().unwrap();
-    for (input, wb, scale) in [
-        (InputSettings::Digital, sony_ycc::WB, 1.),
+    for (input, wb) in [
+        (InputSettings::Digital, sony_ycc::WB),
         (
             InputSettings::negative(Calibration {
                 dmin: DVec3::splat(0.7),
                 dmax: DVec3::splat(0.01),
             }),
             [1.; 4],
-            1.,
         ),
     ] {
         let scan = Scan::open(path, Some(wb)).unwrap();
@@ -319,7 +315,6 @@ fn prebalanced_source_save_open_and_cold_development_retain_the_photographic_bas
             ..Default::default()
         };
         let id = project.add_source(record(&scan, path)).unwrap();
-        assert_eq!(scan.source().precision_floor(), scale / 65535.);
         let decode = &project.source(id).unwrap().development.decode;
         assert_eq!(
             Development::for_source(&project.source(id).unwrap().development),
