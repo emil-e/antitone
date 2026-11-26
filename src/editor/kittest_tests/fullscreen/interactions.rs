@@ -93,8 +93,8 @@ fn pickers_keep_source_preference_and_remain_interactive_fullscreen() {
                     .0
                     .screen_point(egui::pos2(128., 96.))
             });
-            masks::pointer(&mut h, point, true);
-            masks::pointer(&mut h, point, false);
+            let half_side = egui::vec2(10., 10.);
+            drag(&mut h, point - half_side, point + half_side);
             h.read(|editor| assert!(editor.test_pick_region().is_some()));
             reveal(&mut h);
             assert!(!h.get_by_label("Apply").accesskit_node().is_disabled());
@@ -227,8 +227,8 @@ fn dmin_picker_keeps_cropped_positive_composition_anchor_and_selection_fullscree
         });
         let point = after.screen_point(egui::pos2(128., 96.));
         assert!(after.canvas.contains(point) && after.image.contains(point));
-        masks::pointer(&mut h, point, true);
-        masks::pointer(&mut h, point, false);
+        let half_side = egui::Vec2::splat(16. * after.scale);
+        drag(&mut h, point - half_side, point + half_side);
         let selected = h.read(|editor| editor.test_pick_region().unwrap());
         assert!(selected.exact_rectangle(after.area).is_none());
         let screen = after.screen_coverage(selected);

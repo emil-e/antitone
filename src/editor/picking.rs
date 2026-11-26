@@ -49,10 +49,6 @@ impl Interaction {
             submit,
         }
     }
-
-    fn submission(&mut self) -> Option<(Coverage, Submit)> {
-        Some((self.region?, self.submit.take()?))
-    }
 }
 
 /// Read-only observation of the measurement picker; the tool owns the interaction.
@@ -114,15 +110,21 @@ pub(super) struct PickTool {
 }
 
 impl PickTool {
-    fn select(&mut self, ui: &egui::Ui, response: &egui::Response, layout: CanvasLayout) {
-        let mut state = self.state.borrow_mut();
+    fn select(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        layout: CanvasLayout,
+    ) -> Option<Coverage> {
         if response.clicked_by(egui::PointerButton::Primary)
             && let Some(point) = response
                 .interact_pointer_pos()
                 .filter(|point| layout.image.contains(*point))
         {
-            state.region = Some(layout.pick_patch(point, 32));
+            return Some(layout.pick_patch(point, 32));
         }
+
+        let mut state = self.state.borrow_mut();
         if response.drag_started_by(egui::PointerButton::Primary) {
             state.drag = ui
                 .input(|input| input.pointer.press_origin())
@@ -133,6 +135,15 @@ impl PickTool {
             && let (Some(drag), Some(point)) = (state.drag, response.interact_pointer_pos())
         {
             state.region = Some(drag.update(layout, point));
+        }
+        None
+    }
+
+    fn submit(&mut self, region: Coverage, editor: &mut Editor) {
+        let submit = self.state.borrow_mut().submit.take();
+        if let Some(submit) = submit {
+            submit(region, editor);
+            editor.end_tool();
         }
     }
 }
@@ -158,7 +169,7 @@ impl tool::Tool for PickTool {
             help: state
                 .display
                 .help
-                .unwrap_or("Click a patch or drag an area; drag its edges/corners to resize."),
+                .unwrap_or("Click to measure a patch, or drag a rectangle and choose Apply. Drag its edges or corners to resize."),
             navigation_help: None,
             fit_label: "Fit",
         }
@@ -170,7 +181,8 @@ impl tool::Tool for PickTool {
         editor: &mut Editor,
         cx: &UiContext<'_, Editor>,
     ) -> Option<CanvasLayout> {
-        viewer.show(
+        let mut patch = None;
+        let layout = viewer.show(
             self,
             editor,
             cx,
@@ -191,8 +203,9 @@ impl tool::Tool for PickTool {
                 };
                 let space = canvas.ui.input(|input| input.key_down(egui::Key::Space));
                 if canvas.ui.is_enabled() && !editor.interaction_blocked() && !panning && !space {
-                    tool.select(canvas.ui, canvas.response, layout);
-                    if (canvas.response.hovered() || canvas.response.dragged())
+                    patch = tool.select(canvas.ui, canvas.response, layout);
+                    if patch.is_none()
+                        && (canvas.response.hovered() || canvas.response.dragged())
                         && let Some(point) = canvas.ui.input(|input| input.pointer.hover_pos())
                     {
                         let state = tool.state.borrow();
@@ -212,21 +225,28 @@ impl tool::Tool for PickTool {
                     tool.state.borrow_mut().drag = None;
                 }
                 canvas.paint_image(editor, layout, false, cx);
-                if let Some(region) = tool.state.borrow().region {
+                if patch.is_none()
+                    && let Some(region) = tool.state.borrow().region
+                {
                     paint_selection(canvas.ui, layout, region);
                 }
                 Some(layout)
             },
-        )
+        );
+
+        if let Some(patch) = patch {
+            self.submit(patch, editor);
+            viewer.ui.ctx().request_repaint();
+        }
+        layout
     }
 
     fn action(&mut self, action: tool::Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         match action {
             tool::Action::Primary if !editor.interaction_blocked() => {
-                let submission = self.state.borrow_mut().submission();
-                if let Some((region, submit)) = submission {
-                    submit(region, editor);
-                    editor.end_tool();
+                let region = self.state.borrow().region;
+                if let Some(region) = region {
+                    self.submit(region, editor);
                 }
             }
             tool::Action::Dismiss => editor.end_tool(),
@@ -293,7 +313,7 @@ pub(super) async fn pick(cx: &UiContext<'_, Editor>, display: Display) -> Option
         .map(|(region, ())| region)
 }
 
-/// Capture feature inputs in the Apply transaction; the caller resumes after the tool ends.
+/// Capture feature inputs on click or Apply; the caller resumes after the tool ends.
 pub(super) async fn pick_with<T: 'static>(
     cx: &UiContext<'_, Editor>,
     display: Display,
