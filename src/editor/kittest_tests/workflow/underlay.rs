@@ -1,6 +1,117 @@
 use super::*;
 
 #[test]
+fn successive_pans_keep_the_canvas_covered_while_a_composite_is_in_flight() {
+    calibrated_workflow(|mut harness, _, _| {
+        wait_settled(&mut harness);
+        harness.update(|editor| editor.document.visit.canvas.viewport.zoom = Some(4.));
+        harness.step();
+        wait_for(&mut harness, |editor| {
+            let working = &editor.document.visit.working_view;
+            working.support_ready() && working.idle()
+        });
+        let detail = harness.read(|editor| {
+            editor
+                .document
+                .visit
+                .working_view
+                .regional()
+                .unwrap()
+                .clone()
+        });
+
+        let acquisition = crate::background::testing::pause();
+        let pan = |harness: &mut Harness<'_, Editor>, delta| {
+            harness.update(|editor| {
+                let (layout, density) = editor.active_canvas().last_layout.unwrap();
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .viewport
+                    .pan(layout, density, egui::vec2(delta, 0.));
+            });
+            harness.step();
+        };
+        pan(&mut harness, 120.);
+        harness.render().unwrap();
+        let first = harness.read(|editor| {
+            let view = &editor.canvas_frame.displayed.as_ref().unwrap().view;
+            assert_eq!(
+                Some(view.spec.frame()),
+                editor.document.visit.working_view.current_frame()
+            );
+            assert!(!Arc::ptr_eq(view, &detail));
+            assert!(!editor.document.visit.working_view.support_ready());
+            view.clone()
+        });
+        wait_for(&mut harness, |_| !first.in_flight());
+
+        first.with_completion_deferred(|| {
+            pan(&mut harness, -240.);
+            harness.read(|editor| {
+                let current = editor.document.visit.working_view.current_frame().unwrap();
+                assert!(current.max.0[0] > first.spec.frame().max.0[0]);
+                assert!(!editor.document.visit.working_view.support_ready());
+            });
+            harness.render().unwrap();
+            wait_for(&mut harness, |editor| {
+                let input = editor.scope_request().unwrap();
+                let settings = editor.scopes.settings(editor.document.target());
+                let Some(counts) = input.status(editor.scopes.gpu.as_ref().unwrap(), settings)
+                else {
+                    return false;
+                };
+                let counts = counts.unwrap();
+                assert_eq!(counts.invalid, 0);
+                assert_eq!(
+                    counts.valid,
+                    input.frame().output.iter().product::<u32>(),
+                    "the panned canvas must not expose gaps beyond the held composite"
+                );
+                assert!(Arc::ptr_eq(
+                    &input.view,
+                    &editor.canvas_frame.displayed.as_ref().unwrap().view
+                ));
+                let fallback = input.view.spec.frame();
+                assert_eq!(fallback.min.0, [0., 0.]);
+                assert_eq!(fallback.max.0, fallback.composition.size().map(f64::from));
+                true
+            });
+
+            let second =
+                harness.read(|editor| editor.document.visit.working_view.current_frame().unwrap());
+            pan(&mut harness, -60.);
+            harness.read(|editor| {
+                let current = editor.document.visit.working_view.current_frame().unwrap();
+                assert!(current.max.0[0] > second.max.0[0]);
+                let fallback = editor
+                    .canvas_frame
+                    .displayed
+                    .as_ref()
+                    .unwrap()
+                    .view
+                    .spec
+                    .frame();
+                assert_eq!(fallback.min.0, [0., 0.]);
+                assert_eq!(fallback.max.0, fallback.composition.size().map(f64::from));
+            });
+        });
+
+        drop(acquisition);
+        wait_for(&mut harness, |editor| {
+            editor.document.visit.working_view.idle()
+        });
+        harness.read(|editor| {
+            let working = &editor.document.visit.working_view;
+            let painted = &editor.canvas_frame.displayed.as_ref().unwrap().view;
+            assert_eq!(Some(painted.spec.frame()), working.current_frame());
+            assert!(Arc::ptr_eq(painted, working.regional().unwrap()));
+        });
+    });
+}
+
+#[test]
 fn warm_physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_and_global_edits()
  {
     calibrated_workflow(|mut harness, _, _directory| {

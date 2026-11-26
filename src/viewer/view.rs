@@ -23,6 +23,8 @@ use std::sync::{
 use wgpu::util::DeviceExt;
 
 mod composite;
+#[cfg(feature = "editor")]
+pub(crate) use composite::Navigation;
 #[cfg(test)]
 mod fixtures;
 mod image;

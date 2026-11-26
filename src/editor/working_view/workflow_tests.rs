@@ -480,7 +480,7 @@ fn detail_can_present_while_underlay_is_parked() {
             assert!(view.task.is_some());
             assert!(view.underlay().is_none());
             view.render(&egui::Context::default()).unwrap();
-            assert!(view.present(spec.frame(), None).unwrap().unwrap().spec == spec);
+            assert!(view.present(spec.frame()).unwrap().unwrap().spec == spec);
             view.source().unwrap().clone()
         });
         release.send(()).unwrap();
@@ -901,7 +901,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
                 );
             }
             working.render(&ui).unwrap();
-            let rendered = working.present(spec.frame(), None).unwrap().unwrap();
+            let rendered = working.present(spec.frame()).unwrap().unwrap();
             assert!(rendered.processing() == processing);
             assert_eq!(rendered.target, OutputTarget::Srgb);
             (rendered, device, queue)

@@ -421,6 +421,27 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                         );
                         newest.ensure_submitted(&device, &queue, &context);
                         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+
+                        #[cfg(feature = "editor")]
+                        {
+                            // If a detail-only frame succeeds without an underlay, the previous
+                            // viewport must stop retaining its old underlay pixels.
+                            let mut navigation = Navigation::default();
+                            let previous = navigation
+                                .present(&device, &detail, Some(&base), latest)
+                                .unwrap();
+                            previous.ensure_submitted(&device, &queue, &context);
+                            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+                            let previous_owner = Arc::downgrade(&previous);
+                            drop(previous);
+                            assert!(previous_owner.upgrade().is_some());
+
+                            let visible = navigation
+                                .present(&device, &detail, None, detail.spec.frame())
+                                .unwrap();
+                            assert!(Arc::ptr_eq(&visible, &detail));
+                            assert!(previous_owner.upgrade().is_none());
+                        }
                     }
                 }
                 assert!(
