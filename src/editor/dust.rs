@@ -930,7 +930,7 @@ impl DustTool {
             self.end_dust_donor_drag(editor);
             self.commit_dust_mask(editor, cx);
         }
-        if allowed && ui::focused_delete(response) {
+        if allowed && ui::focused_delete(response, &editor.workspace_input) {
             self.delete_selected_dust_repair(editor);
         }
     }

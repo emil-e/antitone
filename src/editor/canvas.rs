@@ -14,9 +14,16 @@ pub(super) struct Frame {
     original_requested: bool,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum Zoom {
+    ActualSize,
+    Relative(f32),
+    ToggleFit,
+}
+
 pub(super) struct Viewer<'a> {
     pub ui: &'a mut egui::Ui,
-    zoom: Option<f32>,
+    zoom: Option<Zoom>,
     fullscreen: bool,
 }
 
@@ -34,8 +41,12 @@ impl Viewer<'_> {
             &UiContext<'_, Editor>,
         ) -> Option<CanvasLayout>,
     ) -> Option<CanvasLayout> {
-        let bar = editor.viewer_bar(self.ui, controls);
-        self.fullscreen |= bar.fullscreen;
+        let (toggle_fullscreen, bar) = editor
+            .viewer_bar_frame(self.ui, false, |editor, ui, fullscreen| {
+                editor.photo_bar(ui, fullscreen, false, controls)
+            })
+            .unwrap_or_default();
+        self.fullscreen |= toggle_fullscreen;
         if bar.fit {
             tool.viewport(editor).fit();
         }
@@ -93,7 +104,7 @@ impl Viewer<'_> {
 pub(super) struct Surface<'a> {
     pub ui: &'a mut egui::Ui,
     pub response: &'a egui::Response,
-    pub zoom_action: Option<f32>,
+    zoom_action: Option<Zoom>,
     selected: Option<(Composition, crate::viewer::GpuProxy, bool)>,
 }
 
@@ -169,7 +180,7 @@ pub(super) struct Canvas<'a> {
     pub ui: &'a mut egui::Ui,
     pub response: &'a egui::Response,
     pub composition: Composition,
-    pub zoom_action: Option<f32>,
+    zoom_action: Option<Zoom>,
     pub proxy: crate::viewer::GpuProxy,
     pub pending: bool,
 }
@@ -178,24 +189,14 @@ impl Canvas<'_> {
     pub fn layout(
         &self,
         viewport: &mut Viewport,
-        mut relayout: impl FnMut(&mut Viewport) -> CanvasLayout,
+        relayout: impl FnMut(&mut Viewport) -> CanvasLayout,
     ) -> CanvasLayout {
-        let mut layout = relayout(viewport);
-        if let Some(zoom) = self.zoom_action {
-            let ppp = self.ui.ctx().pixels_per_point();
-            viewport.zoom_at(
-                layout,
-                ppp,
-                if zoom > 0. {
-                    zoom
-                } else {
-                    layout.scale * ppp * -zoom
-                },
-                self.response.rect.center(),
-            );
-            layout = relayout(viewport);
-        }
-        layout
+        layout_with_zoom(
+            viewport,
+            self.ui.ctx().pixels_per_point(),
+            self.zoom_action,
+            relayout,
+        )
     }
 
     pub fn paint_image(
@@ -249,6 +250,47 @@ impl Canvas<'_> {
         }
     }
 }
+
+fn layout_with_zoom(
+    viewport: &mut Viewport,
+    pixels_per_point: f32,
+    action: Option<Zoom>,
+    mut relayout: impl FnMut(&mut Viewport) -> CanvasLayout,
+) -> CanvasLayout {
+    let mut layout = relayout(viewport);
+    let magnification = match action {
+        None => return layout,
+        Some(Zoom::ActualSize) => 1.,
+        Some(Zoom::Relative(factor)) => layout.scale * pixels_per_point * factor,
+        Some(Zoom::ToggleFit) => {
+            let mut fit = Viewport::default();
+            let fitted = relayout(&mut fit);
+            // Check both size and position: a crop can pan at the fitted scale.
+            let edge_deltas = [
+                layout.image.min - fitted.image.min,
+                layout.image.max - fitted.image.max,
+            ];
+            if edge_deltas
+                .into_iter()
+                .any(|delta| delta.abs().max_elem() * pixels_per_point > 0.5)
+            {
+                *viewport = fit;
+                return fitted;
+            }
+            layout = fitted;
+            1.
+        }
+    };
+
+    viewport.zoom_at(
+        layout,
+        pixels_per_point,
+        magnification,
+        layout.canvas.center(),
+    );
+    relayout(viewport)
+}
+
 fn preview_frame(
     composition: Composition,
     proxy_size: [u32; 2],
@@ -301,47 +343,83 @@ impl Editor {
     pub(super) fn show_viewer(
         &mut self,
         ui: &mut egui::Ui,
-        menu_zoom: Option<f32>,
+        menu_zoom: Option<Zoom>,
         cx: &UiContext<'_, Self>,
     ) -> super::thumbnails::ThumbnailProvider {
         self.canvas_frame.original_requested = false;
-        if self.has_hosted_tool() {
+        let demand = if self.has_hosted_tool() {
+            let zoom = menu_zoom.or_else(|| self.photo_zoom_shortcut(ui));
             let mut viewer = Viewer {
                 ui,
-                zoom: menu_zoom,
+                zoom,
                 fullscreen: false,
             };
             self.with_current_tool(|tool, editor| tool.canvas(&mut viewer, editor, cx));
             if viewer.fullscreen {
                 self.toggle_fullscreen(viewer.ui.ctx());
             }
+            super::thumbnails::ThumbnailProvider::default()
         } else {
-            let bar = self.viewer_bar(ui, Editor::photograph_controls);
-            if bar.fullscreen {
-                self.toggle_fullscreen(ui.ctx());
-            }
-            let fullscreen = self.fullscreen.is_some();
-            if self.showing_lightbox() {
-                self.observe_original(None);
-                return ui::viewer_surface(ui, fullscreen, |ui| self.show_lightbox(ui, cx));
-            }
-            if bar.fit {
-                self.document.visit.canvas.viewport.fit();
-            }
-            if let Some(action) = bar.action {
-                match action {
-                    tool::Action::Primary => self.apply_pick(cx),
-                    tool::Action::Dismiss => self.finish_pick(cx),
-                }
-            }
-            ui::viewer_surface(ui, fullscreen, |ui| {
-                self.viewer_canvas(ui, bar.zoom.or(menu_zoom), cx)
-            });
-        }
+            self.show_unhosted_view(ui, menu_zoom, cx)
+        };
         if !self.canvas_frame.original_requested {
             self.observe_original(None);
         }
-        super::thumbnails::ThumbnailProvider::default()
+        demand
+    }
+
+    fn show_unhosted_view(
+        &mut self,
+        ui: &mut egui::Ui,
+        menu_zoom: Option<Zoom>,
+        cx: &UiContext<'_, Self>,
+    ) -> super::thumbnails::ThumbnailProvider {
+        use viewer_ui::Mode;
+
+        let show_mode_switch = !self.picking();
+        let bar =
+            self.viewer_bar_frame(ui, show_mode_switch, |editor, ui, fullscreen| match editor
+                .document
+                .viewer_mode
+            {
+                Mode::Lightbox => (editor.lightbox_bar(ui, fullscreen), None),
+                Mode::Photo => {
+                    let (toggle_fullscreen, bar) = editor.photo_bar(
+                        ui,
+                        fullscreen,
+                        show_mode_switch,
+                        Self::photograph_controls,
+                    );
+                    (toggle_fullscreen, Some(bar))
+                }
+            });
+        let (toggle_fullscreen, photo_bar) = bar.unwrap_or_default();
+        if toggle_fullscreen {
+            self.toggle_fullscreen(ui.ctx());
+        }
+
+        let fullscreen = self.fullscreen.is_some();
+        match self.document.viewer_mode {
+            Mode::Lightbox => ui::viewer_surface(ui, fullscreen, |ui| self.show_lightbox(ui, cx)),
+            Mode::Photo => {
+                let bar = photo_bar.unwrap_or_default();
+                if bar.fit {
+                    self.document.visit.canvas.viewport.fit();
+                }
+                if let Some(action) = bar.action {
+                    match action {
+                        tool::Action::Primary => self.apply_pick(cx),
+                        tool::Action::Dismiss => self.finish_pick(cx),
+                    }
+                }
+                let zoom = bar
+                    .zoom
+                    .or(menu_zoom)
+                    .or_else(|| self.photo_zoom_shortcut(ui));
+                ui::viewer_surface(ui, fullscreen, |ui| self.viewer_canvas(ui, zoom, cx));
+                super::thumbnails::ThumbnailProvider::default()
+            }
+        }
     }
 
     #[cfg(test)]
@@ -349,7 +427,7 @@ impl Editor {
         &mut self,
         ui: &mut egui::Ui,
         response: &egui::Response,
-        zoom_action: Option<f32>,
+        zoom_action: Option<Zoom>,
         enabled: bool,
         cx: &UiContext<'_, Self>,
     ) -> Option<CanvasLayout> {
@@ -417,24 +495,12 @@ impl Editor {
         canvas: egui::Rect,
         composition: Composition,
         pixels_per_point: f32,
-        zoom_action: Option<f32>,
+        zoom_action: Option<Zoom>,
     ) -> CanvasLayout {
         let viewport = &mut self.active_canvas_mut().viewport;
-        let mut layout = viewport.layout_composition(canvas, composition, pixels_per_point);
-        if let Some(zoom) = zoom_action {
-            viewport.zoom_at(
-                layout,
-                pixels_per_point,
-                if zoom > 0. {
-                    zoom
-                } else {
-                    layout.scale * pixels_per_point * -zoom
-                },
-                canvas.center(),
-            );
-            layout = viewport.layout_composition(canvas, composition, pixels_per_point);
-        }
-        layout
+        layout_with_zoom(viewport, pixels_per_point, zoom_action, |viewport| {
+            viewport.layout_composition(canvas, composition, pixels_per_point)
+        })
     }
 
     fn canvas_navigation(
@@ -721,7 +787,7 @@ impl Editor {
     pub(super) fn viewer_canvas(
         &mut self,
         ui: &mut egui::Ui,
-        zoom_action: Option<f32>,
+        zoom_action: Option<Zoom>,
         cx: &UiContext<'_, Self>,
     ) {
         ui.push_id("viewer-canvas", |ui| {
@@ -732,7 +798,7 @@ impl Editor {
     fn canvas_contents(
         &mut self,
         ui: &mut egui::Ui,
-        zoom_action: Option<f32>,
+        zoom_action: Option<Zoom>,
         cx: &UiContext<'_, Self>,
     ) {
         self.canvas_frame = Frame::default();

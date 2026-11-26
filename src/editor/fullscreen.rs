@@ -88,8 +88,7 @@ impl Editor {
     ) {
         if !self.fullscreen_available()
             || !popup_was_closed
-            || egui::Popup::is_any_open(ui.ctx())
-            || ui.ctx().text_edit_focused()
+            || !self.workspace_input.shortcuts_allowed(ui.ctx())
             || text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape))
             || ui.input(|input| input.pointer.any_down() || input.multi_touch().is_some())
         {

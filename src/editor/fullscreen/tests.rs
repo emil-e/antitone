@@ -346,15 +346,45 @@ fn fullscreen_navigation_uses_the_same_crop_view_without_touching_normal_navigat
     let size = fitted_layout.composition.size();
     let expected = ((fitted_layout.canvas.width() - 40.) / size[0] as f32)
         .min((fitted_layout.canvas.height() - 40.) / size[1] as f32);
-    assert_eq!(fitted.zoom, Some(expected));
+    assert_eq!(fitted_layout.scale, expected);
     frame(
         &mut editor,
         &context,
         Some(true),
         vec![egui::Event::PointerMoved(center), egui::Event::Zoom(2.)],
     );
-    assert!(editor.with_tool_viewport(|viewport| viewport.zoom.unwrap()) > fitted.zoom.unwrap());
-    frame(&mut editor, &context, Some(true), key(egui::Key::Z));
+    assert!(editor.canvas_frame.layout.unwrap().0.scale > expected);
+    let tap_z = || {
+        let mut events = key(egui::Key::Z);
+        events.push(egui::Event::Key {
+            key: egui::Key::Z,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        events
+    };
+    frame(&mut editor, &context, Some(true), tap_z());
+    assert_eq!(editor.with_tool_viewport(|viewport| *viewport), fitted);
+
+    let (layout, density) = editor.canvas_frame.layout.unwrap();
+    editor.with_tool_viewport(|viewport| viewport.pan(layout, density, egui::vec2(20., 10.)));
+    frame(&mut editor, &context, Some(true), vec![]);
+    let shifted = editor.canvas_frame.layout.unwrap().0;
+    assert_eq!(shifted.scale, fitted_layout.scale);
+    assert_ne!(shifted.image.center(), fitted_layout.image.center());
+    frame(&mut editor, &context, Some(true), tap_z());
+    assert_eq!(
+        editor.canvas_frame.layout.unwrap().0.image,
+        fitted_layout.image
+    );
+
+    frame(&mut editor, &context, Some(true), tap_z());
+    let (actual_size, density) = editor.canvas_frame.layout.unwrap();
+    assert_eq!(actual_size.scale * density, 1.);
+    assert_ne!(actual_size.scale, expected);
+    frame(&mut editor, &context, Some(true), tap_z());
     assert_eq!(editor.with_tool_viewport(|viewport| *viewport), fitted);
     frame(&mut editor, &context, Some(true), key(egui::Key::Escape));
     editor.fullscreen_changed(false);

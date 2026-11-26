@@ -205,10 +205,10 @@ fn show_cards(
                     if !dragging
                         && response.enabled()
                         && response.has_focus()
-                        && !egui::Popup::is_any_open(ui.ctx())
+                        && editor.workspace_input.shortcuts_allowed(ui.ctx())
                     {
                         editor.select_active_shortcut(ui.ctx());
-                        if !editor.editing() && focused_delete(&response) {
+                        if !editor.editing() && focused_delete(&response, &editor.workspace_input) {
                             actions.remove = true;
                         } else if actions.select.is_none()
                             && let Some(step) = take_navigation_step(ui.ctx())

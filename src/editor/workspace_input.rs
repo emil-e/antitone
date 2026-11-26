@@ -32,6 +32,11 @@ impl WorkspaceInput {
         self.state.blocks.get() != 0
     }
 
+    /// For workspace shortcuts that yield to popups and text editing.
+    pub fn shortcuts_allowed(&self, context: &egui::Context) -> bool {
+        !self.is_blocked() && !egui::Popup::is_any_open(context) && !context.text_edit_focused()
+    }
+
     fn repaint(&self) {
         if let Some(context) = self.state.context.borrow().as_ref() {
             context.request_repaint();

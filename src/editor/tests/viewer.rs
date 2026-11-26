@@ -143,8 +143,11 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
             .outer_rect;
         assert_eq!(bar.height(), 40.);
         let before = labels(&mut editor, &context, size, vec![]);
+        let mode_switch = before.iter().find(|(s, _)| s == "Lightbox").unwrap().1;
         let fit = before.iter().find(|(s, _)| s == "Fit").unwrap().1;
         assert!(fit.top() >= canvas.bottom());
+        assert!(mode_switch.right() <= fit.left());
+        let mut tool_fit = None;
         for display in [
             calibration::DMIN,
             calibration::DMAX,
@@ -158,14 +161,14 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
                 canvas,
                 "{display:?}"
             );
-            assert_eq!(
-                labels(&mut editor, &context, size, vec![])
-                    .iter()
-                    .find(|(s, _)| s == "Fit")
-                    .unwrap()
-                    .1,
-                fit
-            );
+            let tool_labels = labels(&mut editor, &context, size, vec![]);
+            assert!(!tool_labels.iter().any(|(s, _)| s == "Lightbox"));
+            let current = tool_labels.iter().find(|(s, _)| s == "Fit").unwrap().1;
+            // Without the mode switch, the tool control moves left but keeps its hit target.
+            assert!(current.left() <= mode_switch.left());
+            assert_eq!(current.top(), fit.top());
+            assert_eq!(current.size(), fit.size());
+            assert_eq!(current, *tool_fit.get_or_insert(current));
             editor.finish_pick(&crate::application::UiContext::render_only());
         }
         let mut reference = canvas::SourceView::default();
@@ -184,7 +187,7 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
                 .find(|(label, _)| label == "Fit")
                 .unwrap()
                 .1,
-            fit
+            tool_fit.unwrap()
         );
         editor.end_tool();
         editor.begin_crop();
@@ -360,6 +363,43 @@ fn filmstrip_selection_guidance_is_available_in_explicit_viewer_help() {
         assert!(!egui::Popup::is_any_open(&context));
         assert_eq!(editor.document.state.project, before);
     }
+}
+
+#[test]
+fn zoom_shortcut_uses_framing_not_zoom_history_and_ignores_key_repeat() {
+    let mut editor = fixture();
+    add_ready_fixture(&mut editor);
+    let context = egui::Context::default();
+    let size = egui::vec2(1100., 800.);
+    warm(&mut editor, &context, size);
+    let (fitted, density) = editor.canvas_frame.layout.unwrap();
+    let explicit_zoom = fitted.scale * density;
+    assert_ne!(explicit_zoom, 1.);
+    editor.document.visit.canvas.viewport.zoom = Some(explicit_zoom);
+    frame(&mut editor, &context, size, vec![]);
+    assert_eq!(editor.canvas_frame.layout.unwrap().0.image, fitted.image);
+
+    frame(&mut editor, &context, size, key(egui::Key::Z));
+    assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(1.));
+    frame(&mut editor, &context, size, key(egui::Key::Z));
+    assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(1.));
+    frame(
+        &mut editor,
+        &context,
+        size,
+        vec![egui::Event::Key {
+            key: egui::Key::Z,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+
+    editor.document.visit.canvas.viewport.zoom = Some(2.);
+    frame(&mut editor, &context, size, key(egui::Key::Z));
+    assert_eq!(editor.canvas_frame.layout.unwrap().0.image, fitted.image);
+    assert!(editor.document.visit.canvas.viewport.zoom.is_none());
 }
 
 #[test]

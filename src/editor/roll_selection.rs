@@ -145,7 +145,9 @@ impl Editor {
         context: &egui::Context,
         cx: &UiContext<'_, Self>,
     ) {
-        if let Some(step) = take_navigation_step(context) {
+        if self.workspace_input.shortcuts_allowed(context)
+            && let Some(step) = take_navigation_step(context)
+        {
             self.browse_adjacent_roll_photo(step, cx);
         }
     }

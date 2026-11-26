@@ -235,6 +235,71 @@ fn lightbox_compares_live_photo_grades_and_enters_canvas_tools_in_photo() {
     });
 }
 
+#[test]
+fn switching_views_uses_the_selected_toolbar_and_only_photo_handles_zoom() {
+    editor_harness(|mut h, _| {
+        h.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
+        wait_opened_photo(&mut h);
+        wait_for(&mut h, |editor| editor.canvas_frame.layout.is_some());
+
+        for fullscreen in [false, true] {
+            if fullscreen {
+                h.get_by_role_and_label(Role::Button, "Fullscreen viewing")
+                    .click();
+                h.step();
+                h.read(|editor| assert!(editor.fullscreen.is_some()));
+                let canvas = h.ctx.content_rect();
+                h.hover_at(egui::pos2(canvas.center().x, canvas.bottom() - 30.));
+                h.step();
+            }
+            let fullscreen_label = if fullscreen {
+                "Exit fullscreen"
+            } else {
+                "Fullscreen viewing"
+            };
+            h.get_by_role_and_label(Role::Button, fullscreen_label);
+            h.get_by_role_and_label(Role::Button, "Fit");
+            assert!(h.query_by_label("Smaller tiles").is_none());
+
+            h.key_press(egui::Key::Z);
+            h.step();
+            let zoomed = h.read(|editor| {
+                let viewport = editor.active_canvas().viewport;
+                assert_eq!(viewport.zoom, Some(1.));
+                viewport
+            });
+            h.get_by_role_and_label(Role::RadioButton, "Lightbox")
+                .click();
+            h.step();
+            assert!(h.query_by_label("Fit").is_none());
+            assert!(h.query_by_label("Viewer help").is_none());
+            h.get_by_role_and_label(Role::Button, "Smaller tiles");
+            h.get_by_role_and_label(Role::Button, fullscreen_label);
+
+            h.key_press(egui::Key::Z);
+            h.step();
+            h.read(|editor| {
+                assert!(editor.showing_lightbox());
+                assert!(editor.canvas_frame.layout.is_none());
+                assert_eq!(editor.active_canvas().viewport, zoomed);
+            });
+
+            h.get_by_role_and_label(Role::RadioButton, "Single photo")
+                .click();
+            h.step();
+            assert!(h.query_by_label("Smaller tiles").is_none());
+            h.get_by_role_and_label(Role::Button, "Fit");
+            h.key_press(egui::Key::Z);
+            h.step();
+            h.read(|editor| {
+                assert!(!editor.showing_lightbox());
+                assert!(editor.active_canvas().viewport.zoom.is_none());
+                assert_eq!(editor.fullscreen.is_some(), fullscreen);
+            });
+        }
+    });
+}
+
 fn thumbnails_ready(editor: &Editor) -> bool {
     editor
         .document

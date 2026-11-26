@@ -22,6 +22,42 @@ fn overlapping_owners_release_only_their_own_blocks() {
 }
 
 #[test]
+fn focused_delete_respects_a_block_acquired_after_the_response_is_created() {
+    let workspace = WorkspaceInput::default();
+    let context = egui::Context::default();
+    let mut output = context.run_ui(Default::default(), |ui| {
+        ui.button("Delete target").request_focus();
+    });
+    output.textures_delta.clear();
+
+    let mut output = context.run_ui(
+        egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::Delete,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        },
+        |ui| {
+            let response = ui.button("Delete target");
+            assert!(response.enabled() && response.has_focus());
+
+            let block = workspace.block();
+            assert!(!crate::editor::ui::focused_delete(&response, &workspace));
+            assert!(ui.input(|input| input.key_pressed(egui::Key::Delete)));
+
+            drop(block);
+            assert!(crate::editor::ui::focused_delete(&response, &workspace));
+            assert!(!crate::editor::ui::focused_delete(&response, &workspace));
+        },
+    );
+    output.textures_delta.clear();
+}
+
+#[test]
 fn unpolled_and_suspended_scopes_release_on_destruction() {
     block_on(async {
         let input = WorkspaceInput::default();

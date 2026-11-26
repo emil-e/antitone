@@ -341,40 +341,37 @@ fn middle_and_space_primary_drag_pan_with_a_reserved_primary() {
 
 #[test]
 fn z_fits_without_text_focus_but_does_not_intercept_numeric_text() {
-    let mut h = Harness::new();
-    super::super::tests::app_frame(&mut h.editor, &h.context, vec![]);
-    h.native();
-    let key = || egui::Event::Key {
+    use super::super::tests::{add_ready_fixture, app_frame, fixture, paint_controller};
+
+    let mut editor = fixture();
+    add_ready_fixture(&mut editor);
+    let context = egui::Context::default();
+    editor.document.visit.canvas.viewport.zoom = Some(1.);
+    app_frame(&mut editor, &context, vec![]);
+    let key = |pressed| egui::Event::Key {
         key: egui::Key::Z,
         physical_key: None,
-        pressed: true,
+        pressed,
         repeat: false,
         modifiers: egui::Modifiers::NONE,
     };
-    let mut output = h.context.run_ui(
-        egui::RawInput {
-            events: vec![key()],
-            ..Default::default()
-        },
-        |ui| crate::editor::tests::paint_controller(&mut h.editor, ui),
-    );
-    output.textures_delta.clear();
-    assert!(h.editor.document.visit.canvas.viewport.zoom.is_none());
-    h.native();
+    app_frame(&mut editor, &context, vec![key(true), key(false)]);
+    assert!(editor.document.visit.canvas.viewport.zoom.is_none());
+
     let focus = egui::Id::new("numeric");
-    h.context.memory_mut(|memory| memory.request_focus(focus));
+    context.memory_mut(|memory| memory.request_focus(focus));
     let mut text = String::new();
-    let mut output = h.context.run_ui(
+    let mut output = context.run_ui(
         egui::RawInput {
-            events: vec![key(), egui::Event::Text("z".into())],
+            events: vec![key(true), egui::Event::Text("z".into()), key(false)],
             ..Default::default()
         },
         |ui| {
             ui.add(egui::TextEdit::singleline(&mut text).id(focus));
-            crate::editor::tests::paint_controller(&mut h.editor, ui);
+            paint_controller(&mut editor, ui);
         },
     );
     output.textures_delta.clear();
-    assert_eq!(h.editor.document.visit.canvas.viewport.zoom, Some(1.));
+    assert!(editor.document.visit.canvas.viewport.zoom.is_none());
     assert_eq!(text, "z");
 }

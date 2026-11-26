@@ -7,10 +7,10 @@ shortcut. **Viewer help** lists navigation and the active tool's gestures.
 
 - **Scroll pans; Cmd-scroll or pinch zooms.** When zoomed in, dragging with the mouse
   also pans; **Space-drag** or **middle-drag** always pans.
-- **Fit** (Z, or ⌘0) fits the image in view; **100%** shows one image pixel per display
-  pixel — the honest sharpness check. Clicking outside the canvas tools toggles
-  Fit/100%. If an active tool leaves no room for the zoom readout, use **Zoom to 100%**
-  in **Viewer help**.
+- **Z** returns the image to **Fit**, or switches to **100%** if it’s already fitted.
+  **100%** shows one image pixel per display pixel. Click the image outside canvas
+  tools to toggle the same views. **Fit** (⌘0) always fits the image. If the zoom
+  readout is hidden, use **Zoom to 100%** in **Viewer help**.
 - **Actual Size** (⌘1) and **Zoom In / Zoom Out** are in the **View** menu.
 
 ## Fullscreen

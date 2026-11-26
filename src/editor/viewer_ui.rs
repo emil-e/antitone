@@ -1,4 +1,4 @@
-use super::*;
+use super::{canvas::Zoom, *};
 use crate::photographic::parameters::ProcessingParameters;
 
 /// Display transforms follow captured source inputs, independently of document snapshots.
@@ -42,31 +42,49 @@ pub(super) enum Mode {
     Lightbox,
 }
 
-pub(super) struct BarResponse {
-    pub zoom: Option<f32>,
+#[derive(Default)]
+pub(super) struct PhotoBar {
+    pub zoom: Option<Zoom>,
     pub fit: bool,
-    pub fullscreen: bool,
     pub action: Option<tool::Action>,
 }
 
-pub(super) fn menu_zoom(action: crate::platform::menu::Action) -> Option<f32> {
+pub(super) fn menu_zoom(action: crate::platform::menu::Action) -> Option<Zoom> {
     use crate::platform::menu::Action;
     match action {
-        Action::ActualSize => Some(1.),
-        Action::ZoomIn => Some(-1.25),
-        Action::ZoomOut => Some(-1. / 1.25),
+        Action::ActualSize => Some(Zoom::ActualSize),
+        Action::ZoomIn => Some(Zoom::Relative(1.25)),
+        Action::ZoomOut => Some(Zoom::Relative(1. / 1.25)),
         _ => None,
     }
 }
 
 impl Editor {
-    pub(super) fn fit_view_shortcut(&mut self, context: &egui::Context) {
-        if !self.showing_lightbox()
-            && !context.text_edit_focused()
-            && context.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
-        {
-            self.with_tool_viewport(Viewport::fit);
+    pub(super) fn photo_zoom_shortcut(&self, ui: &egui::Ui) -> Option<Zoom> {
+        let context = ui.ctx();
+        if !self.workspace_input.shortcuts_allowed(context) {
+            return None;
         }
+
+        let mut pressed = false;
+        context.input_mut(|input| {
+            input.events.retain(|event| {
+                if let egui::Event::Key {
+                    key: egui::Key::Z,
+                    pressed: true,
+                    repeat,
+                    modifiers,
+                    ..
+                } = event
+                    && modifiers.matches_logically(egui::Modifiers::NONE)
+                {
+                    pressed |= !repeat;
+                    return false;
+                }
+                true
+            });
+        });
+        pressed.then_some(Zoom::ToggleFit)
     }
 
     pub(super) fn showing_lightbox(&self) -> bool {
@@ -153,23 +171,65 @@ impl Editor {
             .and_then(|id| self.source_tool_warning(id))
     }
 
-    pub(super) fn viewer_bar(
+    pub(super) fn viewer_bar_frame<R>(
         &mut self,
         ui: &mut egui::Ui,
-        controls: impl FnOnce(&mut Editor, &mut egui::Ui, bool),
-    ) -> BarResponse {
+        show_mode_switch: bool,
+        contents: impl FnOnce(&mut Self, &mut egui::Ui, bool) -> R,
+    ) -> Option<R> {
+        let fullscreen = self.fullscreen.is_some();
+        let bar = if fullscreen {
+            ui::ViewerBar::Overlay
+        } else {
+            ui::ViewerBar::Docked
+        };
+
+        bar.show(ui, |ui| {
+            if fullscreen && let Some(view) = self.activities.view() {
+                view.compact(ui);
+            }
+            ui.spacing_mut().item_spacing.x = ui::VIEWER_ITEM_GAP;
+            ui::icons::row(ui, |ui| {
+                if show_mode_switch {
+                    self.view_mode_switch(ui);
+                }
+                contents(self, ui, fullscreen)
+            })
+            .inner
+        })
+    }
+
+    fn view_mode_switch(&mut self, ui: &mut egui::Ui) {
+        use ui::icons::Icon;
+
+        let mut mode = self.document.viewer_mode;
+        ui.add_enabled_ui(self.view_mode_available(), |ui| {
+            ui::Segments {
+                choices: &[
+                    (Mode::Photo, Icon::FilmFrame, "Single photo"),
+                    (Mode::Lightbox, Icon::Lightbox, "Lightbox"),
+                ],
+                height: ui::CONTROL_HEIGHT,
+                layout: ui::SegmentLayout::Compact,
+            }
+            .show(ui, &mut mode);
+        });
+        self.set_view_mode(mode);
+    }
+
+    pub(super) fn photo_bar(
+        &mut self,
+        ui: &mut egui::Ui,
+        fullscreen: bool,
+        show_mode_switch: bool,
+        controls: impl FnOnce(&mut Self, &mut egui::Ui, bool),
+    ) -> (bool, PhotoBar) {
         use ui::icons::Icon;
         use ui::{TextAction, ToolGroup, ToolIdentity, VIEWER_ITEM_GAP};
 
         let mut zoom_action = None;
         let mut fit = false;
-        let mut toggle_fullscreen = false;
-        let fullscreen = self.fullscreen.is_some();
-        let mut mode = self.document.viewer_mode;
-        let lightbox = self.showing_lightbox();
         let hosted = self.current_tool().map(|tool| tool.presentation());
-        let show_view_selector = hosted.is_none() && !self.picking();
-        let can_switch_view = self.view_mode_available();
         let fit_label = hosted.as_ref().map_or("Fit", |tool| tool.fit_label);
         let primary = hosted.as_ref().and_then(|tool| tool.actions.primary());
         let primary_label = primary.map(|primary| primary.label);
@@ -179,12 +239,6 @@ impl Editor {
 
         let mut cancel = false;
         let mut apply = false;
-        self.correction_feedback();
-        let calibrated = self.input().ready();
-        if !calibrated {
-            self.document.source = true;
-        }
-
         let navigating = self.canvas_frame.layout.is_some() && !self.interaction_blocked();
 
         let tool_group = tool.map(|(icon, title)| ToolGroup {
@@ -203,190 +257,151 @@ impl Editor {
         let working = &visit.working_view;
         let view_pending = visit.source.pending()
             || (working.error.is_none() && (working.updating || visit.canvas.preview.pending()));
-        let bar = if fullscreen {
-            ui::ViewerBar::Overlay
-        } else {
-            ui::ViewerBar::Docked
-        };
 
-        bar.show(ui, |ui| {
-            if fullscreen && let Some(view) = self.activities.view() {
-                view.compact(ui);
-            }
-            ui.spacing_mut().item_spacing.x = VIEWER_ITEM_GAP;
-            ui::icons::row(ui, |ui| {
-                if show_view_selector {
-                    ui.add_enabled_ui(can_switch_view, |ui| {
-                        ui::Segments {
-                            choices: &[
-                                (Mode::Photo, Icon::FilmFrame, "Single photo"),
-                                (Mode::Lightbox, Icon::Lightbox, "Lightbox"),
-                            ],
-                            height: ui::CONTROL_HEIGHT,
-                            layout: ui::SegmentLayout::Compact,
-                        }
-                        .show(ui, &mut mode);
-                    });
-                }
-                if lightbox {
-                    let enabled = !self.interaction_blocked();
-                    self.document.lightbox.size_controls(ui, enabled);
-                    toggle_fullscreen = self.fullscreen_button(ui, fullscreen);
-                    return;
-                }
-
-                const SPINNER_SIZE: f32 = 16.;
-                let trailing_width = ui::CONTROL_HEIGHT
-                    + VIEWER_ITEM_GAP
-                    + if let Some((group, tool)) = tool_group.zip(hosted.as_ref()) {
-                        group.width_actions(ui, primary_label, tool.actions.dismiss_label())
-                    } else {
-                        SPINNER_SIZE
-                    };
-                let layout = self.canvas_frame.layout.map(|(layout, _)| layout);
-                let zoom = layout.map_or("—".into(), |layout| {
-                    format!("{:.0}%", 100. * layout.scale * ui.ctx().pixels_per_point())
-                });
-                let zoom_button = TextAction::new(&zoom)
-                    .readout()
-                    .enabled(navigating)
-                    .toolbar(50.)
-                    .name("100%")
-                    .help("Zoom to 100% (one image pixel per display pixel).");
-                // Source/inspection can occupy two slots. Fit, fullscreen and Help occupy three more.
-                let icon_slot = ui::CONTROL_HEIGHT + VIEWER_ITEM_GAP;
-                let readout_slot = zoom_button.width(ui) + VIEWER_ITEM_GAP;
-                let divider = 6.;
-                let divider_slot = divider + VIEWER_ITEM_GAP;
-                let compact = tool_group
-                    .zip(hosted.as_ref())
-                    .is_some_and(|(group, tool)| {
-                        let actions = group.minimum_width_actions(
-                            ui,
-                            primary_label,
-                            tool.actions.dismiss_label(),
-                        );
-                        ui.available_width()
-                            < actions + 5. * icon_slot + readout_slot + divider_slot
-                    });
-                let navigation_width = 6. * icon_slot + readout_slot + divider_slot;
-                let show_zoom_steps = !compact
-                    && ((!show_view_selector && tool.is_none())
-                        || ui.available_width() >= trailing_width + navigation_width);
-                if compact {
-                    // Reclaim the gaps, not the padding or hit targets, in the tight layout.
-                    ui.spacing_mut().item_spacing.x = VIEWER_ITEM_GAP - 1.;
-                }
-                if ui::icons::button(
-                    ui,
-                    Icon::Fit,
-                    navigating,
-                    fit_label,
-                    &format!("{fit_label} (Z)."),
-                )
-                .clicked()
-                {
-                    fit = true;
-                }
-                if !compact && zoom_button.show(ui).clicked() {
-                    zoom_action = Some(1.);
-                }
-                if show_zoom_steps {
-                    for (icon, name, factor) in [
-                        (Icon::ZoomOut, "Zoom out", 1. / 1.25),
-                        (Icon::ZoomIn, "Zoom in", 1.25),
-                    ] {
-                        if ui::icons::button(ui, icon, navigating, name, name).clicked() {
-                            zoom_action = Some(-factor);
-                        }
-                    }
-                }
-                toggle_fullscreen = self.fullscreen_button(ui, fullscreen);
-                if !compact {
-                    ui.add(egui::Separator::default().spacing(divider));
-                }
-                let controls_width = (ui.available_width()
-                    - trailing_width
-                    - ui::CONTROL_HEIGHT
-                    - 2. * VIEWER_ITEM_GAP)
-                    .max(0.);
-                ui.allocate_ui(egui::vec2(controls_width, ui::CONTROL_HEIGHT), |ui| {
-                    controls(self, ui, navigating)
-                });
-                let help = ui::icons::button(
-                    ui,
-                    Icon::Help,
-                    true,
-                    "Viewer help",
-                    "Navigation and active-tool shortcuts.",
-                );
-                egui::Popup::from_toggle_button_response(&help)
-                    .layout(egui::Layout::top_down(egui::Align::Min))
-                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                    .show(|ui| {
-                        ui.set_width(290.);
-                        ui.label(egui::RichText::new("Viewer navigation").strong());
-                        if compact {
-                            ui.horizontal(|ui| {
-                                ui.small(format!("Current zoom: {zoom}"));
-                                if TextAction::new("Zoom to 100%")
-                                    .enabled(navigating)
-                                    .show(ui)
-                                    .clicked()
-                                {
-                                    zoom_action = Some(1.);
-                                    ui.close();
-                                }
-                            });
-                        }
-                        ui.small(
-                            hosted
-                                .as_ref()
-                                .and_then(|tool| tool.navigation_help)
-                                .unwrap_or("Scroll pans · Cmd/Ctrl-scroll or pinch zooms"),
-                        );
-                        ui.small("Click: Fit / 100% outside canvas tools · Z: Fit · F: Fullscreen");
-                        ui.small("Zoomed drag pans · Space-drag / middle-drag always pans");
-                        if !fullscreen && tool.is_none() {
-                            ui.separator();
-                            ui.label(egui::RichText::new("Filmstrip selection").strong());
-                            ui.small("Cmd-click toggles selection · Shift-click selects a range");
-                            ui.small("Shift–Cmd–A: select active photo only");
-                        }
-                        if fullscreen {
-                            ui.small("F or Escape: return to the workspace");
-                        }
-                        if let Some(tool) = &hosted {
-                            ui.separator();
-                            ui.small(tool.help);
-                            if let Some((_, label)) = tool.actions.enter() {
-                                ui.small(format!("Enter: {label}"));
-                            }
-                            if !fullscreen {
-                                ui.small(format!("Escape: {}", tool.actions.dismiss_label()));
-                            }
-                        }
-                    });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some((group, tool)) = tool_group.zip(hosted.as_ref()) {
-                        let actions = group
-                            .show_actions(
-                                ui,
-                                primary_label,
-                                tool.actions.dismiss_label(),
-                                warning.as_deref(),
-                            )
-                            .inner;
-                        cancel = actions.dismiss.clicked();
-                        apply = actions.primary.is_some_and(|response| response.clicked());
-                    } else if view_pending {
-                        ui::spinner(ui, SPINNER_SIZE, "Preparing photo view");
-                    }
-                });
+        const SPINNER_SIZE: f32 = 16.;
+        let trailing_width = ui::CONTROL_HEIGHT
+            + VIEWER_ITEM_GAP
+            + if let Some((group, tool)) = tool_group.zip(hosted.as_ref()) {
+                group.width_actions(ui, primary_label, tool.actions.dismiss_label())
+            } else {
+                SPINNER_SIZE
+            };
+        let layout = self.canvas_frame.layout.map(|(layout, _)| layout);
+        let zoom = layout.map_or("—".into(), |layout| {
+            format!("{:.0}%", 100. * layout.scale * ui.ctx().pixels_per_point())
+        });
+        let zoom_button = TextAction::new(&zoom)
+            .readout()
+            .enabled(navigating)
+            .toolbar(50.)
+            .name("100%")
+            .help("Zoom to 100% (one image pixel per display pixel).");
+        // Source/inspection can occupy two slots. Fit, fullscreen and Help occupy three more.
+        let icon_slot = ui::CONTROL_HEIGHT + VIEWER_ITEM_GAP;
+        let readout_slot = zoom_button.width(ui) + VIEWER_ITEM_GAP;
+        let divider = 6.;
+        let divider_slot = divider + VIEWER_ITEM_GAP;
+        let compact = tool_group
+            .zip(hosted.as_ref())
+            .is_some_and(|(group, tool)| {
+                let actions =
+                    group.minimum_width_actions(ui, primary_label, tool.actions.dismiss_label());
+                ui.available_width() < actions + 5. * icon_slot + readout_slot + divider_slot
             });
+        let navigation_width = 6. * icon_slot + readout_slot + divider_slot;
+        let show_zoom_steps = !compact
+            && ((!show_mode_switch && tool.is_none())
+                || ui.available_width() >= trailing_width + navigation_width);
+        if compact {
+            // Reclaim the gaps, not the padding or hit targets, in the tight layout.
+            ui.spacing_mut().item_spacing.x = VIEWER_ITEM_GAP - 1.;
+        }
+        if ui::icons::button(
+            ui,
+            Icon::Fit,
+            navigating,
+            fit_label,
+            &format!("{fit_label} to the viewer."),
+        )
+        .clicked()
+        {
+            fit = true;
+        }
+        if !compact && zoom_button.show(ui).clicked() {
+            zoom_action = Some(Zoom::ActualSize);
+        }
+        if show_zoom_steps {
+            for (icon, name, factor) in [
+                (Icon::ZoomOut, "Zoom out", 1. / 1.25),
+                (Icon::ZoomIn, "Zoom in", 1.25),
+            ] {
+                if ui::icons::button(ui, icon, navigating, name, name).clicked() {
+                    zoom_action = Some(Zoom::Relative(factor));
+                }
+            }
+        }
+        let toggle_fullscreen = self.fullscreen_button(ui, fullscreen);
+        if !compact {
+            ui.add(egui::Separator::default().spacing(divider));
+        }
+        let controls_width =
+            (ui.available_width() - trailing_width - ui::CONTROL_HEIGHT - 2. * VIEWER_ITEM_GAP)
+                .max(0.);
+        ui.allocate_ui(egui::vec2(controls_width, ui::CONTROL_HEIGHT), |ui| {
+            controls(self, ui, navigating)
+        });
+        let help = ui::icons::button(
+            ui,
+            Icon::Help,
+            true,
+            "Viewer help",
+            "Navigation and active-tool shortcuts.",
+        );
+        egui::Popup::from_toggle_button_response(&help)
+            .layout(egui::Layout::top_down(egui::Align::Min))
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                ui.set_width(290.);
+                ui.label(egui::RichText::new("Viewer navigation").strong());
+                if compact {
+                    ui.horizontal(|ui| {
+                        ui.small(format!("Current zoom: {zoom}"));
+                        if TextAction::new("Zoom to 100%")
+                            .enabled(navigating)
+                            .show(ui)
+                            .clicked()
+                        {
+                            zoom_action = Some(Zoom::ActualSize);
+                            ui.close();
+                        }
+                    });
+                }
+                ui.small(
+                    hosted
+                        .as_ref()
+                        .and_then(|tool| tool.navigation_help)
+                        .unwrap_or("Scroll pans · Cmd/Ctrl-scroll or pinch zooms"),
+                );
+                ui.small("Z: Fit / 100% · F: Fullscreen");
+                ui.small("Click image: Fit / 100% outside canvas tools");
+                ui.small("Zoomed drag pans · Space-drag / middle-drag always pans");
+                if !fullscreen && tool.is_none() {
+                    ui.separator();
+                    ui.label(egui::RichText::new("Filmstrip selection").strong());
+                    ui.small("Cmd-click toggles selection · Shift-click selects a range");
+                    ui.small("Shift–Cmd–A: select active photo only");
+                }
+                if fullscreen {
+                    ui.small("F or Escape: return to the workspace");
+                }
+                if let Some(tool) = &hosted {
+                    ui.separator();
+                    ui.small(tool.help);
+                    if let Some((_, label)) = tool.actions.enter() {
+                        ui.small(format!("Enter: {label}"));
+                    }
+                    if !fullscreen {
+                        ui.small(format!("Escape: {}", tool.actions.dismiss_label()));
+                    }
+                }
+            });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let Some((group, tool)) = tool_group.zip(hosted.as_ref()) {
+                let actions = group
+                    .show_actions(
+                        ui,
+                        primary_label,
+                        tool.actions.dismiss_label(),
+                        warning.as_deref(),
+                    )
+                    .inner;
+                cancel = actions.dismiss.clicked();
+                apply = actions.primary.is_some_and(|response| response.clicked());
+            } else if view_pending {
+                ui::spinner(ui, SPINNER_SIZE, "Preparing photo view");
+            }
         });
 
-        self.set_view_mode(mode);
         let action = if cancel {
             Some(tool::Action::Dismiss)
         } else if apply {
@@ -394,15 +409,17 @@ impl Editor {
         } else {
             None
         };
-        BarResponse {
-            zoom: zoom_action,
-            fit,
-            fullscreen: toggle_fullscreen,
-            action,
-        }
+        (
+            toggle_fullscreen,
+            PhotoBar {
+                zoom: zoom_action,
+                fit,
+                action,
+            },
+        )
     }
 
-    fn fullscreen_button(&self, ui: &mut egui::Ui, fullscreen: bool) -> bool {
+    pub(super) fn fullscreen_button(&self, ui: &mut egui::Ui, fullscreen: bool) -> bool {
         use ui::icons::Icon;
         let (icon, name, help) = if fullscreen {
             (

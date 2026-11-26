@@ -855,7 +855,7 @@ impl Editor {
                                         action = Some(Action::Select(Target::Layer(record.id)));
                                     } else if target == Target::Layer(record.id)
                                         && self.document.visit.adjustment_layers.reorder.0.is_none()
-                                        && ui::focused_delete(&row)
+                                        && ui::focused_delete(&row, &self.workspace_input)
                                     {
                                         action = Some(Action::Delete(record.id));
                                     }
