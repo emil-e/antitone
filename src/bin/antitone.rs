@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .lightroom
         .map(|request| antitone::editor::integrations::lightroom::read(&request))
         .transpose()?;
-    let outcome = host::run("Antitone", move |device, queue, cx| {
+    let outcome = host::run_with_window_placement("Antitone", move |device, queue, cx| {
         antitone::platform::install_icon()?;
         let mut editor = Editor::new(device, queue);
         if let Some(request) = external {

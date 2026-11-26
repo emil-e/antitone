@@ -7,8 +7,8 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::window::{Window, WindowId};
 
 use super::{
-    QuitGuard, configure_presentation, fullscreen::PhotoFullscreen, latency::Trace, menu,
-    presentation, quit_cancel_on_unwind,
+    QuitGuard, WindowPlacement, configure_presentation, fullscreen::PhotoFullscreen,
+    latency::Trace, menu, presentation, quit_cancel_on_unwind,
 };
 use crate::application::{Application, UiContext};
 
@@ -68,6 +68,30 @@ pub fn run<A: App>(
         UiContext<'scope, A>,
     ) -> Result<A>,
 ) -> Result<u64> {
+    run_window(title, None, create)
+}
+
+/// Run the editor's main window with native placement persistence.
+pub fn run_with_window_placement<A: App>(
+    title: &str,
+    create: impl for<'scope> FnOnce(
+        &wgpu::Device,
+        &crate::gpu::submission::Queue,
+        UiContext<'scope, A>,
+    ) -> Result<A>,
+) -> Result<u64> {
+    run_window(title, Some(WindowPlacement::default()), create)
+}
+
+fn run_window<A: App>(
+    title: &str,
+    placement: Option<WindowPlacement>,
+    create: impl for<'scope> FnOnce(
+        &wgpu::Device,
+        &crate::gpu::submission::Queue,
+        UiContext<'scope, A>,
+    ) -> Result<A>,
+) -> Result<u64> {
     let mut builder = EventLoop::<HostEvent>::with_user_event();
     #[cfg(windows)]
     let menu_accelerators = menu::native::MenuAccelerators::install(&mut builder);
@@ -109,6 +133,7 @@ pub fn run<A: App>(
         proxy: quit_proxy,
         application,
         app: &app,
+        placement,
         #[cfg(windows)]
         menu_accelerators,
         state: None,
@@ -118,8 +143,9 @@ pub fn run<A: App>(
     };
     let outcome = event_loop.run_app(&mut host);
     host.application.close();
+    let clean_exit = outcome.is_ok() && host.error.is_none();
     let trace_outcome = if let Some(state) = &mut host.state {
-        state.cleanup()
+        state.cleanup(clean_exit)
     } else {
         Ok(())
     };
@@ -162,6 +188,7 @@ struct Host<'scope, A, F> {
     proxy: EventLoopProxy<HostEvent>,
     application: Application<'scope>,
     app: &'scope RefCell<Option<A>>,
+    placement: Option<WindowPlacement>,
     #[cfg(windows)]
     menu_accelerators: menu::native::MenuAccelerators,
     state: Option<State<'scope, A>>,
@@ -205,7 +232,7 @@ impl<
             .take()
             .expect("active native termination guard");
         self.application.close();
-        let outcome = state.cleanup();
+        let outcome = state.cleanup(true);
         drop(self.app.borrow_mut().take());
         drop(state);
         match outcome {
@@ -234,15 +261,22 @@ impl<
         }
         let mut initialize = || -> Result<State<'scope, A>> {
             let pending_reveal = cfg!(windows);
+            let mut placement = self.placement.take();
             let window = Arc::new(
                 event_loop.create_window(
                     Window::default_attributes()
                         .with_title(&self.title)
                         .with_inner_size(A::INITIAL_WINDOW_SIZE)
-                        .with_visible(!pending_reveal),
+                        .with_visible(!pending_reveal && placement.is_none()),
                 )?,
             );
             super::configure_window(&window)?;
+            if let Some(placement) = &mut placement {
+                placement.restore(&window);
+                if !pending_reveal {
+                    window.set_visible(true);
+                }
+            }
             let gpu = pollster::block_on(Gpu::new(window.clone()))?;
             let access = self.application.access(self.app);
             let prepared = (|| -> Result<_> {
@@ -304,6 +338,7 @@ impl<
                 input,
                 viewport,
                 pending_reveal,
+                placement,
                 fullscreen: PhotoFullscreen::default(),
                 termination,
             })
@@ -377,8 +412,13 @@ impl<
                 Ok(())
             }
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                state.capture_windowed_placement();
                 state.gpu.needs_configure = true;
                 state.gpu.window.request_redraw();
+                Ok(())
+            }
+            WindowEvent::Moved(_) => {
+                state.capture_windowed_placement();
                 Ok(())
             }
             WindowEvent::Occluded(occluded) => {
@@ -462,6 +502,7 @@ struct State<'scope, A> {
     input: egui_winit::State,
     viewport: egui::ViewportInfo,
     pending_reveal: bool,
+    placement: Option<WindowPlacement>,
     fullscreen: PhotoFullscreen,
     termination: Option<QuitGuard>,
 }
@@ -474,7 +515,23 @@ impl<A: App> State<'_, A> {
             && self.app.read(App::quit_state) == Some(QuitState::Approved)
     }
 
-    fn cleanup(&mut self) -> Result<()> {
+    fn is_windowed(&self) -> bool {
+        !self.fullscreen.is_active() && self.gpu.window.fullscreen().is_none()
+    }
+
+    fn capture_windowed_placement(&mut self) {
+        if self.is_windowed()
+            && let Some(placement) = &mut self.placement
+        {
+            placement.capture(&self.gpu.window);
+        }
+    }
+
+    fn cleanup(&mut self, clean_exit: bool) -> Result<()> {
+        let windowed = self.is_windowed();
+        if clean_exit && let Some(placement) = &mut self.placement {
+            placement.finish(&self.gpu.window, windowed);
+        }
         let restoration = self.fullscreen.update(&self.gpu.window, false);
         self.app.with_mut(App::on_exit);
         restoration?;
@@ -657,6 +714,10 @@ impl<A: App> State<'_, A> {
             self.gpu.presented += 1;
             if std::mem::take(&mut self.pending_reveal) {
                 self.gpu.window.set_visible(true);
+                #[cfg(windows)]
+                if let Some(placement) = &mut self.placement {
+                    placement.on_reveal(&self.gpu.window);
+                }
                 self.gpu.window.request_redraw();
             }
         }
@@ -702,10 +763,11 @@ impl<A: App> State<'_, A> {
                 self.gpu.window.request_redraw();
             }
         }
-        if let Some(active) = self
-            .fullscreen
-            .update(&self.gpu.window, self.app.read(App::photo_fullscreen))?
-        {
+        let photo_fullscreen = self.app.read(App::photo_fullscreen);
+        if photo_fullscreen && !self.fullscreen.is_active() {
+            self.capture_windowed_placement();
+        }
+        if let Some(active) = self.fullscreen.update(&self.gpu.window, photo_fullscreen)? {
             self.app
                 .with_mut(|app| app.photo_fullscreen_changed(active));
         }

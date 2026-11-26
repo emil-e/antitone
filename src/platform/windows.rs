@@ -1,3 +1,5 @@
+mod window_placement;
+
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetMenu, HMENU, SetMenu};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -6,6 +8,7 @@ use winit::window::{Fullscreen, Window};
 use super::Presentation;
 use super::host::Result as HostResult;
 use crate::Error;
+pub(crate) use window_placement::WindowPlacement;
 
 /// SDR presentation uses 10-bit where offered, 8-bit otherwise. Both formats store the pipeline's
 /// sRGB-encoded values directly, so the host's copy pass needs no transfer conversion. Vulkan can
