@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetWindowPlacement, SW_HIDE, SW_SHOWMAXIMIZED, SetWindowPlacement, WINDOWPLACEMENT,
+    GetWindowPlacement, SW_HIDE, SW_SHOWMAXIMIZED, SetWindowPlacement, ShowWindow, WINDOWPLACEMENT,
 };
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
@@ -30,11 +30,16 @@ impl WindowPlacement {
         };
     }
 
-    pub(crate) fn on_reveal(&mut self, window: &Window) {
-        if std::mem::take(&mut self.maximize_on_reveal) {
-            // Maximizing via winit shows the window, so wait for the host's first presentation.
-            window.set_maximized(true);
+    pub(crate) fn reveal(&mut self, window: &Window) {
+        if std::mem::take(&mut self.maximize_on_reveal)
+            && let Ok(hwnd) = hwnd(window)
+        {
+            // Show and maximize in one Win32 operation so the normal rect stays hidden.
+            // SAFETY: the host owns this live window on its event-loop thread.
+            unsafe { ShowWindow(hwnd, SW_SHOWMAXIMIZED) };
         }
+        // Keep winit's visibility flag in sync. It learns maximized state through WM_SIZE.
+        window.set_visible(true);
         self.capture(window);
     }
 

@@ -57,6 +57,11 @@ impl WindowPlacement {
         }
     }
 
+    pub(crate) fn reveal(&self, window: &Window) {
+        window.set_visible(true);
+        self.capture(window);
+    }
+
     pub(crate) fn capture(&self, window: &Window) {
         // Save explicitly: photo fullscreen changes the same window frame as a user resize.
         if let Some(native) = ns_window(window) {

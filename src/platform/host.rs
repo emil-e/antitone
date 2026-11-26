@@ -274,7 +274,7 @@ impl<
             if let Some(placement) = &mut placement {
                 placement.restore(&window);
                 if !pending_reveal {
-                    window.set_visible(true);
+                    placement.reveal(&window);
                 }
             }
             let gpu = pollster::block_on(Gpu::new(window.clone()))?;
@@ -713,10 +713,10 @@ impl<A: App> State<'_, A> {
             }
             self.gpu.presented += 1;
             if std::mem::take(&mut self.pending_reveal) {
-                self.gpu.window.set_visible(true);
-                #[cfg(windows)]
                 if let Some(placement) = &mut self.placement {
-                    placement.on_reveal(&self.gpu.window);
+                    placement.reveal(&self.gpu.window);
+                } else {
+                    self.gpu.window.set_visible(true);
                 }
                 self.gpu.window.request_redraw();
             }
