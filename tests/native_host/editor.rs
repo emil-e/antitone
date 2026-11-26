@@ -122,7 +122,6 @@ impl host::App for EditorApp<'_> {
         }
         if !self.requested {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
-            // Editor requests its normal startup size; this runner owns the test sizes.
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
                     SIZES[0][0],

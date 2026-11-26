@@ -1212,7 +1212,7 @@ fn startup_typography_preserves_an_already_completed_source_failure() {
             editor.load("unavailable.ARW".into(), cx);
             crate::editor::source::testing::complete(editor, Err("Source unavailable".into()));
 
-            for initializing in [true, false] {
+            for _ in 0..2 {
                 let mut output = context.run_ui(egui::RawInput::default(), |ui| {
                     editor.ui(ui);
                 });
@@ -1220,14 +1220,13 @@ fn startup_typography_preserves_an_already_completed_source_failure() {
                 assert!(editor.started);
                 assert!(!editor.interaction_blocked());
                 assert_eq!(editor.status, "Source unavailable");
-                if initializing {
-                    assert!(
-                        output.viewport_output[&egui::ViewportId::ROOT]
-                            .commands
-                            .iter()
-                            .any(|command| matches!(command, egui::ViewportCommand::InnerSize(_)))
-                    );
-                }
+                assert!(
+                    !output.viewport_output[&egui::ViewportId::ROOT]
+                        .commands
+                        .iter()
+                        .any(|command| matches!(command, egui::ViewportCommand::InnerSize(_))),
+                    "UI startup must not resize the native window after creation",
+                );
             }
         });
     });

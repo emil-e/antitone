@@ -25,6 +25,9 @@ pub enum QuitState {
 }
 
 pub trait App: Sized {
+    const INITIAL_WINDOW_SIZE: winit::dpi::LogicalSize<f64> =
+        winit::dpi::LogicalSize::new(720.0, 320.0);
+
     fn ui(&mut self, ui: &mut egui::Ui, access: &UiContext<'_, Self>);
     fn menu_state(&self) -> Option<menu::State> {
         None
@@ -230,11 +233,13 @@ impl<
             return;
         }
         let mut initialize = || -> Result<State<'scope, A>> {
+            let pending_reveal = cfg!(windows);
             let window = Arc::new(
                 event_loop.create_window(
                     Window::default_attributes()
                         .with_title(&self.title)
-                        .with_inner_size(winit::dpi::LogicalSize::new(720.0, 320.0)),
+                        .with_inner_size(A::INITIAL_WINDOW_SIZE)
+                        .with_visible(!pending_reveal),
                 )?,
             );
             super::configure_window(&window)?;
@@ -287,13 +292,18 @@ impl<
             );
             let mut viewport = egui::ViewportInfo::default();
             egui_winit::update_viewport_info(&mut viewport, &self.context, &window, true);
-            window.request_redraw();
+            if pending_reveal {
+                self.next_repaint = Some(Instant::now());
+            } else {
+                window.request_redraw();
+            }
             Ok(State {
                 menus,
                 gpu,
                 app: access,
                 input,
                 viewport,
+                pending_reveal,
                 fullscreen: PhotoFullscreen::default(),
                 termination,
             })
@@ -402,11 +412,24 @@ impl<
         let _native_unwind = quit_cancel_on_unwind();
         let mut wake = self.next_repaint;
         if wake.is_some_and(|when| when <= Instant::now()) {
-            if let Some(state) = &self.state {
-                state.gpu.window.request_redraw();
-            }
             self.next_repaint = None;
             wake = None;
+            if let Some(state) = &mut self.state {
+                if state.pending_reveal {
+                    // Hidden Win32 windows don't receive the usual redraw events.
+                    if let Err(error) = state.draw(&self.context, event_loop) {
+                        self.fail(event_loop, error);
+                        return;
+                    }
+                    if state.pending_reveal && !event_loop.exiting() {
+                        let retry = Instant::now() + Duration::from_millis(16);
+                        self.next_repaint = Some(retry);
+                        wake = Some(retry);
+                    }
+                } else {
+                    state.gpu.window.request_redraw();
+                }
+            }
         }
         if let Some(state) = &self.state {
             let pending = state.gpu.queue.pending();
@@ -438,6 +461,7 @@ struct State<'scope, A> {
     app: UiContext<'scope, A>,
     input: egui_winit::State,
     viewport: egui::ViewportInfo,
+    pending_reveal: bool,
     fullscreen: PhotoFullscreen,
     termination: Option<QuitGuard>,
 }
@@ -631,6 +655,10 @@ impl<A: App> State<'_, A> {
                 timing.present_end = Some(Instant::now());
             }
             self.gpu.presented += 1;
+            if std::mem::take(&mut self.pending_reveal) {
+                self.gpu.window.set_visible(true);
+                self.gpu.window.request_redraw();
+            }
         }
         if let (Some(trace), Some(timing)) = (&mut self.gpu.trace, timing) {
             trace.finish(

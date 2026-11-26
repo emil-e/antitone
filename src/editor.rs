@@ -1513,6 +1513,9 @@ impl Editor {
 }
 
 impl host::App for Editor {
+    const INITIAL_WINDOW_SIZE: winit::dpi::LogicalSize<f64> =
+        winit::dpi::LogicalSize::new(1100.0, 800.0);
+
     fn menu_state(&self) -> Option<crate::platform::menu::State> {
         Some(self.application_menu_state())
     }
@@ -1595,7 +1598,6 @@ impl Editor {
             self.started = true;
             ui::configure_branding(ui);
             ui::configure_fonts(&context);
-            context.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1100., 800.)));
             // Named font families become available at the start of the next pass.
             context.request_discard("Initialize editor typography");
             return;
