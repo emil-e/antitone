@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn completing_initial_calibration_keeps_source_until_the_user_selects_positive() {
+fn completing_initial_calibration_automatically_paints_the_positive() {
     editor_harness(|mut h, _| {
         h.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_opened_photo(&mut h);
@@ -10,19 +10,26 @@ fn completing_initial_calibration_keeps_source_until_the_user_selects_positive()
             assert!(editor.document.source);
         });
         for (kind, point, expected) in [
-            (PickerCase::Dmin, egui::pos2(32., 32.), 3000.),
             (PickerCase::Dmax, egui::pos2(96., 32.), 128.),
+            (PickerCase::Dmin, egui::pos2(32., 32.), 3000.),
         ] {
             open(&mut h, kind);
             let layout = h.read(|editor| editor.active_canvas().last_layout.unwrap().0);
-            drag(
-                &mut h,
-                layout.screen_point(point - egui::vec2(8., 8.)),
-                layout.screen_point(point + egui::vec2(8., 8.)),
-            );
-            h.get_by_role_and_label(egui::accesskit::Role::Button, "Apply")
-                .click();
-            h.step();
+            if kind == PickerCase::Dmax {
+                // Keep the dense patch inside the uniform swatch and away from its ramps.
+                drag(
+                    &mut h,
+                    layout.screen_point(point - egui::vec2(8., 8.)),
+                    layout.screen_point(point + egui::vec2(8., 8.)),
+                );
+                h.get_by_role_and_label(egui::accesskit::Role::Button, "Apply")
+                    .click();
+                h.step();
+            } else {
+                let point = layout.screen_point(point);
+                masks::pointer(&mut h, point, true);
+                masks::pointer(&mut h, point, false);
+            }
             wait_for(&mut h, |editor| {
                 let measured = if kind == PickerCase::Dmin {
                     editor.dmin()
@@ -46,10 +53,10 @@ fn completing_initial_calibration_keeps_source_until_the_user_selects_positive()
                         .max_element()
                         <= 2. / 65535.
                 );
+                let waiting_for_dmin = kind == PickerCase::Dmax;
                 assert!(editor.test_pick().is_none());
-                assert!(editor.document.source);
-                assert!(editor.canvas_inspection());
-                assert!(
+                assert_eq!(editor.canvas_inspection(), waiting_for_dmin);
+                assert_eq!(
                     editor
                         .canvas_frame
                         .displayed
@@ -57,28 +64,11 @@ fn completing_initial_calibration_keeps_source_until_the_user_selects_positive()
                         .unwrap()
                         .view
                         .capture
-                        .is_inspection()
+                        .is_inspection(),
+                    waiting_for_dmin
                 );
             });
         }
-        h.read(|editor| assert!(editor.calibration().is_some()));
-        h.get_by_label("View source").click();
-        h.step();
-        workflow::wait_settled(&mut h);
-        h.render().unwrap();
-        h.read(|editor| {
-            assert!(!editor.document.source);
-            assert!(
-                !editor
-                    .canvas_frame
-                    .displayed
-                    .as_ref()
-                    .unwrap()
-                    .view
-                    .capture
-                    .is_inspection()
-            );
-        });
     });
 }
 

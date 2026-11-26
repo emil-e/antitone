@@ -859,7 +859,6 @@ impl Editor {
         }
     }
 
-    #[allow(dead_code)]
     fn calibration(&self) -> Option<Calibration> {
         self.document
             .project

@@ -132,10 +132,10 @@ pub(super) fn calibrated_workflow<R>(
                 expected / 4031.
             );
         }
-        harness.read(|editor| assert!(editor.calibration().is_some()));
-        harness.get_by_label("View source").click();
-        harness.step();
-        harness.read(|editor| assert!(!editor.document.source));
+        harness.read(|editor| {
+            assert!(editor.calibration().is_some());
+            assert!(!editor.document.source);
+        });
         harness.get_by_label("working-photo.dng").click();
         harness.step();
         wait_for(&mut harness, |e| !e.document.visit.source.pending());

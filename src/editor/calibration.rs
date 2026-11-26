@@ -260,11 +260,16 @@ fn change_input(
     let mut draft = editor
         .edit_project("Calibration pick")
         .map_err(|error| error.to_string())?;
+    let was_calibrated = editor.calibration().is_some();
     let mut candidate = editor.document.project.input;
     change(&mut candidate)?;
     draft.update(|project| project.input = candidate);
     editor
         .commit_project(draft)
         .map_err(|error| error.to_string())?;
+
+    if !was_calibrated && editor.calibration().is_some() {
+        editor.document.source = false;
+    }
     Ok(())
 }
