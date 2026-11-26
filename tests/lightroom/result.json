@@ -1,20 +1,9 @@
 {
-  "version": 4,
-  "project": "/photos/röll 'one'.antitone",
-  "sources": [
-    {
-      "id": "1",
-      "path": "/photos/one 'frame'.ARW"
-    },
-    {
-      "id": "18446744073709551615",
-      "path": "/photos/second/twö\tline\nframe.ARW"
-    }
-  ],
+  "version": 5,
   "renders": [
     {
       "uuid": "b",
-      "source": "18446744073709551615",
+      "original": "/photos/second/twö\tline\nframe.ARW",
       "path": "/photos/second/twö\tline\nframe-Antitone.tif"
     }
   ]

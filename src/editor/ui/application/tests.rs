@@ -79,7 +79,7 @@ fn header_actions_stay_at_the_right_edge_and_reserve_room_before_identity_trunca
                         },
                         |ui| {
                             let right = ui.max_rect().right();
-                            let response = TextAction::new("Save Back to Lightroom")
+                            let response = TextAction::new("Send to Lightroom")
                                 .enabled(enabled)
                                 .show(ui);
                             action = Some((response.rect, response.enabled(), right));

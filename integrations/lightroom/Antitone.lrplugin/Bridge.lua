@@ -47,28 +47,20 @@ local function array(value)
     return value
 end
 
-local function receipt(path, returning)
+local function receipt(path)
     local wire = json.decode(LrFileUtils.readFile(path))
     assert(type(wire) == "table" and wire.version == protocol_version, "Unsupported Antitone receipt")
+    return wire
+end
+
+local function saved_project(wire)
     assert(type(wire.project) == "string" and #wire.project > 0, "Missing Antitone project")
     local result = { project = wire.project, sources = {} }
-    if returning then
-        result.renders = array(wire.renders)
-    else
-        assert(wire.renders == nil, "Unexpected renders in project save receipt")
-    end
     for _, source in ipairs(array(wire.sources)) do
         assert(type(source.id) == "string" and source.id:match("^%d+$"), "Invalid Antitone source ID")
         assert(type(source.path) == "string", "Invalid Antitone source path")
         assert(not result.sources[source.id], "Duplicate Antitone source")
         result.sources[source.id] = source.path
-    end
-    for _, render in ipairs(result.renders or {}) do
-        assert(type(render.uuid) == "string" and #render.uuid > 0, "Invalid Lightroom UUID")
-        assert(type(render.source) == "string" and result.sources[render.source],
-            "Antitone receipt references a missing source")
-        assert(type(render.path) == "string", "Invalid rendered path")
-        assert(LrFileUtils.exists(render.path) == "file", "Returned image is missing: " .. render.path)
     end
     assert(LrFileUtils.exists(result.project) == "file", "Saved Antitone project is missing")
     return result
@@ -88,13 +80,7 @@ local function original_at(catalog, uuid, path)
     return original
 end
 
-local function finish(catalog, result, replacedProject)
-    -- A catalogue write never spans the external editing session.
-    local originals = {}
-    for _, render in ipairs(result.renders or {}) do
-        originals[render.uuid] = original_at(catalog, render.uuid, result.sources[render.source])
-    end
-    local returned = {}
+local function link_project(catalog, result, replacedProject)
     local status = catalog:withWriteAccessDo("Link Antitone project", function()
         for source, path in pairs(result.sources) do
             local original = catalog:findPhotoByPath(path)
@@ -105,7 +91,25 @@ local function finish(catalog, result, replacedProject)
                 associate(original, result.project, source, original:getRawMetadata("uuid"))
             end
         end
-        for _, render in ipairs(result.renders or {}) do
+    end, { timeout = 10 })
+    assert(status == "executed", "Lightroom catalogue is busy. Reopen the saved Antitone project to try again.")
+end
+
+local function import_images(catalog, renders, requested)
+    local originals, seenPaths = {}, {}
+    for _, render in ipairs(renders) do
+        assert(type(render.uuid) == "string" and type(render.original) == "string"
+            and requested[render.uuid] == render.original,
+            "Antitone receipt references an unrequested original")
+        assert(not originals[render.uuid], "Duplicate original in Antitone receipt")
+        assert(type(render.path) == "string" and not seenPaths[render.path], "Invalid rendered path")
+        assert(LrFileUtils.exists(render.path) == "file", "Rendered image is missing: " .. render.path)
+        originals[render.uuid] = original_at(catalog, render.uuid, render.original)
+        seenPaths[render.path] = true
+    end
+    local returned = {}
+    local status = catalog:withWriteAccessDo("Import Antitone images", function()
+        for _, render in ipairs(renders) do
             local photo = catalog:findPhotoByPath(render.path)
             if not photo then
                 local original = originals[render.uuid]
@@ -117,14 +121,13 @@ local function finish(catalog, result, replacedProject)
                 end
             end
             assert(photo, "Lightroom did not import " .. render.path)
-            associate(photo, result.project, render.source, render.uuid)
+            photo:setPropertyForPlugin(_PLUGIN, "original", render.uuid)
             returned[#returned + 1] = photo
         end
     end, { timeout = 10 })
-    assert(status == "executed", "Lightroom catalogue is busy. Reopen the saved Antitone project to try again.")
-    if not result.renders then return end
+    assert(status == "executed", "Lightroom catalogue is busy. Send again or import the TIFFs manually.")
     local folders, seen = {}, {}
-    for _, render in ipairs(result.renders) do
+    for _, render in ipairs(renders) do
         local path = LrPathUtils.parent(render.path)
         if not seen[path] then
             seen[path] = true
@@ -136,8 +139,6 @@ local function finish(catalog, result, replacedProject)
     local others = {}
     for i = 2, #returned do others[#others + 1] = returned[i] end
     catalog:setSelectedPhotos(returned[1], others)
-    LrDialogs.message("Returned from Antitone", tostring(#result.renders)
-        .. " image(s) imported. All catalogue photos in the roll are linked to the project.", "info")
 end
 
 function bridge.configure() return config.choose() end
@@ -204,29 +205,53 @@ local function edit(chooseSaved)
     assert(version == tostring(protocol_version),
         "This Antitone application is not compatible with the plug-in. Install a matching app/plug-in pair, then choose the application in Plug-in Manager. Details: " .. protocolPath)
     bridge.log = child(directory, "session.log")
-    -- The SDK task waits for this process without freezing Lightroom's UI.
-    local status = launch(executable, bridge.log, requestPath)
-    local savedPath, resultPath = child(directory, "saved.json"), child(directory, "result.json")
-    local saved = LrFileUtils.exists(savedPath) == "file"
-    local returned = LrFileUtils.exists(resultPath) == "file"
-    if saved or returned then
+    local function require_catalog()
         assert(catalog:getPath() == catalogPath and LrApplication.activeCatalog():getPath() == catalogPath,
-            "The originating catalogue is no longer active. Reopen the saved project from that catalogue.")
+            "The originating catalogue is no longer active.")
     end
-    if saved then
-        local result = receipt(savedPath, false)
+
+    local requested = {}
+    for _, photo in ipairs(photos) do requested[photo.uuid] = photo.path end
+    local finished, launched, status
+    LrTasks.startAsyncTask(function()
+        launched, status = LrTasks.pcall(launch, executable, bridge.log, requestPath)
+        finished = true
+    end)
+
+    -- One consumer advances through immutable receipts, then drains once after process exit.
+    local index, sendError = 1, nil
+    repeat
+        if not finished then LrTasks.sleep(0.25) end
+        while true do
+            local name = index == 1 and "result.json" or ("result-" .. index .. ".json")
+            local path = child(directory, name)
+            if LrFileUtils.exists(path) ~= "file" then break end
+            local ok, err = LrTasks.pcall(function()
+                require_catalog()
+                import_images(catalog, array(receipt(path).renders), requested)
+            end)
+            index = index + 1
+            if not ok then
+                if finished then
+                    sendError = err
+                else
+                    LrDialogs.message("Could not import Antitone images", tostring(err), "warning")
+                end
+            end
+        end
+    until finished
+
+    local savedPath = child(directory, "saved.json")
+    if LrFileUtils.exists(savedPath) == "file" then
+        require_catalog()
+        local result = saved_project(receipt(savedPath))
         bridge.project = result.project
         for _, photo in ipairs(photos) do original_at(catalog, photo.uuid, photo.path) end
-        finish(catalog, result, replacedProject)
+        link_project(catalog, result, replacedProject)
     end
-    if returned then
-        local result = receipt(resultPath, true)
-        assert(not saved or result.project == bridge.project, "Return does not match the saved project")
-        finish(catalog, result, replacedProject)
-    elseif status ~= 0 then
-        error("Antitone exited without a completed return (status " .. tostring(status)
-            .. "). See " .. child(directory, "session.log"))
-    end
+    if not launched then error(status) end
+    if status ~= 0 then error("Antitone exited with status " .. tostring(status)) end
+    if sendError then error(sendError) end
 end
 
 function bridge.edit() return edit(false) end

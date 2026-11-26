@@ -14,7 +14,7 @@ return function(action, completed)
         if not ok then
             local message = tostring(err):gsub("^.-:%d+:%s*", "")
             if action ~= "configure" then
-                message = message .. "\n\nIf Antitone saved a project, reopen it with Edit in Antitone. If the originals are not linked yet, choose Open Saved Antitone Project. Earlier TIFFs may remain on disk."
+                message = message .. "\n\nYou can import completed TIFFs manually. To reopen a project that isn't linked yet, choose Open Saved Antitone Project."
                 if bridge and bridge.project then message = message .. "\nProject: " .. bridge.project end
             end
             local log = bridge and bridge.log

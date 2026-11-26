@@ -31,9 +31,6 @@ pub(super) struct Presentation {
 /// Host output planning, persistence and publication; shared output executes pixels.
 pub(super) trait Destination: Send + Sync {
     fn presentation(&self) -> Presentation;
-    fn project_destination(&self) -> Option<&std::path::Path> {
-        None
-    }
     fn output(&self, document: &Document, target: OutputTarget) -> Result<output::Options, Error>;
     /// Publish host metadata after the project file has been written.
     fn saved(&self, _document: &Document) -> Result<(), Error> {
@@ -91,7 +88,6 @@ pub(super) struct State {
     pub session: Option<Arc<Session>>,
     task: Option<async_executor::Task<()>>,
     pub cancelled: Cancellation,
-    returned: bool,
 }
 
 impl State {
@@ -170,7 +166,6 @@ impl Editor {
         self.document.external_edit.session.is_some()
             && !self.document.external_edit.pending()
             && !self.document.write.pending()
-            && !self.document.external_edit.returned
             && !self.workspace_input.is_blocked()
             && !self.editing()
             && !self.allow_close
@@ -218,62 +213,15 @@ impl Editor {
             self.external_failed("Output services unavailable".into());
             return;
         };
-        let destination = if let Some(path) = session.destination.project_destination() {
-            files::Destination {
-                path: path.to_owned(),
-                policy: crate::project::Save::Replace,
-                confirm_replace: false,
-            }
-        } else {
-            let Some(destination) = self.save_destination(false) else {
-                return;
-            };
-            destination
-        };
+        let activity = self
+            .activities
+            .start(ActivityOptions::new(presentation.working).modal());
         let cancelled = Cancellation::default();
         self.document.external_edit.cancelled = cancelled.clone();
         let retire = cancelled.cancel_on_drop();
         self.document.external_edit.task = cx.spawn(move |cx| async move {
             let _retire = retire;
-            if files::confirm_destination(&cx, &destination)
-                .await
-                .is_none()
-            {
-                cx.update(|editor| editor.document.external_edit.task = None);
-                return;
-            }
-            let Some(activity) = cx.update(|editor| {
-                editor
-                    .activities
-                    .start(ActivityOptions::new(presentation.working).modal())
-            }) else {
-                return;
-            };
             let result = async {
-                let host = session.destination.clone();
-                let stop = cancelled.clone();
-                let (document, notification) = crate::background::run(move |retired| {
-                    if retired.is_cancelled() || stop.is_cancelled() {
-                        return Err(Error::Cancelled);
-                    }
-                    save::Write {
-                        document,
-                        path: destination.path,
-                        policy: destination.policy,
-                    }
-                    .execute(Some(host.as_ref()))
-                })
-                .await
-                .map_err(|_| "Project save worker panicked".to_owned())?
-                .map_err(|error| error.to_string())?;
-                cx.update(|editor| {
-                    if editor.document.external_edit.owns(&session) {
-                        editor.document.accept_save(document.clone());
-                    }
-                });
-                notification.map_err(|error| {
-                    format!("The project was saved, but could not be linked: {error}")
-                })?;
                 let summary = services
                     .export_batch(output, cancelled.clone(), |done, total| {
                         activity.progress(done, total)
@@ -292,10 +240,7 @@ impl Editor {
                         })
                         .collect::<Vec<_>>()
                         .join("; ");
-                    return Err(format!(
-                        "The project was saved, but return failed: {}. {errors}",
-                        summary.text()
-                    ));
+                    return Err(format!("Image send failed: {}. {errors}", summary.text()));
                 }
                 let renders = summary
                     .outcomes
@@ -328,11 +273,7 @@ impl Editor {
                 }
                 editor.document.external_edit.task = None;
                 match result {
-                    Ok(()) => {
-                        editor.document.external_edit.returned = true;
-                        editor.status = presentation.completed.into();
-                        editor.complete_external();
-                    }
+                    Ok(()) => editor.status = presentation.completed.into(),
                     Err(error) => editor.external_failed(error),
                 }
             });

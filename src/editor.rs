@@ -370,16 +370,6 @@ impl Editor {
         self.document.external_edit.session = Some(Arc::new(opened.session));
     }
 
-    fn complete_external(&mut self) {
-        if !self.document.dirty() && self.document_command_available() {
-            self.allow_close = true;
-        } else {
-            self.status =
-                "Snapshot returned. Resolve remaining edits or dialogs, then close this window."
-                    .into();
-        }
-    }
-
     fn initialize_viewer(&mut self, device: &wgpu::Device, queue: &crate::gpu::submission::Queue) {
         self.presentation = pollster::block_on(Presentation::new(device));
         self.document.visit.working_view = WorkingView::new(device.clone(), queue.clone());

@@ -125,7 +125,7 @@ fn json_rejects_ambiguous_identity_unknown_fields_and_relative_paths() {
     for invalid in [
         valid
             .to_string()
-            .replace("\"version\":4", "\"version\":4,\"version\":4"),
+            .replace("\"version\":5", "\"version\":5,\"version\":5"),
         valid.to_string() + " true",
         "{}".into(),
     ] {
@@ -342,7 +342,6 @@ fn save_for_session(
 
 #[test]
 fn save_creates_and_updates_the_canonical_project_without_retargeting_a_save_as_copy() {
-    use external_edit::Destination as _;
     let directory = tempfile::tempdir().unwrap();
     let project = directory.path().join("roll.antitone");
     let copy = directory.path().join("copy.antitone");
@@ -366,8 +365,8 @@ fn save_creates_and_updates_the_canonical_project_without_retargeting_a_save_as_
     document.project.roll.exposure = 0.5;
     let mut document = document.save(&copy, crate::project::Save::New).unwrap();
     document.project.roll.exposure = 0.75;
-    let canonical = destination.project_destination().unwrap();
-    assert_eq!(canonical, project);
+    let canonical = destination.project.get().unwrap();
+    assert_eq!(canonical, &project);
     let saved = save_for_session(
         &destination,
         &document,
@@ -404,7 +403,7 @@ fn a_new_canonical_destination_is_never_replaced_before_this_invocation_saves_it
     std::fs::write(&project, "unrelated file created while editing").unwrap();
     use crate::project::Save;
     assert!(save_for_session(&destination, &Document::default(), &project, Save::New).is_err());
-    assert!(destination.project_destination().is_none());
+    assert!(destination.project.get().is_none());
     assert!(!directory.path().join("saved.json").exists());
     assert_eq!(
         std::fs::read_to_string(&project).unwrap(),
@@ -426,7 +425,7 @@ fn a_new_canonical_destination_is_never_replaced_before_this_invocation_saves_it
         save_for_session(
             &destination,
             &copy,
-            destination.project_destination().unwrap(),
+            destination.project.get().unwrap(),
             Save::Replace
         )
         .is_ok(),
@@ -435,7 +434,8 @@ fn a_new_canonical_destination_is_never_replaced_before_this_invocation_saves_it
 }
 
 #[test]
-fn receipt_is_published_once_and_contains_whole_roll_and_lossless_string_ids() {
+fn send_receipts_are_independent_and_project_receipt_preserves_lossless_source_ids() {
+    use external_edit::Destination as _;
     let directory = tempfile::tempdir().unwrap();
     let mut editor = crate::editor::tests::fixture();
     crate::editor::tests::with_registered_photo(&mut editor);
@@ -455,42 +455,47 @@ fn receipt_is_published_once_and_contains_whole_roll_and_lossless_string_ids() {
         .unwrap() = large;
     let b = large;
     document.path = Some(directory.path().join("roll.antitone"));
-    let request = request(
+    let destination = Destination::new(request(
         document.path.as_ref().unwrap(),
         &directory.path().join("result.json"),
         true,
         &[directory.path().join("b.ARW")],
-    );
+    ));
+    let mut unsaved = document.clone();
+    unsaved.path = None;
     let rendered = external_edit::Rendered {
         source: b,
         path: directory.path().join("positive.tif"),
     };
-    request
-        .receipt(&document, Some(std::slice::from_ref(&rendered)))
+    destination
+        .publish(&unsaved, std::slice::from_ref(&rendered))
         .unwrap();
-    let text = std::fs::read_to_string(&request.receipt).unwrap();
+    let first = &destination.request.receipt;
+    let text = std::fs::read_to_string(first).unwrap();
     let receipt: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(receipt["version"], PROTOCOL_VERSION);
-    assert_eq!(receipt["sources"].as_array().unwrap().len(), 2);
-    assert_eq!(receipt["sources"][0]["id"], a.0.to_string());
-    assert_eq!(receipt["sources"][1]["id"], b.0.to_string());
     assert_eq!(
-        receipt["renders"],
-        json!([{"uuid":"photo-0", "source": b.0.to_string(), "path": rendered.path}])
+        receipt,
+        json!({"version": PROTOCOL_VERSION, "renders": [{
+            "uuid": "photo-0", "original": directory.path().join("b.ARW"), "path": rendered.path
+        }]})
     );
-    let fixture: Value =
-        serde_json::from_str(include_str!("../../../../tests/lightroom/result.json")).unwrap();
-    assert_eq!(fixture["sources"][1]["id"], receipt["sources"][1]["id"]);
-    assert!(
-        request
-            .receipt(
-                &document,
-                Some(&[external_edit::Rendered {
-                    source: b,
-                    path: directory.path().join("different.tif")
-                }])
-            )
-            .is_err()
-    );
-    assert_eq!(std::fs::read_to_string(&request.receipt).unwrap(), text);
+    let saved = directory.path().join("saved.json");
+    assert!(!saved.exists());
+    let next = directory.path().join("result-2.json");
+    assert!(destination.publish(&unsaved, &[]).is_err());
+    assert!(!next.exists());
+    let second = external_edit::Rendered {
+        source: b,
+        path: directory.path().join("different.tif"),
+    };
+    destination.publish(&unsaved, &[second]).unwrap();
+    assert!(next.exists());
+    assert_eq!(std::fs::read_to_string(first).unwrap(), text);
+
+    destination.saved(&document).unwrap();
+    let saved: Value = serde_json::from_slice(&std::fs::read(saved).unwrap()).unwrap();
+    assert_eq!(saved["sources"].as_array().unwrap().len(), 2);
+    assert_eq!(saved["sources"][0]["id"], a.0.to_string());
+    assert_eq!(saved["sources"][1]["id"], b.0.to_string());
+    assert!(saved.get("renders").is_none());
 }

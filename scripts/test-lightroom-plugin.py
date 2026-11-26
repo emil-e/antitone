@@ -76,9 +76,10 @@ def main():
         library.luaL_openlibs(state)
         library.lua_pushcclosure(state, validate_request, 0)
         library.lua_setfield(state, globals_index, b"validateRequestJson")
-        receipt = (ROOT / "tests/lightroom/result.json").read_bytes()
-        library.lua_pushlstring(state, receipt, len(receipt))
-        library.lua_setfield(state, globals_index, b"RECEIPT_FIXTURE")
+        for name, fixture in [(b"RECEIPT_FIXTURE", "result.json"), (b"SAVE_FIXTURE", "saved.json")]:
+            receipt = (ROOT / "tests/lightroom" / fixture).read_bytes()
+            library.lua_pushlstring(state, receipt, len(receipt))
+            library.lua_setfield(state, globals_index, name)
         test_root = (ROOT / "tests/lightroom").as_posix().encode()
         library.lua_pushlstring(state, test_root, len(test_root))
         library.lua_setfield(state, globals_index, b"TEST_ROOT")
