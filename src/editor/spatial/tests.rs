@@ -219,6 +219,7 @@ fn retained_camera_rasters_prepare_geometry_without_reacquiring_sources() {
         assert!(starts.load(Ordering::SeqCst) > 0);
         // Any new source acquisition would fail. Geometry must derive from these same rasters.
         scheduler.close_and_wait().unwrap();
+        let detection = crate::background::testing::pause();
         app.enter(|editor, cx| {
             editor.finish_auto_crop(false);
             editor.document.spatial = crate::spatial_metadata::Store::default();
@@ -229,6 +230,15 @@ fn retained_camera_rasters_prepare_geometry_without_reacquiring_sources() {
                 cx,
             );
         });
+        app.pump();
+        app.read(|editor| {
+            assert!(!editor.document.auto_crop.reviewing());
+            let progress = editor.activities.view().unwrap();
+            assert_eq!(progress.title, "Detecting film and picture regions…");
+            assert!(progress.measured.is_none());
+            assert!(progress.cancel.is_some());
+        });
+        drop(detection);
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.read(|editor| {
             assert!(editor.document.auto_crop.reviewing(), "{}", editor.status);

@@ -73,7 +73,7 @@ pub(super) fn detect(
         Default::default(),
         Arc::default(),
         Default::default(),
-        |_, _| {},
+        |_| {},
     ))
     .unwrap()
     .unwrap();
@@ -123,7 +123,7 @@ fn region_acquisition_and_review_do_not_require_unrelated_look_device_admission(
         Default::default(),
         Arc::default(),
         Default::default(),
-        |_, _| {},
+        |_| {},
     ))
     .unwrap()
     .unwrap();

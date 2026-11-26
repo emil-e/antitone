@@ -175,6 +175,9 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             harness.enter(|editor, cx| editor.request_analysis(cx));
             harness.update(|editor| editor.activities.elapse(Duration::from_secs(1)));
             render_case(&mut harness, &format!("regions-modal-{layout}"));
+            let loading = harness
+                .get_by_role_and_label(egui::accesskit::Role::ProgressIndicator, "Loading photos…");
+            assert_eq!(loading.accesskit_node().value().as_deref(), Some("0 of 1"));
             harness.get_by_label("Cancel region preparation").click();
             harness.step();
             wait_for(&mut harness, |editor| {

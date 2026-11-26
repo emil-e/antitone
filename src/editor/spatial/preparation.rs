@@ -16,6 +16,11 @@ pub(in crate::editor) struct Prepared {
     pub sampling_inputs: SamplingInputs,
 }
 
+pub(in crate::editor) enum Progress {
+    Loading { completed: usize, total: usize },
+    Detecting,
+}
+
 struct CapturedSource {
     input: crate::spatial_metadata::Input,
     camera: crate::source::CameraSamples,
@@ -101,7 +106,7 @@ pub(in crate::editor) async fn prepare(
     mut retained: SamplingInputs,
     initialization: Arc<crate::source::Initialization>,
     cancelled: Cancellation,
-    mut progress: impl FnMut(usize, usize),
+    mut progress: impl FnMut(Progress),
 ) -> Result<Option<Prepared>, Error> {
     let known = document.spatial_inputs_with(&initialization);
     let cached = document
@@ -120,7 +125,7 @@ pub(in crate::editor) async fn prepare(
         }
     }
     let mut completed = total - work.len();
-    progress(completed, total);
+    progress(Progress::Loading { completed, total });
     {
         let existing = retained.clone();
         let captures = futures_util::stream::iter(work.into_iter().map(|(source, physical)| {
@@ -138,14 +143,15 @@ pub(in crate::editor) async fn prepare(
             }
             completed += 1;
             if completed < total {
-                progress(completed, total);
+                progress(Progress::Loading { completed, total });
             }
         }
     }
-    let inputs = document.spatial_inputs_with(&initialization);
     let metadata = if regions_ready {
         cached
     } else {
+        progress(Progress::Detecting);
+        let inputs = document.spatial_inputs_with(&initialization);
         let retired = cancelled.clone();
         let Some(metadata) = background::compute(&cancelled, move || {
             let development = inputs
@@ -184,7 +190,6 @@ pub(in crate::editor) async fn prepare(
         };
         metadata
     };
-    progress(total, total);
     Ok(Some(Prepared {
         metadata,
         sampling_inputs: retained,
