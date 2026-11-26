@@ -35,7 +35,7 @@ pub(super) fn reference_control(
             Some(meaning),
             |ui, _| {
                 let name = format!("Pick {label}");
-                ui::icons::button_at(
+                let pick = ui::icons::button_at(
                     ui,
                     ui::Icon::Pick,
                     enabled,
@@ -43,7 +43,23 @@ pub(super) fn reference_control(
                     &name,
                     ui::INSPECTOR_ROW_HEIGHT,
                 )
-                .clicked()
+                .clicked();
+                if let Some(rgb) = rgb {
+                    let height = ui::INSPECTOR_ROW_HEIGHT * (2. / 3.);
+                    let response = egui::color_picker::show_color(
+                        ui,
+                        reference_swatch(rgb),
+                        egui::vec2(2. * height, height),
+                    );
+                    ui.painter().rect_stroke(
+                        response.rect,
+                        0.,
+                        ui.visuals().widgets.noninteractive.bg_stroke,
+                        egui::StrokeKind::Inside,
+                    );
+                    response.on_hover_text("Approximate camera RGB preview.");
+                }
+                pick
             },
         )
         .inner;
@@ -66,6 +82,13 @@ pub(super) fn reference_control(
         pick
     })
     .inner
+}
+
+fn reference_swatch(rgb: DVec3) -> egui::Color32 {
+    // Peak-channel Reinhard with one stop of preview gain. A common scale preserves
+    // camera-channel ratios; there is no source profile attached to a roll anchor.
+    let display = (rgb / (0.5 + rgb.max_element())).as_vec3();
+    egui::Rgba::from_rgb(display.x, display.y, display.z).into()
 }
 
 pub(super) async fn pick_dmin(cx: UiContext<'_, Editor>) {

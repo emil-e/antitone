@@ -61,6 +61,17 @@ fn measured_reference(editor: &Editor, region: crate::coverage::Coverage) -> DVe
 }
 
 #[test]
+fn reference_swatch_rolls_off_headroom_without_clipping_channel_ratios() {
+    let rgb = DVec3::new(4., 2., 1.);
+    let [r, g, b, _] = egui::Rgba::from(reference_swatch(rgb)).to_array();
+    assert!(r > 0.8 && r < 1.);
+    // Allow for sRGB byte quantization when recovering linear channel ratios.
+    assert!((g / r - 0.5).abs() < 0.01);
+    assert!((b / r - 0.25).abs() < 0.01);
+    assert!(reference_swatch(rgb / 16.).r() < reference_swatch(rgb).r());
+}
+
+#[test]
 fn reference_accepts_positive_camera_light_below_one_code_but_not_zero() {
     for code in [0, 1] {
         let file = crate::raw::fixture::bayer_dng_with_rgb([code; 3]);
