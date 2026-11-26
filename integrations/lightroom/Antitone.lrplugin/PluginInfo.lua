@@ -10,7 +10,7 @@ return {
             {
                 title = "Antitone",
                 bind_to_object = properties,
-                f:static_text { title = "Application used for RAW editing and saved rolls:" },
+                f:static_text { title = "Application used to edit RAWs and open Antitone projects:" },
                 f:static_text { title = LrView.bind("application"), fill_horizontal = 1, width_in_chars = 55 },
                 f:push_button {
                     title = "Choose Antitone Application…",

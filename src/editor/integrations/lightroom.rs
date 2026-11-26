@@ -1,20 +1,17 @@
-//! Lightroom's JSON transport and canonical-roll save/return adapter.
+//! Lightroom's JSON transport and project save/return adapter.
 use crate::editor::{Error, OutputTarget, document::Document, external_edit, output};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, OnceLock},
 };
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 const PRESENTATION: external_edit::Presentation = external_edit::Presentation {
     action: "Save Back to Lightroom",
-    opening: "Opening Lightroom roll…",
+    opening: "Opening Lightroom project…",
     working: "Saving back to Lightroom…",
     completed: "Saved back to Lightroom",
 };
@@ -42,7 +39,7 @@ enum Mode {
 struct Request {
     version: u32,
     mode: Mode,
-    project: PathBuf,
+    project: Option<PathBuf>,
     relocated_from: Option<PathBuf>,
     photos: Vec<Photo>,
     #[serde(skip)]
@@ -67,7 +64,8 @@ struct Receipt<'a> {
     version: u32,
     project: &'a Path,
     sources: Vec<Source>,
-    renders: Vec<Render<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    renders: Option<Vec<Render<'a>>>,
 }
 
 fn failure(message: impl std::fmt::Display) -> Error {
@@ -90,13 +88,21 @@ impl Request {
             return Err(failure("no Lightroom photos requested"));
         }
         request.receipt = receipt;
-        if !request.project.is_absolute() || !request.receipt.is_absolute() {
+        if !request.receipt.is_absolute() {
             return Err(failure("Lightroom paths must be absolute"));
         }
-        if !request.project.extension().is_some_and(|ext| {
-            ext.eq_ignore_ascii_case("antitone") || ext.eq_ignore_ascii_case("json")
-        }) {
-            return Err(failure("Lightroom project must be an Antitone document"));
+        match (request.mode, &request.project) {
+            (Mode::New, None) => {}
+            (Mode::Open, Some(project))
+                if project.is_absolute()
+                    && project.extension().is_some_and(|ext| {
+                        ext.eq_ignore_ascii_case("antitone") || ext.eq_ignore_ascii_case("json")
+                    }) => {}
+            _ => {
+                return Err(failure(
+                    "Only open mode requires an absolute Antitone project path",
+                ));
+            }
         }
         if let Some(previous) = &request.relocated_from
             && (request.mode != Mode::Open || !previous.is_absolute())
@@ -121,15 +127,12 @@ impl Request {
     fn receipt(
         &self,
         document: &Document,
-        renders: &[external_edit::Rendered],
+        renders: Option<&[external_edit::Rendered]>,
     ) -> Result<(), Error> {
-        if renders.len() != self.photos.len() {
-            return Err(failure("Lightroom render count mismatch"));
-        }
         let project = document
             .path
             .as_deref()
-            .ok_or_else(|| failure("roll has not been saved"))?;
+            .ok_or_else(|| failure("project has not been saved"))?;
         let requested_paths = self
             .photos
             .iter()
@@ -158,8 +161,44 @@ impl Request {
                 })
             })
             .collect::<Result<Vec<_>, Error>>()?;
-        let renders = self
-            .photos
+        let renders = renders
+            .map(|renders| self.render_entries(document, renders))
+            .transpose()?;
+        let path = if renders.is_some() {
+            self.receipt.clone()
+        } else {
+            self.receipt.with_file_name("saved.json")
+        };
+        let receipt = Receipt {
+            version: PROTOCOL_VERSION,
+            project,
+            sources,
+            renders,
+        };
+        let mut file = tempfile::NamedTempFile::new_in(
+            path.parent()
+                .ok_or_else(|| failure("receipt has no parent"))?,
+        )
+        .map_err(failure)?;
+        serde_json::to_writer_pretty(file.as_file_mut(), &receipt).map_err(failure)?;
+        file.as_file().sync_all().map_err(failure)?;
+        if receipt.renders.is_some() {
+            file.persist_noclobber(path).map_err(failure)?;
+        } else {
+            file.persist(path).map_err(failure)?;
+        }
+        Ok(())
+    }
+
+    fn render_entries<'a>(
+        &'a self,
+        document: &Document,
+        renders: &'a [external_edit::Rendered],
+    ) -> Result<Vec<Render<'a>>, Error> {
+        if renders.len() != self.photos.len() {
+            return Err(failure("Lightroom render count mismatch"));
+        }
+        self.photos
             .iter()
             .zip(renders)
             .map(|(photo, render)| {
@@ -175,23 +214,7 @@ impl Request {
                     path: &render.path,
                 })
             })
-            .collect::<Result<Vec<_>, Error>>()?;
-        let receipt = Receipt {
-            version: PROTOCOL_VERSION,
-            project,
-            sources,
-            renders,
-        };
-        let mut file = tempfile::NamedTempFile::new_in(
-            self.receipt
-                .parent()
-                .ok_or_else(|| failure("receipt has no parent"))?,
-        )
-        .map_err(failure)?;
-        serde_json::to_writer_pretty(file.as_file_mut(), &receipt).map_err(failure)?;
-        file.as_file().sync_all().map_err(failure)?;
-        file.persist_noclobber(&self.receipt).map_err(failure)?;
-        Ok(())
+            .collect()
     }
 }
 
@@ -211,12 +234,9 @@ impl external_edit::Input for Request {
         if self.receipt.exists() {
             return Err(failure("this Lightroom session has already returned"));
         }
-        let mut document = if self.mode == Mode::Open {
-            Document::open(&self.project)?
+        let mut document = if let Some(project) = &self.project {
+            Document::open(project)?
         } else {
-            if self.project.exists() {
-                return Err(failure("new Lightroom roll destination already exists"));
-            }
             let mut document = Document::default();
             let paths = self
                 .photos
@@ -236,7 +256,7 @@ impl external_edit::Input for Request {
             crate::editor::document::rebase_project(
                 &mut document.project,
                 Some(previous),
-                Some(&self.project),
+                self.project.as_deref(),
             );
             document.capture_source_files()?;
         }
@@ -244,7 +264,7 @@ impl external_edit::Input for Request {
         for photo in &self.photos {
             let id = document.find_source(&photo.path).ok_or_else(|| {
                 failure(format!(
-                    "photo is not in this saved roll: {}",
+                    "photo is not in this saved project: {}",
                     photo.path.display()
                 ))
             })?;
@@ -261,21 +281,27 @@ impl external_edit::Input for Request {
 
 struct Destination {
     request: Request,
-    canonical_saved: AtomicBool,
+    project: OnceLock<PathBuf>,
 }
 
 impl Destination {
-    fn new(request: Request) -> Self {
-        Self {
-            canonical_saved: AtomicBool::new(request.mode == Mode::Open),
-            request,
-        }
+    fn new(mut request: Request) -> Self {
+        let project = request
+            .project
+            .take()
+            .map(OnceLock::from)
+            .unwrap_or_default();
+        Self { request, project }
     }
 }
 
 impl external_edit::Destination for Destination {
     fn presentation(&self) -> external_edit::Presentation {
         PRESENTATION
+    }
+
+    fn project_destination(&self) -> Option<&Path> {
+        self.project.get().map(PathBuf::as_path)
     }
 
     fn output(&self, document: &Document, target: OutputTarget) -> Result<output::Options, Error> {
@@ -303,23 +329,16 @@ impl external_edit::Destination for Destination {
         Ok(options)
     }
 
-    fn save(&self, document: &Document) -> Result<Document, Error> {
-        let policy = if self.canonical_saved.load(Ordering::Acquire)
-            || document.path.as_ref() == Some(&self.request.project)
-        {
-            crate::project::Save::Replace
-        } else {
-            crate::project::Save::New
-        };
-        let saved = document.save(&self.request.project, policy)?;
-        self.canonical_saved.store(true, Ordering::Release);
-        Ok(saved)
-    }
-
-    fn saved(&self, path: &Path) {
-        if path == self.request.project {
-            self.canonical_saved.store(true, Ordering::Release);
+    fn saved(&self, document: &Document) -> Result<(), Error> {
+        let path = document
+            .path
+            .as_ref()
+            .ok_or_else(|| failure("project has not been saved"))?;
+        let project = self.project.get_or_init(|| path.clone());
+        if project != path {
+            return Ok(());
         }
+        self.request.receipt(document, None)
     }
 
     fn publish(
@@ -327,7 +346,7 @@ impl external_edit::Destination for Destination {
         document: &Document,
         renders: &[external_edit::Rendered],
     ) -> Result<(), Error> {
-        self.request.receipt(document, renders)
+        self.request.receipt(document, Some(renders))
     }
 }
 

@@ -17,9 +17,6 @@ impl Destination for DestinationStub {
     ) -> Result<output::Options, Error> {
         unreachable!("session ownership tests do not render")
     }
-    fn save(&self, _document: &Document) -> Result<Document, Error> {
-        unreachable!("session ownership tests do not save")
-    }
     fn publish(&self, _document: &Document, _renders: &[Rendered]) -> Result<(), Error> {
         unreachable!("session ownership tests do not publish")
     }

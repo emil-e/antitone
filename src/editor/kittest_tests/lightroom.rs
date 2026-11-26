@@ -11,9 +11,9 @@ fn request(
 ) -> crate::editor::external_edit::Request {
     std::fs::create_dir_all(directory).unwrap();
     let wire = json!({
-        "version": 3,
+        "version": crate::editor::integrations::lightroom::PROTOCOL_VERSION,
         "mode": if existing { "open" } else { "new" },
-        "project": project,
+        "project": existing.then_some(project),
         "photos": photos.iter().enumerate().map(|(index, path)| json!({
             "uuid": format!("catalog-photo-{index}"), "path": path,
         })).collect::<Vec<_>>(),
@@ -63,6 +63,11 @@ fn button(harness: &mut Harness<'_, Editor>) {
     );
     button.click();
     harness.step();
+}
+
+fn button_with_save_path(harness: &mut Harness<'_, Editor>, path: &std::path::Path) {
+    harness.update(|editor| editor.document.files.chooser_path = Some(path.to_owned()));
+    button(harness);
 }
 
 fn tiff_dimensions(path: &std::path::Path) -> (u32, u32) {
@@ -134,7 +139,7 @@ fn lightroom_new_roll_returns_rendered_photos_and_single_member_reopens_the_whol
         });
         h.step();
         save_capture(&h.render().unwrap(), "lightroom-return-offscreen");
-        button(&mut h);
+        button_with_save_path(&mut h, &project);
         wait_for(&mut h, |editor| {
             editor.allow_close || editor.dialogs.is_open()
         });
@@ -238,14 +243,21 @@ fn lightroom_return_failure_preserves_saved_project_and_never_publishes_a_succes
     // The source name fits the filesystem, but adding the return suffix does not.
     let source = directory.path().join(format!("{}.dng", "a".repeat(250)));
     std::fs::copy(fixture("patches.dng"), &source).unwrap();
+    // Windows needs the verbatim absolute path for the native DNG reader.
+    let source = source.canonicalize().unwrap();
     let input = request(&session, &project, false, std::slice::from_ref(&source));
     editor_harness(|mut h, _| {
         h.enter(|editor, cx| editor.open_external(input, cx));
         wait_for(&mut h, |editor| !editor.interaction_blocked());
         h.update(|editor| {
+            let current = editor.document.visit.current_source.unwrap_or_else(|| {
+                panic!(
+                    "long-name RAW must open before testing return failure: {}",
+                    editor.status
+                )
+            });
             editor.set_dmin(Some(DVec3::splat(0.8)));
             editor.set_dmax(Some(DVec3::splat(0.02)));
-            let current = editor.document.visit.current_source.unwrap();
             editor.document.project.source_mut(current).unwrap().crop = Some(Crop {
                 center: [120., 100.],
                 size: [16, 16],
@@ -261,7 +273,7 @@ fn lightroom_return_failure_preserves_saved_project_and_never_publishes_a_succes
         );
         h.step();
         workflow::wait_settled(&mut h);
-        button(&mut h);
+        button_with_save_path(&mut h, &project);
         wait_for(&mut h, |editor| editor.dialogs.is_open());
         h.read(|editor| {
             assert!(!editor.allow_close);
@@ -271,6 +283,7 @@ fn lightroom_return_failure_preserves_saved_project_and_never_publishes_a_succes
             );
         });
         assert!(project.is_file());
+        assert!(session.join("saved.json").is_file());
         assert!(!session.join("result.json").exists());
     });
 }

@@ -2,9 +2,9 @@ local LrDialogs = import "LrDialogs"
 local LrFileUtils = import "LrFileUtils"
 local projects = {}
 
-local function existing()
+function projects.existing()
     local paths = LrDialogs.runOpenPanel {
-        title = "Choose saved Antitone roll", fileTypes = { "antitone", "json" },
+        title = "Choose saved Antitone project", fileTypes = { "antitone", "json" },
         allowsMultipleSelection = false,
     }
     if not paths then return nil end
@@ -13,34 +13,27 @@ local function existing()
     return nil
 end
 
-local function create()
-    while true do
-        local path = LrDialogs.runSavePanel {
-            title = "Save Antitone roll", requiredFileType = "antitone", canCreateDirectories = true,
-        }
-        if not path then return nil end
-        if not LrFileUtils.exists(path) then return path end
-        LrDialogs.message("Choose a different project filename",
-            path .. " already exists. It has not been changed. Choose an unused filename, or cancel and use a saved roll.", "warning")
+function projects.choose(linked, chooseSaved)
+    if not linked then
+        if not chooseSaved then return "new" end
+        local path = projects.existing()
+        if path then return "open", path end
+        return nil
     end
-end
-
-function projects.choose(linked)
-    if linked and LrFileUtils.exists(linked) == "file" then return linked, "open", nil end
-    if linked then
-        local choice = LrDialogs.confirm("Linked Antitone project is missing",
-            linked .. "\n\nLocate the saved roll if it moved. Alternatively, create a replacement roll from the selected originals; this cannot recover edits from the missing project. Catalogue links change only after a successful return.",
-            "Locate Saved Roll", "Cancel", "Create Replacement Roll")
-        if choice == "cancel" then return nil end
-        if choice == "other" then return create(), "new", linked end
-        return existing(), "open", linked
+    if LrFileUtils.exists(linked) == "file" then
+        if LrDialogs.confirm("Open saved Antitone project?", linked, "Open Project", "Cancel") == "ok" then
+            return "open", linked
+        end
+        return nil
     end
-    local choice = LrDialogs.confirm("Choose an Antitone roll",
-        "Create a roll from the selected originals, or link them to an existing saved roll. Lightroom development is not applied.",
-        "Create New Roll", "Cancel", "Use Saved Roll")
-    if choice == "cancel" then return nil end
-    if choice == "other" then return existing(), "open", nil end
-    return create(), "new", nil
+    local choice = LrDialogs.confirm("Linked Antitone project is missing",
+        linked .. "\n\nLocate the saved project if it moved, or start a replacement from the selected originals. A replacement cannot recover edits from the missing project.",
+        "Locate Saved Project", "Cancel", "Create Replacement Project")
+    if choice == "other" then return "new", nil, linked end
+    if choice == "ok" then
+        local path = projects.existing()
+        if path then return "open", path, linked end
+    end
 end
 
 return projects

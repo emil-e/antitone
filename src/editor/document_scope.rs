@@ -231,9 +231,6 @@ impl DocumentScope {
     }
 
     pub fn accept_save(&mut self, saved: Document) {
-        if let Some(path) = &saved.path {
-            self.external_edit.saved(path);
-        }
         self.history
             .rebase(self.state.path.as_deref(), saved.path.as_deref());
         self.state.accept_save(saved);

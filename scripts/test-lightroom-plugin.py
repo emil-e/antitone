@@ -54,7 +54,7 @@ def main():
         pointer = library.lua_tolstring(state, index, ctypes.byref(size))
         return ctypes.string_at(pointer, size.value)
 
-    reference = json.loads((ROOT / "tests/lightroom/request.json").read_text())
+    reference = json.loads((ROOT / "tests/lightroom/request.json").read_text(encoding="utf-8"))
     json_errors = []
 
     @callback_type
