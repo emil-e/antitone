@@ -2,6 +2,8 @@ use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSApplicationPresentationOptions};
 use objc2_core_graphics::{CGColorSpace, kCGColorSpaceExtendedSRGB};
+use winit::dpi::{LogicalPosition, LogicalSize};
+use winit::window::Window;
 
 use crate::Error;
 
@@ -87,17 +89,46 @@ fn configure_sdr(surface: &wgpu::Surface<'_>) -> Result<(), Error> {
 pub(crate) struct FullscreenPresentation {
     app: Retained<NSApplication>,
     previous: NSApplicationPresentationOptions,
+    position: LogicalPosition<f64>,
+    size: LogicalSize<f64>,
+    decorated: bool,
 }
 
 impl FullscreenPresentation {
-    pub(crate) fn new(_window: &winit::window::Window) -> Result<Self, Box<dyn std::error::Error>> {
+    pub(crate) fn enter(window: &Window) -> super::host::Result<Self> {
         let main = MainThreadMarker::new().ok_or("fullscreen viewing requires the main thread")?;
         let app = NSApplication::sharedApplication(main);
         let previous = app.presentationOptions();
-        Ok(Self { app, previous })
+        let scale = window.scale_factor();
+        let presentation = Self {
+            app,
+            previous,
+            position: window.outer_position()?.to_logical(scale),
+            size: window.inner_size().to_logical(scale),
+            decorated: window.is_decorated(),
+        };
+        let monitor = window
+            .current_monitor()
+            .ok_or("fullscreen viewing requires a display")?;
+
+        presentation.focus_changed(window.has_focus());
+        window.set_decorations(false);
+        let _ = window.request_inner_size(monitor.size());
+        window.set_outer_position(monitor.position());
+        presentation.focus_changed(window.has_focus());
+        Ok(presentation)
     }
 
-    pub(crate) fn show(&self, _window: &winit::window::Window, focused: bool) {
+    pub(crate) fn leave(self, window: &Window) -> super::host::Result<()> {
+        self.focus_changed(false);
+        // Restore chrome before content size so the original outer position stays meaningful.
+        window.set_decorations(self.decorated);
+        let _ = window.request_inner_size(self.size);
+        window.set_outer_position(self.position);
+        Ok(())
+    }
+
+    pub(crate) fn focus_changed(&self, focused: bool) {
         use NSApplicationPresentationOptions as Options;
         // These paired auto-hide options preserve system access and do not create a fullscreen Space.
         let desired = if focused {

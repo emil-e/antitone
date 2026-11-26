@@ -1,4 +1,10 @@
+use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::UI::WindowsAndMessaging::{GetMenu, HMENU, SetMenu};
+use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use winit::window::{Fullscreen, Window};
+
 use super::Presentation;
+use super::host::Result as HostResult;
 use crate::Error;
 
 /// SDR presentation uses 10-bit where offered, 8-bit otherwise. Both formats store the pipeline's
@@ -65,24 +71,51 @@ fn light_caption(window: &winit::window::Window) {
     window.set_theme(Some(winit::window::Theme::Light));
 }
 
-/// Photo fullscreen keeps the window above the taskbar, which a borderless window sized to the
-/// monitor does not do by itself.
-pub(crate) struct FullscreenPresentation;
+pub(crate) struct FullscreenPresentation {
+    hwnd: HWND,
+    menu: HMENU,
+}
 
 impl FullscreenPresentation {
-    pub(crate) fn new(_window: &winit::window::Window) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self)
+    pub(crate) fn enter(window: &Window) -> HostResult<Self> {
+        let monitor = window
+            .current_monitor()
+            .ok_or("fullscreen viewing requires a display")?;
+        let RawWindowHandle::Win32(handle) = window.window_handle()?.as_raw() else {
+            return Err("fullscreen viewing requires a Win32 window handle".into());
+        };
+        let hwnd = handle.hwnd.get() as HWND;
+
+        // A Win32 menu takes client space even without a caption. Detach only the
+        // menu bar; the host still owns the menu, its subclass and its accelerators.
+        // SAFETY: the host owns the live window and menu on this thread through leave.
+        let menu = unsafe { GetMenu(hwnd) };
+        if !menu.is_null() && unsafe { SetMenu(hwnd, std::ptr::null_mut()) } == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+
+        // Let winit own the frame, monitor bounds, taskbar integration and placement restore.
+        window.set_fullscreen(Some(Fullscreen::Borderless(Some(monitor))));
+        Ok(Self { hwnd, menu })
     }
 
-    pub(crate) fn show(&self, window: &winit::window::Window, focused: bool) {
-        let level = if focused {
-            winit::window::WindowLevel::AlwaysOnTop
+    pub(crate) fn leave(self, window: &Window) -> HostResult<()> {
+        // Attach the menu before winit restores the normal window placement.
+        // SAFETY: the host still owns this window and menu on the window thread.
+        let menu_result = if !self.menu.is_null() && unsafe { SetMenu(self.hwnd, self.menu) } == 0 {
+            Err(std::io::Error::last_os_error().into())
         } else {
-            winit::window::WindowLevel::Normal
+            Ok(())
         };
-        window.set_window_level(level);
+        window.set_fullscreen(None);
+        menu_result
     }
+
+    pub(crate) fn focus_changed(&self, _focused: bool) {}
 }
+
+#[cfg(test)]
+mod fullscreen_tests;
 
 pub(crate) struct QuitGuard;
 
