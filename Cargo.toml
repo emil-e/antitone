@@ -49,7 +49,7 @@ ort = { version = "=2.0.0-rc.11", optional = true, default-features = false, fea
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "=0.21.2", optional = true, default-features = false }
 objc2 = { version = "=0.6.5", optional = true }
-objc2-app-kit = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSWindow", "NSScreen", "NSMenu", "NSMenuItem", "NSEvent", "NSGraphicsContext"] }
+objc2-app-kit = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSView", "NSWindow", "NSScreen", "NSMenu", "NSMenuItem", "NSEvent", "NSGraphicsContext"] }
 objc2-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSData", "NSArray", "NSDate", "NSObject", "NSObjCRuntime", "NSString", "NSRunLoop"] }
 objc2-metal = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "MTLDevice"] }
 objc2-core-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "CFString"] }
@@ -68,7 +68,7 @@ ui-tests = ["editor", "ocio-reference", "dep:egui_kittest", "image/png"]
 logging = ["dep:serde_json", "dep:tempfile"]
 editor = ["dep:ort", "dep:clap", "logging", "ui", "raw", "dng-sdk", "export", "project", "dep:rfd", "dep:blake3", "dep:image", "dep:event-listener", "dep:futures-lite", "dep:blocking"]
 project = ["dep:serde", "dep:serde_json", "dep:tempfile", "dep:blake3", "dep:base64", "dep:flate2", "dep:libc", "dep:half", "glam/serde"]
-ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core", "dep:objc2-foundation", "dep:muda", "dep:async-executor", "dep:futures-channel"]
+ui = ["gpu", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:winit", "dep:half", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-quartz-core", "dep:objc2-foundation", "dep:muda", "dep:async-executor", "dep:futures-channel", "dep:serde", "dep:serde_json", "dep:tempfile"]
 raw = ["dep:cc", "dep:dunce", "dep:libc", "dep:blake3", "dep:image", "dep:lcms2"]
 # Direct SDK remains separately usable without LibRaw or the desktop stack.
 dng-sdk = ["dep:cc", "dep:blake3", "dep:tempfile"]

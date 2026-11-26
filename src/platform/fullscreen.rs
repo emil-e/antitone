@@ -14,6 +14,10 @@ enum Active {
 }
 
 impl PhotoFullscreen {
+    pub(super) fn is_active(&self) -> bool {
+        self.active.is_some()
+    }
+
     pub(super) fn update(&mut self, window: &Window, requested: bool) -> Result<Option<bool>> {
         if requested == self.active.is_some() {
             return Ok(None);

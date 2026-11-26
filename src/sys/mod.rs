@@ -22,6 +22,8 @@ pub(crate) use imp::cache_dir;
 pub(crate) use imp::exclusive_rename;
 #[cfg(any(feature = "project", feature = "raw"))]
 pub(crate) use imp::file_identity;
+#[cfg(all(windows, feature = "ui"))]
+pub(crate) use imp::local_appdata;
 #[cfg(feature = "editor")]
 pub(crate) use imp::physical_memory;
 #[cfg(feature = "editor")]

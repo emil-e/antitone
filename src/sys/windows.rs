@@ -150,13 +150,17 @@ pub(crate) fn config_dir(app: &str) -> Option<std::path::PathBuf> {
     roaming_appdata().map(|directory| directory.join(app))
 }
 
-#[cfg(feature = "project")]
-pub(crate) fn cache_dir(app: &str) -> Option<std::path::PathBuf> {
+#[cfg(any(feature = "project", feature = "ui"))]
+pub(crate) fn local_appdata() -> Option<std::path::PathBuf> {
     std::env::var_os("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
         .or_else(|| {
             std::env::var_os("USERPROFILE")
                 .map(|home| std::path::PathBuf::from(home).join("AppData/Local"))
         })
-        .map(|directory| directory.join(app))
+}
+
+#[cfg(feature = "project")]
+pub(crate) fn cache_dir(app: &str) -> Option<std::path::PathBuf> {
+    local_appdata().map(|directory| directory.join(app))
 }

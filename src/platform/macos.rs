@@ -1,8 +1,10 @@
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSApplication, NSApplicationPresentationOptions};
+use objc2_app_kit::{NSApplication, NSApplicationPresentationOptions, NSView, NSWindow};
 use objc2_core_graphics::{CGColorSpace, kCGColorSpaceExtendedSRGB};
+use objc2_foundation::NSString;
 use winit::dpi::{LogicalPosition, LogicalSize};
+use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
 
 use crate::Error;
@@ -38,6 +40,51 @@ pub(crate) const MENU_STRIP_IS_LIGHT: bool = false;
 /// The application icon is set through AppKit; the window carries no icon of its own.
 pub fn configure_window(_window: &winit::window::Window) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
+}
+
+pub(crate) struct WindowPlacement(Retained<NSString>);
+
+impl Default for WindowPlacement {
+    fn default() -> Self {
+        Self(NSString::from_str("AntitoneMainWindow"))
+    }
+}
+
+impl WindowPlacement {
+    pub(crate) fn restore(&mut self, window: &Window) {
+        if let Some(native) = ns_window(window) {
+            native.setFrameUsingName(&self.0);
+        }
+    }
+
+    pub(crate) fn reveal(&self, window: &Window) {
+        window.set_visible(true);
+        self.capture(window);
+    }
+
+    pub(crate) fn capture(&self, window: &Window) {
+        // Save explicitly: photo fullscreen changes the same window frame as a user resize.
+        if let Some(native) = ns_window(window) {
+            native.saveFrameUsingName(&self.0);
+        }
+    }
+
+    pub(crate) fn finish(&self, window: &Window, windowed: bool) {
+        if windowed {
+            self.capture(window);
+        }
+    }
+}
+
+fn ns_window(window: &Window) -> Option<Retained<NSWindow>> {
+    let _main = MainThreadMarker::new()?;
+    let handle = window.window_handle().ok()?;
+    let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
+        return None;
+    };
+    // Winit's borrowed handle keeps the AppKit view alive; its window is accessed on the main thread.
+    let view = unsafe { appkit.ns_view.cast::<NSView>().as_ref() };
+    view.window()
 }
 
 #[cfg(feature = "editor")]

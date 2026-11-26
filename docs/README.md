@@ -47,8 +47,10 @@ Where each area's implementation lives — navigation, not specification. Follow
 | Editor | [editor](../src/editor.rs) and its feature modules | Live state, controls and transactions |
 | Workflows | [application](../src/application.rs), [blocking execution](../src/background.rs), [picking](../src/editor/picking.rs), [export](../src/editor/export.rs) | Feature-owned async execution, borrowed UI context, off-thread work |
 | Persistence | [project](../src/project.rs), [document](../src/editor/document.rs), [document owner](../src/editor/document_scope.rs) | Accepted state, history and cache lifetime, compatibility |
-| Host | [host](../src/platform/host.rs), [macOS](../src/platform/macos.rs), [Windows](../src/platform/windows.rs), [full-display inspection](../src/platform/fullscreen.rs) | Event loop, surface, presentation, native menus, window coverage |
+| Host | [host](../src/platform/host.rs), [macOS](../src/platform/macos.rs), [Windows](../src/platform/windows.rs), [full-display inspection](../src/platform/fullscreen.rs) | Event loop, surface, presentation, native menus, window placement |
 | Branding | [assets](../assets/branding/README.md), [generator](../native/branding_assets.swift), [macOS packaging](../scripts/package-macos.py) | Portable artwork and relocatable local-test application bundle |
+
+The editor binary opts into host-owned placement. AppKit stores the window frame in native defaults; [Win32 placement](../src/platform/windows/window_placement.rs) uses `%LOCALAPPDATA%\Antitone\window-placement.json` and remembers whether the window was maximized. Keep fullscreen geometry out of this state and keep placement out of editor preferences and projects.
 
 ## Make a change
 
