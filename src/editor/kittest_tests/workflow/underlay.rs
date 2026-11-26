@@ -79,20 +79,22 @@ fn successive_pans_keep_the_canvas_covered_while_a_composite_is_in_flight() {
                 true
             });
 
-            let (second, underlay) = harness.read(|editor| {
-                (
-                    editor.document.visit.working_view.current_frame().unwrap(),
-                    editor.canvas_frame.displayed.as_ref().unwrap().view.clone(),
-                )
-            });
+            let second =
+                harness.read(|editor| editor.document.visit.working_view.current_frame().unwrap());
             pan(&mut harness, -60.);
             harness.read(|editor| {
                 let current = editor.document.visit.working_view.current_frame().unwrap();
                 assert!(current.max.0[0] > second.max.0[0]);
-                assert!(Arc::ptr_eq(
-                    &editor.canvas_frame.displayed.as_ref().unwrap().view,
-                    &underlay
-                ));
+                let fallback = editor
+                    .canvas_frame
+                    .displayed
+                    .as_ref()
+                    .unwrap()
+                    .view
+                    .spec
+                    .frame();
+                assert_eq!(fallback.min.0, [0., 0.]);
+                assert_eq!(fallback.max.0, fallback.composition.size().map(f64::from));
             });
         });
 
