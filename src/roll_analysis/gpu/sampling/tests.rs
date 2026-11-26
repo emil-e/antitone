@@ -144,9 +144,9 @@ fn flat_corrected_camera_samples_are_kept_even_with_very_low_signal() {
             [a.x, a.y, a.width, a.height],
             [2, 2],
             vec![
-                DVec3::splat(0.4),
+                DVec3::splat(0.1),
                 DVec3::splat(2.),
-                DVec3::splat(0.4),
+                DVec3::splat(0.1),
                 DVec3::splat(2.),
             ],
         )
