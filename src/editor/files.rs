@@ -72,8 +72,6 @@ fn project_save_directory(document: &Document) -> Option<PathBuf> {
 
 #[derive(Default)]
 pub(super) struct State {
-    #[cfg(all(test, feature = "ui-tests"))]
-    pub chooser_path: Option<PathBuf>,
     action: Option<Pending>,
     open: Option<async_executor::Task<()>>,
 }
@@ -266,7 +264,7 @@ impl Editor {
             .map(|task| Pending { closing, task });
     }
 
-    pub(super) fn save_destination(&self, save_as: bool) -> Option<Destination> {
+    fn save_destination(&self, save_as: bool) -> Option<Destination> {
         if !save_as && let Some(path) = self.document.path.clone() {
             return Some(Destination {
                 path,
@@ -274,26 +272,15 @@ impl Editor {
                 confirm_replace: false,
             });
         }
-        let choose_path = || {
-            let name = project_save_name(self.document.path.as_deref());
-            let mut dialog = rfd::FileDialog::new()
-                .set_title("Save Antitone project")
-                .set_file_name(name)
-                .add_filter("Antitone project", &["antitone"]);
-            if let Some(parent) = project_save_directory(&self.document) {
-                dialog = dialog.set_directory(parent);
-            }
-            crate::platform::menu::with_native_dialog(|| dialog.save_file())
-        };
-        #[cfg(all(test, feature = "ui-tests"))]
-        let path = self
-            .document
-            .files
-            .chooser_path
-            .clone()
-            .or_else(choose_path)?;
-        #[cfg(not(all(test, feature = "ui-tests")))]
-        let path = choose_path()?;
+        let name = project_save_name(self.document.path.as_deref());
+        let mut dialog = rfd::FileDialog::new()
+            .set_title("Save Antitone project")
+            .set_file_name(name)
+            .add_filter("Antitone project", &["antitone"]);
+        if let Some(parent) = project_save_directory(&self.document) {
+            dialog = dialog.set_directory(parent);
+        }
+        let path = crate::platform::menu::with_native_dialog(|| dialog.save_file())?;
         let exists = path.exists();
         Some(Destination {
             confirm_replace: exists && self.document.path.as_ref() != Some(&path),
@@ -449,10 +436,7 @@ async fn finish_transition(cx: &UiContext<'_, Editor>, transition: Transition) {
     cx.update(|editor| editor.perform_transition(transition, cx));
 }
 
-pub(super) async fn confirm_destination(
-    cx: &UiContext<'_, Editor>,
-    destination: &Destination,
-) -> Option<()> {
+async fn save_to(cx: &UiContext<'_, Editor>, destination: Destination) -> Option<bool> {
     if destination.confirm_replace {
         let detail = destination.path.display().to_string();
         let response = cx.update(|editor| editor.dialogs.show(move |context, dialog, escape| {
@@ -464,11 +448,7 @@ pub(super) async fn confirm_destination(
             return None;
         }
     }
-    Some(())
-}
 
-async fn save_to(cx: &UiContext<'_, Editor>, destination: Destination) -> Option<bool> {
-    confirm_destination(cx, &destination).await?;
     let response = cx
         .update(|editor| {
             editor.start_save(

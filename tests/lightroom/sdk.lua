@@ -22,7 +22,7 @@ function sdk.reset(fixture)
         fs = {}, prefs = {}, messages = {}, commands = {}, stackCalls = {}, addCalls = 0,
         writeStatus = "executed", confirms = {}, confirmations = {},
         appPaths = {"/Applications/Antitone.app"}, catalogPath = "/catalog/test.lrcat",
-        protocol = "4\n", protocolStatus = 0, appStatus = 0,
+        protocol = "5\n", protocolStatus = 0, appStatus = 0,
     }
     active = e
     e.a, e.b = photo("a", fixture.sources[1].path), photo("b", fixture.sources[2].path)
@@ -95,8 +95,22 @@ function sdk.reset(fixture)
             message = function(...) e.messages[#e.messages + 1] = {...} end,
         },
         LrTasks = {
-            pcall = pcall,
-            startAsyncTask = function(work) work() end,
+            pcall = function(work, ...)
+                if e.task and coroutine.running() == e.task then return true, work(...) end
+                return pcall(work, ...)
+            end,
+            startAsyncTask = function(work)
+                if e.scheduleLaunch then
+                    e.task = coroutine.create(work)
+                else
+                    work()
+                end
+            end,
+            sleep = function()
+                assert(e.task and coroutine.status(e.task) == "suspended")
+                local ok, err = coroutine.resume(e.task)
+                assert(ok, err)
+            end,
             execute = function(command)
                 e.commands[#e.commands + 1] = command
                 local log, request

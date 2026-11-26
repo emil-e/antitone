@@ -1,19 +1,19 @@
-//! Lightroom's JSON transport and project save/return adapter.
+//! Lightroom's JSON transport and project save and image send adapter.
 use crate::editor::{Error, OutputTarget, document::Document, external_edit, output};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 const PRESENTATION: external_edit::Presentation = external_edit::Presentation {
-    action: "Save Back to Lightroom",
+    action: "Send to Lightroom",
     opening: "Opening Lightroom project…",
-    working: "Saving back to Lightroom…",
-    completed: "Saved back to Lightroom",
+    working: "Sending to Lightroom…",
+    completed: "Images ready for Lightroom",
 };
 
 pub fn read(file: &Path) -> Result<external_edit::Request, Error> {
@@ -55,17 +55,21 @@ struct Source {
 #[derive(Serialize)]
 struct Render<'a> {
     uuid: &'a str,
-    source: String,
+    original: &'a Path,
     path: &'a Path,
 }
 
 #[derive(Serialize)]
-struct Receipt<'a> {
+struct SavedProject<'a> {
     version: u32,
     project: &'a Path,
     sources: Vec<Source>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    renders: Option<Vec<Render<'a>>>,
+}
+
+#[derive(Serialize)]
+struct Send<'a> {
+    version: u32,
+    renders: Vec<Render<'a>>,
 }
 
 fn failure(message: impl std::fmt::Display) -> Error {
@@ -124,11 +128,7 @@ impl Request {
         Ok(request)
     }
 
-    fn receipt(
-        &self,
-        document: &Document,
-        renders: Option<&[external_edit::Rendered]>,
-    ) -> Result<(), Error> {
+    fn save_receipt(&self, document: &Document) -> Result<(), Error> {
         let project = document
             .path
             .as_deref()
@@ -161,33 +161,15 @@ impl Request {
                 })
             })
             .collect::<Result<Vec<_>, Error>>()?;
-        let renders = renders
-            .map(|renders| self.render_entries(document, renders))
-            .transpose()?;
-        let path = if renders.is_some() {
-            self.receipt.clone()
-        } else {
-            self.receipt.with_file_name("saved.json")
-        };
-        let receipt = Receipt {
-            version: PROTOCOL_VERSION,
-            project,
-            sources,
-            renders,
-        };
-        let mut file = tempfile::NamedTempFile::new_in(
-            path.parent()
-                .ok_or_else(|| failure("receipt has no parent"))?,
+        write_receipt(
+            &self.receipt.with_file_name("saved.json"),
+            &SavedProject {
+                version: PROTOCOL_VERSION,
+                project,
+                sources,
+            },
+            true,
         )
-        .map_err(failure)?;
-        serde_json::to_writer_pretty(file.as_file_mut(), &receipt).map_err(failure)?;
-        file.as_file().sync_all().map_err(failure)?;
-        if receipt.renders.is_some() {
-            file.persist_noclobber(path).map_err(failure)?;
-        } else {
-            file.persist(path).map_err(failure)?;
-        }
-        Ok(())
     }
 
     fn render_entries<'a>(
@@ -210,11 +192,32 @@ impl Request {
                 }
                 Ok(Render {
                     uuid: &photo.uuid,
-                    source: source.0.to_string(),
+                    original: &photo.path,
                     path: &render.path,
                 })
             })
             .collect()
+    }
+}
+
+fn write_receipt(path: &Path, receipt: &impl Serialize, replace: bool) -> Result<(), Error> {
+    let mut file = tempfile::NamedTempFile::new_in(path.parent().expect("absolute receipt path"))
+        .map_err(failure)?;
+    serde_json::to_writer_pretty(file.as_file_mut(), receipt).map_err(failure)?;
+    file.as_file().sync_all().map_err(failure)?;
+    if replace {
+        file.persist(path).map_err(failure)?;
+    } else {
+        file.persist_noclobber(path).map_err(failure)?;
+    }
+    Ok(())
+}
+
+fn send_receipt(first: &Path, index: u64) -> PathBuf {
+    if index == 1 {
+        first.to_owned()
+    } else {
+        first.with_file_name(format!("result-{index}.json"))
     }
 }
 
@@ -232,7 +235,9 @@ impl external_edit::Input for Request {
             return Err(Error::Cancelled);
         }
         if self.receipt.exists() {
-            return Err(failure("this Lightroom session has already returned"));
+            return Err(failure(
+                "this Lightroom request has already published images",
+            ));
         }
         let mut document = if let Some(project) = &self.project {
             Document::open(project)?
@@ -282,6 +287,7 @@ impl external_edit::Input for Request {
 struct Destination {
     request: Request,
     project: OnceLock<PathBuf>,
+    next_send: Mutex<u64>,
 }
 
 impl Destination {
@@ -291,17 +297,17 @@ impl Destination {
             .take()
             .map(OnceLock::from)
             .unwrap_or_default();
-        Self { request, project }
+        Self {
+            request,
+            project,
+            next_send: Mutex::new(1),
+        }
     }
 }
 
 impl external_edit::Destination for Destination {
     fn presentation(&self) -> external_edit::Presentation {
         PRESENTATION
-    }
-
-    fn project_destination(&self) -> Option<&Path> {
-        self.project.get().map(PathBuf::as_path)
     }
 
     fn output(&self, document: &Document, target: OutputTarget) -> Result<output::Options, Error> {
@@ -338,7 +344,7 @@ impl external_edit::Destination for Destination {
         if project != path {
             return Ok(());
         }
-        self.request.receipt(document, None)
+        self.request.save_receipt(document)
     }
 
     fn publish(
@@ -346,7 +352,19 @@ impl external_edit::Destination for Destination {
         document: &Document,
         renders: &[external_edit::Rendered],
     ) -> Result<(), Error> {
-        self.request.receipt(document, Some(renders))
+        let renders = self.request.render_entries(document, renders)?;
+        let mut index = self.next_send.lock().map_err(failure)?;
+        let path = send_receipt(&self.request.receipt, *index);
+        write_receipt(
+            &path,
+            &Send {
+                version: PROTOCOL_VERSION,
+                renders,
+            },
+            false,
+        )?;
+        *index += 1;
+        Ok(())
     }
 }
 

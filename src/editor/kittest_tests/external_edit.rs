@@ -54,14 +54,8 @@ impl external::Destination for HostDestination {
     }
 
     fn publish(&self, document: &Document, renders: &[external::Rendered]) -> Result<(), Error> {
-        let path = document
-            .path
-            .as_ref()
-            .expect("publish receives a saved document");
-        assert_eq!(path, &self.folder.join("host.antitone"));
-        let saved = Document::open(path).expect("the project is on disk before publication");
-        assert_eq!(saved.project.roll, document.project.roll);
-        assert!(!document.dirty());
+        assert!(document.path.is_none());
+        assert!(document.dirty());
         if self.reject {
             return Err(Error::Project("host rejected the update".into()));
         }
@@ -145,10 +139,7 @@ fn external_completion_keeps_newer_accepted_edits_instead_of_closing_over_them()
                 angle: 0.,
             });
         });
-        h.enter(|editor, cx| {
-            editor.document.files.chooser_path = Some(directory.path().join("host.antitone"));
-            editor.return_external(cx);
-        });
+        h.enter(|editor, cx| editor.return_external(cx));
         wait_for(&mut h, |_| entered.load(Ordering::Acquire));
         h.update(|editor| {
             assert!(editor.workspace_input.is_blocked());
@@ -168,8 +159,8 @@ fn external_completion_keeps_newer_accepted_edits_instead_of_closing_over_them()
             assert!(editor.document.dirty());
             assert_eq!(editor.document.project.roll.exposure, 0.75);
             assert!(
-                !editor.external_return_available(),
-                "this invocation already published its return"
+                editor.external_return_available(),
+                "another send is available without reopening"
             );
         });
         native_file_action(&mut h, crate::platform::menu::Action::Undo);
@@ -177,8 +168,8 @@ fn external_completion_keeps_newer_accepted_edits_instead_of_closing_over_them()
         h.read(|editor| {
             assert_eq!(editor.document.project.roll.exposure, 0.25);
             assert!(
-                !editor.document.dirty(),
-                "the saved baseline is the published snapshot"
+                editor.document.dirty(),
+                "the published snapshot does not become a saved baseline"
             );
             assert!(
                 !editor.allow_close,
@@ -202,10 +193,9 @@ fn external_completion_keeps_newer_accepted_edits_instead_of_closing_over_them()
 }
 
 #[test]
-fn external_edit_saves_the_project_before_rendering_and_publication() {
+fn external_edit_publication_never_saves_or_closes_the_project() {
     for reject in [false, true] {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("host.antitone");
         let destination = Arc::new(HostDestination {
             folder: directory.path().into(),
             published: Mutex::default(),
@@ -228,7 +218,6 @@ fn external_edit_saves_the_project_before_rendering_and_publication() {
                     size: [16, 12],
                     angle: 0.,
                 });
-                editor.document.files.chooser_path = Some(path.clone());
             });
             h.step();
             let button =
@@ -238,17 +227,11 @@ fn external_edit_saves_the_project_before_rendering_and_publication() {
             h.step();
             wait_for(&mut h, |editor| !editor.document.external_edit.pending());
             h.read(|editor| {
-                assert_eq!(editor.document.path.as_ref(), Some(&path));
-                assert_eq!(editor.allow_close, !reject);
-                assert!(
-                    !editor.document.dirty(),
-                    "even a failed publication retains the completed project save"
-                );
+                assert!(editor.document.path.is_none());
+                assert!(!editor.allow_close);
+                assert!(editor.document.dirty());
                 assert_eq!(editor.dialogs.is_open(), reject);
             });
-            let saved = Document::open(&path).unwrap();
-            assert_eq!(saved.project.roll.exposure, 0.5);
-            assert_eq!(saved.project.sources[0].crop.unwrap().size, [16, 12]);
             let published = destination.published.lock().unwrap();
             if reject {
                 assert!(published.is_none());

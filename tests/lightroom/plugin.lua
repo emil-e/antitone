@@ -1,7 +1,8 @@
 local root = assert(PLUGIN_PATH)
 _PLUGIN = { path = root }
 local json = dofile(root .. "/json.lua")
-local fixture = json.decode(assert(RECEIPT_FIXTURE))
+local fixture = json.decode(assert(SAVE_FIXTURE))
+fixture.renders = json.decode(assert(RECEIPT_FIXTURE)).renders
 local sdk = dofile(assert(TEST_ROOT) .. "/sdk.lua")
 local e
 local function bridge() return dofile(root .. "/Bridge.lua") end
@@ -11,18 +12,23 @@ end
 local function linked(project)
     e.a.fields.project, e.b.fields.project = project, project
 end
-local function publish(value, directory)
+local function publish(value, directory, name)
     value = value or json.decode(RECEIPT_FIXTURE)
-    e.fs[value.project] = "project"
     for _, render in ipairs(value.renders) do e.fs[render.path] = "render" end
-    e.fs[directory .. "/result.json"] = json.encode(value)
+    e.fs[directory .. "/" .. (name or "result.json")] = json.encode(value)
+end
+local function publish_save(directory, project)
+    local value = json.decode(SAVE_FIXTURE)
+    value.project = project or value.project
+    e.fs[value.project] = "saved edits"
+    e.fs[directory .. "/saved.json"] = json.encode(value)
 end
 local function return_on_exit(value)
     e.onExit = function(directory) publish(value, directory) end
 end
 local function multi()
     local value = json.decode(RECEIPT_FIXTURE)
-    value.renders[2] = { uuid = "a", source = "1", path = "/photos/one 'frame'-Antitone.tif" }
+    value.renders[2] = { uuid = "a", original = fixture.sources[1].path, path = "/photos/one 'frame'-Antitone.tif" }
     return value
 end
 local function test(name, work)
@@ -54,9 +60,8 @@ test("Windows can choose its executable and launch both checks and editing with 
     e.appPaths, e.tempPath = {executable}, "C:/Users/Test User/AppData/Local/Temp"
     e.fs[executable] = "windows binary"
     local value = json.decode(RECEIPT_FIXTURE)
-    value.project = "D:/Photo Projects/roll.antitone"
-    value.sources[1].path, value.sources[2].path = "D:/Raw Photos/one.ARW", "D:/Raw Photos/two.ARW"
-    e.a.path, e.b.path = value.sources[1].path, value.sources[2].path
+    e.a.path, e.b.path = "D:/Raw Photos/one.ARW", "D:/Raw Photos/two.ARW"
+    value.renders[1].original = e.b.path
     e.fs[e.a.path], e.fs[e.b.path] = "raw-a", "raw-b"
     value.renders[1].path = "D:/Raw Photos/two-Antitone.tif"
     return_on_exit(value); bridge().edit()
@@ -80,7 +85,7 @@ test("a blank protocol reply is diagnosed as a launch failure rather than an inc
 end)
 
 test("a numeric protocol mismatch still reports incompatible versions", function()
-    e.protocol = "3\n"
+    e.protocol = "4\n"
     local ok, err = pcall(function() bridge().edit() end)
     assert(not ok and not e.launched)
     assert(tostring(err):find("not compatible", 1, true))
@@ -129,18 +134,21 @@ test("old session preferences and files are ignored without importing or deletin
     assert(e.fs["/old/return/result.json"] == RECEIPT_FIXTURE)
 end)
 
-test("completed invocation automatically links the whole roll, preserves string IDs and stacks its results", function()
+test("sending without saving stacks the TIFF and links only its original", function()
     return_on_exit(); bridge().edit()
     local returned = e.catalog:findPhotoByPath(fixture.renders[1].path)
-    assert(e.a.fields.project == fixture.project and e.a.fields.source == "1")
-    assert(e.b.fields.source == "18446744073709551615")
-    assert(returned.fields.original == "b" and returned.fields.source == e.b.fields.source)
+    assert(not e.a.fields.project and not e.b.fields.project and not e.fs[fixture.project])
+    assert(returned.fields.original == "b" and not returned.fields.source and not returned.fields.project)
     assert(e.catalog.active == returned and e.stackCalls[1].stack == e.b and e.stackCalls[1].position == "above")
     assert(e.addCalls == 1)
 end)
 
-test("selecting original and returned TIFF deduplicates to its original and saved project", function()
-    return_on_exit(); bridge().edit()
+test("selecting original and returned TIFF deduplicates and follows a separately saved project", function()
+    e.onExit = function(directory)
+        publish(nil, directory)
+        publish_save(directory)
+    end
+    bridge().edit()
     local returned = e.catalog:findPhotoByPath(fixture.renders[1].path)
     e.catalog.selected, e.catalog.active = {e.b, returned}, returned
     e.onExit = nil; bridge().edit()
@@ -148,17 +156,16 @@ test("selecting original and returned TIFF deduplicates to its original and save
     assert(#request().photos == 1 and request().photos[1].uuid == "b" and request().photos[1].path == e.b.path)
 end)
 
-test("busy catalogue keeps saved files; retry opens the saved project and renders a fresh return", function()
+test("busy catalogue keeps rendered files; retry can send without a project", function()
     return_on_exit(); e.writeStatus = "aborted"
     local ok, err = pcall(function() bridge().edit() end)
     assert(not ok and tostring(err):find("catalogue is busy", 1, true))
-    assert(e.addCalls == 0 and e.fs[fixture.project] == "project")
+    assert(e.addCalls == 0 and not e.fs[fixture.project])
     local first = e.directory
     e.writeStatus = "executed"
-    e.projectPaths = {fixture.project}
     local fresh = json.decode(RECEIPT_FIXTURE); fresh.renders[1].path = "/photos/second/return-2.tif"
-    return_on_exit(fresh); bridge().openSavedProject()
-    assert(e.directory ~= first and request().mode == "open" and e.addCalls == 1)
+    return_on_exit(fresh); bridge().edit()
+    assert(e.directory ~= first and request().mode == "new" and e.addCalls == 1)
     assert(e.fs[fixture.renders[1].path] == "render" and e.fs[fresh.renders[1].path] == "render")
 end)
 
@@ -170,7 +177,7 @@ test("rerendering after partial import preserves prior files and activates all n
     local fresh = multi()
     fresh.renders[1].path, fresh.renders[2].path = "/photos/second/return-2.tif", "/photos/return-2.tif"
     e.failAddPath = nil; return_on_exit(fresh); bridge().edit()
-    assert(request().mode == "open" and e.addCalls == 3 and #e.catalog.selected == 2)
+    assert(request().mode == "new" and e.addCalls == 3 and #e.catalog.selected == 2)
     assert(#e.catalog.activeSources == 2)
     assert(e.stackCalls[2].stack == e.b and e.stackCalls[3].stack == e.a)
     assert(e.fs[value.renders[1].path] == "render" and e.fs[value.renders[2].path] == "render")
@@ -186,10 +193,10 @@ test("an output already imported while the process was running is reused by path
     assert(e.catalog.active.fields.original == "b")
 end)
 
-test("conflicting association is not silently reassigned during automatic import", function()
+test("saving a project never silently reassigns a conflicting association", function()
     e.catalog.selected, e.catalog.active = {e.b}, e.b
     e.a.fields.project = "/another/roll.antitone"
-    return_on_exit()
+    e.onExit = publish_save
     local ok, err = pcall(function() bridge().edit() end)
     assert(not ok and tostring(err):find("another Antitone project", 1, true))
     assert(e.addCalls == 0 and e.a.fields.project == "/another/roll.antitone")
@@ -219,11 +226,11 @@ test("cross-folder receipt imports without an invalid stack position", function(
     assert(e.stackCalls[1].stack == nil and e.stackCalls[1].position == nil)
 end)
 
-test("invalid JSON, versions, source ID types and empty returns fail before catalogue import", function()
-    local invalid, numeric = json.decode(RECEIPT_FIXTURE), json.decode(RECEIPT_FIXTURE)
-    invalid.version, numeric.sources[1].id = 2, 1
-    for _, text in ipairs({"not JSON", json.encode(invalid), json.encode(numeric),
-        '{"version":4,"project":"/photos/roll.antitone","sources":[],"renders":[]}'}) do
+test("invalid JSON, versions, original references and empty sends fail before catalogue import", function()
+    local invalid, wrong = json.decode(RECEIPT_FIXTURE), json.decode(RECEIPT_FIXTURE)
+    invalid.version, wrong.renders[1].original = 2, fixture.sources[1].path
+    for _, text in ipairs({"not JSON", json.encode(invalid), json.encode(wrong),
+        '{"version":5,"renders":[]}'}) do
         e.onExit = function(directory) e.fs[directory .. "/result.json"] = text end
         assert(not pcall(function() bridge().edit() end))
         assert(e.addCalls == 0)
@@ -238,13 +245,6 @@ test("a missing configured application reopens the chooser without clearing the 
     e.appPaths = {"/Applications/Antitone.app"}
     assert(config.read() == "/Applications/Antitone.app/Contents/MacOS/antitone")
 end)
-
-local function publish_save(directory)
-    local value = json.decode(RECEIPT_FIXTURE)
-    value.renders = nil
-    e.fs[value.project] = "saved edits"
-    e.fs[directory .. "/saved.json"] = json.encode(value)
-end
 
 test("ordinary save links the whole roll without importing or selecting TIFFs; Edit reopens it", function()
     e.onExit = function(directory)
@@ -261,7 +261,42 @@ test("ordinary save links the whole roll without importing or selecting TIFFs; E
     assert(e.confirmCount == 1 and e.addCalls == 0)
 end)
 
-test("a completed save-back both links the saved project and imports its render", function()
+test("each send imports once before the editor exits while project linking waits for exit", function()
+    e.scheduleLaunch = true
+    e.onExit = function(directory)
+        publish(nil, directory)
+        coroutine.yield()
+        assert(e.addCalls == 1 and not e.b.fields.project)
+        local fresh = json.decode(RECEIPT_FIXTURE)
+        fresh.renders[1].path = "/photos/second/second send.tif"
+        publish(fresh, directory, "result-2.json")
+        coroutine.yield()
+        assert(e.addCalls == 2 and not e.b.fields.project)
+        publish_save(directory)
+    end
+    bridge().edit()
+    assert(e.addCalls == 2 and e.b.fields.project == fixture.project)
+end)
+
+test("a failed live import leaves later sends available in the same session", function()
+    e.scheduleLaunch = true
+    e.onExit = function(directory)
+        e.failAddPath = fixture.renders[1].path
+        publish(nil, directory)
+        coroutine.yield()
+        assert(e.addCalls == 0 and #e.messages == 1)
+        assert(e.fs[e.failAddPath] == "render")
+        local fresh = json.decode(RECEIPT_FIXTURE)
+        fresh.renders[1].path = "/photos/second/retry.tif"
+        publish(fresh, directory, "result-2.json")
+        coroutine.yield()
+        assert(e.addCalls == 1)
+    end
+    bridge().edit()
+    assert(e.addCalls == 1 and #e.messages == 1)
+end)
+
+test("explicit save and send are both processed when the process exits", function()
     e.onExit = function(directory)
         publish_save(directory)
         publish(nil, directory)
@@ -271,7 +306,7 @@ test("a completed save-back both links the saved project and imports its render"
     assert(e.addCalls == 1 and e.catalog.active.path == fixture.renders[1].path)
 end)
 
-test("a failed render or nonzero exit does not lose the saved project association", function()
+test("a bad send receipt and nonzero exit do not lose the saved project association", function()
     e.onExit = function(directory)
         publish_save(directory)
         e.fs[directory .. "/result.json"] = "invalid return"
@@ -295,7 +330,7 @@ test("missing linked project can be cancelled without clearing metadata", functi
     assert(not e.launched and e.a.fields.project == "/missing/roll.antitone")
 end)
 
-test("locating a missing project changes associations only on return; older TIFFs follow the original", function()
+test("locating a missing project changes associations only on save; older TIFFs follow the original", function()
     local missing, moved = "/missing/roll.antitone", "/moved/roll.antitone"
     linked(missing); e.fs[moved] = "saved-edits"; e.projectPaths = {moved}
     local oldReturn = sdk.photo("old-return", "/old/return.tif", "TIFF")
@@ -304,8 +339,8 @@ test("locating a missing project changes associations only on return; older TIFF
     bridge().edit()
     assert(request().project == moved and request().mode == "open" and request().relocated_from == missing)
     assert(e.a.fields.project == missing and e.b.fields.project == missing)
-    local value = json.decode(RECEIPT_FIXTURE); value.project = moved
-    return_on_exit(value); bridge().edit()
+    e.onExit = function(directory) publish_save(directory, moved) end
+    bridge().edit()
     assert(e.a.fields.project == moved and e.b.fields.project == moved)
     e.catalog.selected, e.catalog.active = {oldReturn}, oldReturn
     local prompts = e.confirmCount
@@ -313,13 +348,12 @@ test("locating a missing project changes associations only on return; older TIFF
     assert(request().project == moved and e.confirmCount == prompts + 1)
 end)
 
-test("explicit replacement creates a fresh selected roll and defers relinking until return", function()
+test("explicit replacement creates a fresh selected roll and defers relinking until save", function()
     local missing, fresh = "/missing/roll.antitone", "/projects/replacement.antitone"
     linked(missing); e.confirms = {"other"}
-    local value = json.decode(RECEIPT_FIXTURE); value.project = fresh
     e.onExit = function(directory)
         assert(request().mode == "new" and request().project == nil and e.a.fields.project == missing)
-        publish(value, directory)
+        publish_save(directory, fresh)
     end
     bridge().edit()
     assert(e.a.fields.project == fresh and e.b.fields.project == fresh)
@@ -338,7 +372,7 @@ test("failed imports offer their log and rerender instructions without Lua sourc
     assert(e.revealed == e.directory .. "/session.log")
     local failure = e.confirmations[#e.confirmations]
     assert(failure[2]:find("Open Saved Antitone Project", 1, true) and failure[3] == "Show Log")
-    assert(e.fs[e.revealed] == "application diagnostic" and e.fs[fixture.project] == "project")
+    assert(e.fs[e.revealed] == "application diagnostic" and not e.fs[fixture.project])
     e.catalog.active = nil
     dofile(root .. "/Run.lua")("edit")
     local message = e.messages[#e.messages]

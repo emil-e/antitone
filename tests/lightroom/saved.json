@@ -1,0 +1,14 @@
+{
+  "version": 5,
+  "project": "/photos/röll 'one'.antitone",
+  "sources": [
+    {
+      "id": "1",
+      "path": "/photos/one 'frame'.ARW"
+    },
+    {
+      "id": "18446744073709551615",
+      "path": "/photos/second/twö\tline\nframe.ARW"
+    }
+  ]
+}

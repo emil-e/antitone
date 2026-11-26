@@ -17,7 +17,7 @@ fn calibrated(h: &mut Harness<'_, Editor>) {
 }
 
 #[test]
-fn lightroom_return_uses_accepted_state_and_normal_departure_with_crop_or_look_work() {
+fn lightroom_send_uses_accepted_state_without_applying_crop_or_look_work() {
     for preparing_look in [false, true] {
         let directory = tempfile::tempdir().unwrap();
         let project = directory.path().join("roll.antitone");
@@ -62,15 +62,10 @@ fn lightroom_return_uses_accepted_state_and_normal_departure_with_crop_or_look_w
                 assert!(editor.external_return_available());
             });
             h.step();
-            button_with_save_path(&mut h, &project);
-            wait_for(&mut h, |editor| !editor.document.external_edit.pending());
+            button(&mut h);
+            wait_sent(&mut h);
             h.read(|editor| {
-                assert!(!editor.dialogs.is_open(), "{}", editor.status);
-                assert!(
-                    editor.allow_close,
-                    "return follows ordinary clean-document departure"
-                );
-                assert!(!editor.document.dirty());
+                assert!(editor.document.dirty());
                 assert_eq!(editor.document.project, expected);
                 if let Some(draft) = draft {
                     assert_eq!(
@@ -86,7 +81,7 @@ fn lightroom_return_uses_accepted_state_and_normal_departure_with_crop_or_look_w
                 }
             });
             assert!(session.join("result.json").is_file());
-            assert_eq!(crate::project::Project::load(&project).unwrap(), expected);
+            assert!(!project.exists());
             assert_eq!(
                 tiff_dimensions(&returned_paths(&session.join("result.json"))[0]),
                 (16, 16)
@@ -104,7 +99,7 @@ fn lightroom_return_uses_accepted_state_and_normal_departure_with_crop_or_look_w
 }
 
 #[test]
-fn lightroom_save_as_keeps_return_destination_and_ordinary_save_updates_its_baseline() {
+fn lightroom_send_does_not_overwrite_either_saved_project_after_save_as() {
     let directory = tempfile::tempdir().unwrap();
     let project = directory.path().join("canonical.antitone");
     let copy = directory.path().join("project-copy.antitone");
@@ -133,17 +128,18 @@ fn lightroom_save_as_keeps_return_destination_and_ordinary_save_updates_its_base
         h.update(|editor| editor.document.project.roll.exposure = 0.5);
         h.step();
         button(&mut h);
-        wait_for(&mut h, |editor| {
-            editor.allow_close || editor.dialogs.is_open()
+        wait_sent(&mut h);
+        h.read(|editor| {
+            assert!(editor.document.dirty());
+            assert_eq!(editor.document.path.as_ref(), Some(&copy));
         });
-        h.read(|editor| assert!(editor.allow_close, "{}", editor.status));
     });
     assert_eq!(
         crate::project::Project::load(&project)
             .unwrap()
             .roll
             .exposure,
-        0.5
+        0.
     );
     assert_eq!(
         crate::project::Project::load(&copy).unwrap().roll.exposure,
@@ -152,7 +148,10 @@ fn lightroom_save_as_keeps_return_destination_and_ordinary_save_updates_its_base
     let receipt: Value =
         serde_json::from_str(&std::fs::read_to_string(session.join("result.json")).unwrap())
             .unwrap();
-    assert_eq!(receipt["project"], project.to_str().unwrap());
+    assert!(receipt.get("project").is_none());
+    let saved: Value =
+        serde_json::from_slice(&std::fs::read(session.join("saved.json")).unwrap()).unwrap();
+    assert_eq!(saved["project"], project.to_str().unwrap());
     assert_eq!(
         returned_paths(&session.join("result.json"))[0].parent(),
         paths[0].parent()
@@ -173,7 +172,9 @@ fn lightroom_project_save_failure_keeps_edits_without_rendering_or_publishing() 
         calibrated(&mut h);
         let expected = h.read(|editor| editor.document.project.clone());
         std::fs::remove_dir(&parent).unwrap();
-        button_with_save_path(&mut h, &project);
+        h.enter(|editor, cx| {
+            editor.save_project(project.clone(), crate::project::Save::New, None, cx)
+        });
         wait_for(&mut h, |editor| editor.dialogs.is_open());
         h.read(|editor| {
             assert!(!editor.allow_close);
@@ -191,7 +192,7 @@ fn lightroom_project_save_failure_keeps_edits_without_rendering_or_publishing() 
         assert!(!session.join("result.json").exists());
         assert!(
             returned_paths_if_present(paths[0].parent().unwrap()).is_empty(),
-            "rendering starts only after project save succeeds"
+            "an ordinary save never starts rendering"
         );
     });
 }
@@ -311,10 +312,7 @@ fn lightroom_return_uses_the_catalogue_alias_folder_not_the_projects_source_loca
         wait_for(&mut h, |editor| !editor.interaction_blocked());
         h.step();
         button(&mut h);
-        wait_for(&mut h, |editor| {
-            editor.allow_close || editor.dialogs.is_open()
-        });
-        h.read(|editor| assert!(editor.allow_close, "{}", editor.status));
+        wait_sent(&mut h);
     });
     let receipt = session.join("result.json");
     let rendered = returned_paths(&receipt);
@@ -322,7 +320,7 @@ fn lightroom_return_uses_the_catalogue_alias_folder_not_the_projects_source_loca
     assert!(returned_paths_if_present(paths[0].parent().unwrap()).is_empty());
     assert_eq!(tiff_dimensions(&rendered[0]), (16, 16));
     let receipt: Value = serde_json::from_str(&std::fs::read_to_string(receipt).unwrap()).unwrap();
-    assert_eq!(receipt["sources"][0]["path"], alias.to_str().unwrap());
+    assert_eq!(receipt["renders"][0]["original"], alias.to_str().unwrap());
 }
 
 fn returned_paths_if_present(directory: &std::path::Path) -> Vec<PathBuf> {
@@ -366,7 +364,7 @@ fn lightroom_return_captures_accepted_gamma_pair_without_waiting_for_its_proposa
         h.event(egui::Event::Text("0.9".into()));
         h.step();
         assert!(
-            !h.get_by_label("Save Back to Lightroom")
+            !h.get_by_label("Send to Lightroom")
                 .accesskit_node()
                 .is_disabled()
         );
@@ -379,18 +377,13 @@ fn lightroom_return_captures_accepted_gamma_pair_without_waiting_for_its_proposa
             assert_ne!(editor.document.project.input.gamma(), 0.9);
             editor.document.project.clone()
         });
-        button_with_save_path(&mut h, &project);
-        wait_for(&mut h, |editor| {
-            editor.allow_close || editor.dialogs.is_open()
-        });
+        button(&mut h);
+        wait_sent(&mut h);
         h.read(|editor| {
-            assert!(editor.allow_close, "{}", editor.status);
             assert_eq!(editor.document.project.input, accepted.input);
             assert_eq!(editor.document.project.roll.wb, accepted.roll.wb);
         });
-        let saved = crate::project::Project::load(&project).unwrap();
-        assert_eq!(saved.input, accepted.input);
-        assert_eq!(saved.roll.wb, accepted.roll.wb);
+        assert!(!project.exists());
         solve
     });
     assert!(

@@ -39,7 +39,7 @@ fn originals(directory: &std::path::Path, names: &[&str]) -> Vec<PathBuf> {
 
 fn assert_return_header(harness: &Harness<'_, Editor>) {
     let rect = harness
-        .get_by_role_and_label(egui::accesskit::Role::Button, "Save Back to Lightroom")
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Send to Lightroom")
         .rect();
     let window = harness.ctx.content_rect();
     assert!(
@@ -55,8 +55,7 @@ fn assert_return_header(harness: &Harness<'_, Editor>) {
 
 fn button(harness: &mut Harness<'_, Editor>) {
     assert_return_header(harness);
-    let button =
-        harness.get_by_role_and_label(egui::accesskit::Role::Button, "Save Back to Lightroom");
+    let button = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Send to Lightroom");
     assert!(
         !button.accesskit_node().is_disabled(),
         "return must actually be available"
@@ -65,9 +64,12 @@ fn button(harness: &mut Harness<'_, Editor>) {
     harness.step();
 }
 
-fn button_with_save_path(harness: &mut Harness<'_, Editor>, path: &std::path::Path) {
-    harness.update(|editor| editor.document.files.chooser_path = Some(path.to_owned()));
-    button(harness);
+fn wait_sent(harness: &mut Harness<'_, Editor>) {
+    wait_for(harness, |editor| !editor.document.external_edit.pending());
+    harness.read(|editor| {
+        assert!(!editor.dialogs.is_open(), "{}", editor.status);
+        assert!(!editor.allow_close);
+    });
 }
 
 fn tiff_dimensions(path: &std::path::Path) -> (u32, u32) {
@@ -106,7 +108,7 @@ fn lightroom_new_roll_returns_rendered_photos_and_single_member_reopens_the_whol
     let input = request(&first, &project, false, &paths);
     editor_harness(|mut h, _| {
         assert!(
-            h.query_by_label("Save Back to Lightroom").is_none(),
+            h.query_by_label("Send to Lightroom").is_none(),
             "ordinary documents have no return action"
         );
         h.enter(|editor, cx| editor.open_external(input, cx));
@@ -119,7 +121,7 @@ fn lightroom_new_roll_returns_rendered_photos_and_single_member_reopens_the_whol
             assert_return_header(&h);
         }
         assert!(
-            h.get_by_role_and_label(egui::accesskit::Role::Button, "Save Back to Lightroom")
+            h.get_by_role_and_label(egui::accesskit::Role::Button, "Send to Lightroom")
                 .accesskit_node()
                 .is_disabled(),
             "uncalibrated negatives cannot return a positive"
@@ -139,14 +141,38 @@ fn lightroom_new_roll_returns_rendered_photos_and_single_member_reopens_the_whol
         });
         h.step();
         save_capture(&h.render().unwrap(), "lightroom-return-offscreen");
-        button_with_save_path(&mut h, &project);
-        wait_for(&mut h, |editor| {
-            editor.allow_close || editor.dialogs.is_open()
+        button(&mut h);
+        wait_sent(&mut h);
+        h.read(|editor| assert!(editor.document.dirty()));
+        assert!(!project.exists());
+        assert!(!first.join("saved.json").exists());
+        let first_render = returned_paths(&first.join("result.json"))[0].clone();
+        let first_bytes = std::fs::read(&first_render).unwrap();
+        h.update(|editor| {
+            let id = editor.document.project.order[0];
+            let crop = editor
+                .document
+                .project
+                .source_mut(id)
+                .unwrap()
+                .crop
+                .as_mut()
+                .unwrap();
+            crop.size = [24, 18];
         });
-        h.read(|editor| {
-            assert!(editor.allow_close, "{}", editor.status);
-            assert!(!editor.document.dirty());
+        h.step();
+        button(&mut h);
+        wait_sent(&mut h);
+        let next = returned_paths(&first.join("result-2.json"));
+        assert_eq!(next.len(), 2);
+        assert_ne!(next[0], first_render);
+        assert_eq!(tiff_dimensions(&next[0]), (24, 18));
+        assert_eq!(std::fs::read(first_render).unwrap(), first_bytes);
+        h.enter(|editor, cx| {
+            editor.save_project(project.clone(), crate::project::Save::New, None, cx)
         });
+        wait_for(&mut h, |editor| !editor.document.files.pending());
+        h.read(|editor| assert!(!editor.document.dirty()));
     });
     let returned = returned_paths(&first.join("result.json"));
     assert_eq!(returned.len(), 2);
@@ -178,10 +204,7 @@ fn lightroom_new_roll_returns_rendered_photos_and_single_member_reopens_the_whol
         wait_for(&mut h, |editor| !editor.interaction_blocked());
         h.step();
         button(&mut h);
-        wait_for(&mut h, |editor| {
-            editor.allow_close || editor.dialogs.is_open()
-        });
-        h.read(|editor| assert!(editor.allow_close, "{}", editor.status));
+        wait_sent(&mut h);
     });
     let returned = returned_paths(&second.join("result.json"));
     assert_eq!(returned[0].parent(), paths[1].parent());
@@ -206,7 +229,7 @@ fn lightroom_new_roll_returns_rendered_photos_and_single_member_reopens_the_whol
             assert!(editor.document.external_edit.session.is_none());
             assert_eq!(editor.document.project, saved);
         });
-        assert!(h.query_by_label("Save Back to Lightroom").is_none());
+        assert!(h.query_by_label("Send to Lightroom").is_none());
         h.update(|editor| editor.document.project.roll.exposure = 0.75);
         h.enter(|editor, cx| {
             editor.save_project(project.clone(), crate::project::Save::Replace, None, cx)
@@ -236,7 +259,7 @@ fn lightroom_new_roll_returns_rendered_photos_and_single_member_reopens_the_whol
 }
 
 #[test]
-fn lightroom_return_failure_preserves_saved_project_and_never_publishes_a_success_receipt() {
+fn lightroom_send_failure_leaves_the_project_unsaved_and_publishes_no_receipt() {
     let directory = tempfile::tempdir().unwrap();
     let project = directory.path().join("roll.antitone");
     let session = directory.path().join("session");
@@ -273,17 +296,17 @@ fn lightroom_return_failure_preserves_saved_project_and_never_publishes_a_succes
         );
         h.step();
         workflow::wait_settled(&mut h);
-        button_with_save_path(&mut h, &project);
+        button(&mut h);
         wait_for(&mut h, |editor| editor.dialogs.is_open());
         h.read(|editor| {
             assert!(!editor.allow_close);
             assert!(
-                !editor.document.dirty(),
-                "project save succeeded before render failed"
+                editor.document.dirty(),
+                "failed send must not save the project"
             );
         });
-        assert!(project.is_file());
-        assert!(session.join("saved.json").is_file());
+        assert!(!project.exists());
+        assert!(!session.join("saved.json").exists());
         assert!(!session.join("result.json").exists());
     });
 }
