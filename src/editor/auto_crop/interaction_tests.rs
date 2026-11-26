@@ -164,7 +164,8 @@ fn captured_loaded_source_keys_accept_locator_aliases_but_reject_foreign_inputs(
                     .current_tool()
                     .unwrap()
                     .presentation()
-                    .primary
+                    .actions
+                    .primary()
                     .unwrap()
                     .enabled
             );

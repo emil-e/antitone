@@ -207,13 +207,12 @@ impl tool::Tool for FlatTool {
                 icon: ui::icons::Icon::Crop,
                 title: "Flat-field",
             },
-            primary: Some(tool::Primary {
+            actions: tool::Actions::Confirm(tool::Primary {
                 label: "Apply",
                 enabled: state.view.ready.is_some()
                     && state.region.is_some()
                     && !editor.interaction_blocked(),
             }),
-            dismiss: "Cancel",
             warning: None,
             help: "Select the illuminated area, excluding the holder and including the image centre.",
             navigation_help: None,

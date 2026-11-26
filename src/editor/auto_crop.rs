@@ -147,11 +147,10 @@ impl tool::Tool for AutoCropTool {
                 icon: ui::icons::Icon::BatchCrop,
                 title: "Auto-crop",
             },
-            primary: Some(tool::Primary {
+            actions: tool::Actions::Confirm(tool::Primary {
                 label: "Apply",
                 enabled,
             }),
-            dismiss: "Cancel",
             warning,
             help: "Drag an edge or corner for the shared inward margin; Space-drag / middle-drag pans.\nBrowsing is optional and never retargets the proposals · H hides artwork.",
             navigation_help: None,

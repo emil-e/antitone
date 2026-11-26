@@ -256,7 +256,11 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
             harness.key_press(egui::Key::Escape);
             harness.step();
             pointer(&mut harness, start - egui::vec2(20., 20.), false);
-            harness.read(|editor| assert_eq!(editor.document.state.project, accepted));
+            harness.read(|editor| {
+                assert!(!editor.masking());
+                assert_eq!(editor.document.state.project, accepted);
+            });
+            click(&mut harness, "Edit Linear 2");
             let layout = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
             let outside = layout.canvas.min + egui::vec2(8., 20.);
             drag(&mut harness, outside, outside + egui::vec2(5., 70.));

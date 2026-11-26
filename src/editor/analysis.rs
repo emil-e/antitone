@@ -352,7 +352,7 @@ impl tool::Tool for AnalyzeTool {
                 icon: ui::icons::Icon::Analyze,
                 title: "Analyze",
             },
-            primary: Some(tool::Primary {
+            actions: tool::Actions::Confirm(tool::Primary {
                 label: "Analyze roll",
                 enabled: !editor.interaction_blocked()
                     && !self.fitting()
@@ -365,7 +365,6 @@ impl tool::Tool for AnalyzeTool {
                     })
                     && editor.selected_area().is_some(),
             }),
-            dismiss: "Cancel",
             warning,
             help: "Choose Opening or Picture on the source; drag edges/corners to resize.\nBrowse to edit exceptions before analyzing the roll.",
             navigation_help: None,

@@ -198,7 +198,11 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
             harness.key_press(egui::Key::Escape);
             harness.step();
             pointer(&mut harness, center_screen + egui::vec2(20., -15.), false);
-            harness.read(|editor| assert_eq!(editor.document.state.project, before));
+            harness.read(|editor| {
+                assert!(!editor.masking());
+                assert_eq!(editor.document.state.project, before);
+            });
+            click(&mut harness, "Edit Sky");
             let axis = harness.read(|editor| screen(editor, point(original, DVec2::X)));
             let along = (axis - center_screen).normalized();
             drag(&mut harness, axis, axis + along * 12.);
