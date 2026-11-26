@@ -31,16 +31,26 @@ fn patch(editor: &Editor) -> crate::coverage::Coverage {
 }
 
 fn measured_reference(editor: &Editor, region: crate::coverage::Coverage) -> DVec3 {
-    let reference = measurement::capture_scan(editor)
-        .unwrap()
-        .reference_coverage(region)
-        .unwrap();
+    let context = editor.source_context().unwrap();
+    let reference = crate::sampling::camera::reference_coverage(
+        &context.source,
+        context.correction.map().map(std::sync::Arc::as_ref),
+        region,
+    )
+    .unwrap();
     let actual = query::reference(
         (
             &editor.source_services.as_ref().unwrap().evaluation,
             &editor.source_services.as_ref().unwrap().queue,
         ),
-        &mut measurement::capture_scan(editor).unwrap(),
+        &editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .developed,
         None,
         region,
         &|| false,
@@ -56,8 +66,15 @@ fn reference_accepts_positive_camera_light_below_one_code_but_not_zero() {
         let file = crate::raw::fixture::bayer_dng_with_rgb([code; 3]);
         let editor = setup(file.path().to_str().unwrap());
         let services = editor.source_services.as_ref().unwrap();
-        let mut scan = measurement::capture_scan(&editor).unwrap();
-        let area = scan.area;
+        let source = &editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .developed;
+        let area = source.area();
         let map = crate::flat_field::FlatField::from_nodes(
             [area.x, area.y, area.width, area.height],
             [2, 2],
@@ -71,7 +88,7 @@ fn reference_accepts_positive_camera_light_below_one_code_but_not_zero() {
         .unwrap();
         let measured = query::reference(
             (&services.evaluation, &services.queue),
-            &mut scan,
+            source,
             Some(std::sync::Arc::new(field)),
             patch(&editor),
             &|| false,
@@ -152,7 +169,7 @@ fn roll_balance_picker_uses_one_patch_and_commits_both_balances_together() {
     let spans = DVec3::new(0.8, 1., 1.25);
     let dmin = camera * spans.exp();
     let dmax = dmin * (-DVec3::new(1.42, 1.7, 2.06)).exp();
-    let scan = measurement::capture_scan(&editor).unwrap();
+    let scan = editor.source_context().unwrap().source;
     editor.load_input(Calibration { dmin, dmax }.into());
     editor.document.project.roll.exposure = 0.5;
     editor.document.project.roll.wb.warmth = 0.2;
@@ -194,9 +211,9 @@ fn roll_balance_picker_uses_one_patch_and_commits_both_balances_together() {
             };
             *balance = negative.balance;
             let pipeline =
-                crate::processing::InputPipeline::new(negative, scan.camera_to_ap1).unwrap();
+                crate::processing::InputPipeline::new(negative, scan.camera_to_ap1()).unwrap();
             let positive = crate::sampling::weighted_mean_iter(
-                region.pixels(scan.area).unwrap().map(|([x, y], weight)| {
+                region.pixels(scan.area()).unwrap().map(|([x, y], weight)| {
                     let rgb = pipeline.apply(scan.pixel(x, y)?)?.rgb;
                     Ok((rgb, weight))
                 }),

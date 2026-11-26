@@ -683,10 +683,13 @@ fn source_inspection_is_transient_and_measurements_exclude_viewing_white_and_exp
     let expected_dmax = editor.dmax();
     let expected_roll = editor.document.project.roll;
     let expected_photo = editor.photo_settings();
-    let baseline = measurement::capture_scan(&editor)
-        .unwrap()
-        .reference_coverage(patch())
-        .unwrap();
+    let context = editor.source_context().unwrap();
+    let baseline = crate::sampling::camera::reference_coverage(
+        &context.source,
+        context.correction.map().map(Arc::as_ref),
+        patch(),
+    )
+    .unwrap();
 
     editor.source_white_balance = crate::raw::SourceWhiteBalance::AsShot;
     editor.source_exposure = 2.3456789;
@@ -695,10 +698,13 @@ fn source_inspection_is_transient_and_measurements_exclude_viewing_white_and_exp
 
     editor.preview_picker(PickerCase::Dmin);
     editor.set_test_pick_region(Some(patch()));
-    let actual = measurement::capture_scan(&editor)
-        .unwrap()
-        .reference_coverage(patch())
-        .unwrap();
+    let context = editor.source_context().unwrap();
+    let actual = crate::sampling::camera::reference_coverage(
+        &context.source,
+        context.correction.map().map(Arc::as_ref),
+        patch(),
+    )
+    .unwrap();
     assert_eq!(actual, baseline);
     (calibration::set_dmin(&mut editor, expected_dmin.unwrap())).unwrap();
     editor.finish_pick(&crate::application::UiContext::render_only());
@@ -1099,10 +1105,7 @@ impl Editor {
 
 pub(super) fn developed_fixture() -> Arc<crate::scan::DevelopedSource> {
     let file = crate::raw::fixture::bayer_dng();
-    Scan::open(file.path(), Some([1.; 4]))
-        .unwrap()
-        .source()
-        .clone()
+    DevelopedSource::open(file.path(), Some([1.; 4])).unwrap()
 }
 
 // A valid paused area-editing phase for presentation/input tests. Lifecycle and
@@ -2309,7 +2312,7 @@ fn orientation_buttons_transform_displayed_photo_and_preserve_crop_and_other_sco
 
 #[test]
 fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking() {
-    for section in ["Composition", "Scan orientation"] {
+    for section in ["Composition", "DevelopedSource orientation"] {
         let mut editor = fixture();
         add_ready_fixture(&mut editor);
         editor.tab = if section == "Composition" { 1 } else { 0 };
@@ -2385,7 +2388,12 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
                 .any(|(label, rect)| label == "Flip horizontal" && rect.top() < tabs.top())
         );
         editor.tab = 0;
-        click_section_button(&mut editor, &context, "Scan orientation", "Flip horizontal");
+        click_section_button(
+            &mut editor,
+            &context,
+            "DevelopedSource orientation",
+            "Flip horizontal",
+        );
         assert!(editor.document.project.orientation.is_identity());
         assert!(editor.photo_orientation().is_identity());
         assert_eq!(
@@ -2822,7 +2830,7 @@ fn click_control(editor: &mut Editor, context: &egui::Context, label: &str) {
 }
 
 fn click_section_button(editor: &mut Editor, context: &egui::Context, section: &str, label: &str) {
-    if section == "Composition" || section == "Scan orientation" {
+    if section == "Composition" || section == "DevelopedSource orientation" {
         click_control(editor, context, label);
         return;
     }

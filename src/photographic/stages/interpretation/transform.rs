@@ -133,8 +133,15 @@ impl InputTransform {
     }
 
     #[cfg(all(test, feature = "raw"))]
-    pub(crate) fn for_scan(scan: &crate::scan::Scan, input: InputSettings) -> Result<Self, Error> {
-        Self::new(input, scan.positive_matrix(&input)?)
+    pub(crate) fn for_source(
+        source: &crate::scan::DevelopedSource,
+        input: InputSettings,
+        reference_ev: Option<f64>,
+    ) -> Result<Self, Error> {
+        Self::new(
+            input,
+            input.positive_matrix(source.camera_to_ap1(), reference_ev)?,
+        )
     }
 
     pub fn source_continuous(
@@ -150,9 +157,16 @@ impl InputTransform {
         crate::photographic::parameters::input_parameters(self.input, self.matrix)
     }
 
-    #[cfg(feature = "raw")]
-    pub(crate) fn matches_native(&self, scan: &crate::scan::Scan) -> Result<bool, Error> {
-        Ok(scan.positive_matrix(&self.input)? == self.matrix)
+    #[cfg(feature = "editor")]
+    pub(crate) fn matches_developed(
+        &self,
+        source: &crate::scan::DevelopedSource,
+        reference_ev: Option<f64>,
+    ) -> Result<bool, Error> {
+        Ok(self
+            .input
+            .positive_matrix(source.camera_to_ap1(), reference_ev)?
+            == self.matrix)
     }
 
     #[cfg(feature = "raw")]

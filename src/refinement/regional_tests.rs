@@ -1,7 +1,7 @@
 use super::*;
 use crate::photographic::parameters::ProcessingParameters;
 use crate::rendering::OutputTarget;
-use crate::scan::Scan;
+use crate::scan::DevelopedSource;
 #[cfg(feature = "ocio-reference")]
 use crate::{
     adjustment_layers::{
@@ -87,7 +87,7 @@ fn regional_cancellation_observes_the_actual_submission_boundary_without_finishi
         ..Default::default()
     }
     .write();
-    let scan = Scan::open(file.path(), None).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
     let generation = Arc::new(AtomicU64::new(7));
     let count = Arc::new(AtomicUsize::new(0));
     let gate = queue.clone();
@@ -97,7 +97,7 @@ fn regional_cancellation_observes_the_actual_submission_boundary_without_finishi
         changed.store(8, Ordering::Relaxed);
     }));
     let demand = Demand {
-        area: scan.area,
+        area: scan.area(),
         output: [37, 29],
         frame: None,
     };
@@ -105,7 +105,7 @@ fn regional_cancellation_observes_the_actual_submission_boundary_without_finishi
         &renderer,
         &device,
         &queue,
-        (&scan, None),
+        (&scan, None, None),
         ProcessingParameters::source(),
         OutputTarget::Srgb,
         (&generation, 7),
@@ -123,7 +123,7 @@ fn regional_cancellation_observes_the_actual_submission_boundary_without_finishi
             &renderer,
             &device,
             &queue,
-            (&scan, None),
+            (&scan, None, None),
             ProcessingParameters::source(),
             OutputTarget::Srgb,
             (&generation, 7),
@@ -162,9 +162,9 @@ fn reference_output_larger_than_a_storage_binding_keeps_its_full_grid_and_places
         ..Default::default()
     }
     .write();
-    let scan = Scan::open(file.path(), None).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
     let composition =
-        crate::geometry::Composition::new(scan.area, Default::default(), Default::default())
+        crate::geometry::Composition::new(scan.area(), Default::default(), Default::default())
             .unwrap();
     let size = composition.size();
     let output = [515, 259];
@@ -185,7 +185,7 @@ fn reference_output_larger_than_a_storage_binding_keeps_its_full_grid_and_places
             &renderer,
             &device,
             &queue,
-            (&scan, None),
+            (&scan, None, None),
             ProcessingParameters::source(),
             OutputTarget::Srgb,
             (&AtomicU64::new(7), 7),
@@ -247,8 +247,8 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
         ..Default::default()
     }
     .write();
-    let scan = Scan::open(file.path(), None).unwrap();
-    let a = scan.area;
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    let a = scan.area();
     let composition = Composition::with_crop(
         a,
         Default::default(),
@@ -286,14 +286,16 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
             ..Default::default()
         })])
         .unwrap();
-    let source = crate::scan::ImageSource::new(&scan, InputSettings::Digital).unwrap();
+    let source = crate::scan::ImageSource::new(&scan, InputSettings::Digital, None, None).unwrap();
     let gpu = Arc::new(
         AuthoredPhotograph::new(
             &device.limits(),
             InputSettings::Digital,
             roll,
             layers.clone(),
-            scan.positive_matrix(&InputSettings::Digital).unwrap(),
+            InputSettings::Digital
+                .positive_matrix(scan.camera_to_ap1(), None)
+                .unwrap(),
             a,
         )
         .unwrap(),
@@ -354,8 +356,8 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
                     &device.limits(),
                     &scan,
                     None,
+                    None,
                     &input,
-                    &input.definition(),
                     renderer.looks(),
                     renderer.drt(target),
                 )
@@ -389,7 +391,7 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
                 &renderer,
                 &device,
                 &queue,
-                (&scan, None),
+                (&scan, None, None),
                 input.clone(),
                 target,
                 (&AtomicU64::new(7), 7),

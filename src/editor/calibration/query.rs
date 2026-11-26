@@ -9,18 +9,18 @@ use crate::{
     image_recipe::ImageRecipe,
     processing::{Calibration, log_ratio},
     roll_analysis::balance_from_anchors,
-    scan::Scan,
+    scan::DevelopedSource,
 };
 use std::sync::Arc;
 
 pub(super) fn reference(
     gpu: super::super::measurement::Gpu<'_>,
-    scan: &mut Scan,
+    source: &Arc<DevelopedSource>,
     field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<DVec3, Error> {
-    let samples = Samples::new(gpu, scan, field, coverage, cancelled)?;
+    let samples = Samples::new(gpu, source, field, coverage, cancelled)?;
     let mean = samples.mean(samples.camera_light()?, cancelled)?;
     if mean.min_element() <= 0. {
         return Err(Error::UnusableSample(
@@ -39,16 +39,16 @@ pub(super) struct RollBalancePick {
 
 pub(super) fn roll_balance(
     gpu: super::super::measurement::Gpu<'_>,
-    scan: &Scan,
+    source: &Arc<DevelopedSource>,
     field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
-    input: ImageRecipe,
+    mut recipe: ImageRecipe,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<RollBalancePick, Error> {
     if cancelled() {
         return Err(Error::Cancelled);
     }
-    let calibration = input
+    let calibration = recipe
         .neutral
         .input
         .calibration()
@@ -56,8 +56,8 @@ pub(super) fn roll_balance(
             "measure Dmin and Dmax before balancing the roll",
         ))?
         .validate()?;
-    let (mut scan, mut recipe) = crate::photo_preparation::native_image(scan, &input)?;
-    let samples = Samples::new(gpu, &mut scan, field, coverage, cancelled)?;
+    recipe.neutral.require_source(source)?;
+    let samples = Samples::new(gpu, source, field, coverage, cancelled)?;
 
     let patch = samples.mean(samples.camera_light()?, cancelled)?;
     let gamma = span_balance(calibration.dmin, patch)?;

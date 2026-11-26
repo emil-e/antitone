@@ -24,7 +24,7 @@ fn cost_and_retirement(with_underlay: bool) {
             _ => [1920, 1080],
         };
         let (device, queue, renderer, kernels) = context().await;
-        let (mut scan, cal) = if std::env::var_os("ANTITONE_SCREEN_RAW").is_some() {
+        let (scan, cal) = if std::env::var_os("ANTITONE_SCREEN_RAW").is_some() {
             crate::raw_test_support::train_raw::load()
         } else {
             (scan(), calibration())
@@ -33,7 +33,12 @@ fn cost_and_retirement(with_underlay: bool) {
         let field = corrected.then(|| {
             Arc::new(
                 crate::flat_field::FlatField::from_nodes(
-                    [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+                    [
+                        scan.area().x,
+                        scan.area().y,
+                        scan.area().width,
+                        scan.area().height,
+                    ],
                     [2, 2],
                     vec![
                         DVec3::new(0.8, 0.9, 1.),
@@ -45,19 +50,19 @@ fn cost_and_retirement(with_underlay: bool) {
                 .unwrap(),
             )
         });
-        scan.set_flat_field(field.clone());
+
         let gpu_field = field
             .as_ref()
             .map(|f| Arc::new(GpuFlatField::new(&device, f.clone()).unwrap()));
         let composition =
-            Composition::new(scan.area, Default::default(), Default::default()).unwrap();
-        let height = f64::from(scan.area.width) * f64::from(output[1]) / f64::from(output[0]);
-        let top = (f64::from(scan.area.height) - height) / 2.;
+            Composition::new(scan.area(), Default::default(), Default::default()).unwrap();
+        let height = f64::from(scan.area().width) * f64::from(output[1]) / f64::from(output[0]);
+        let top = (f64::from(scan.area().height) - height) / 2.;
         assert!(top >= 0.);
         let frame = FrameRaster::new(
             composition,
             FramePoint([0., top]),
-            FramePoint([f64::from(scan.area.width), top + height]),
+            FramePoint([f64::from(scan.area().width), top + height]),
             output,
         )
         .unwrap();
@@ -68,7 +73,7 @@ fn cost_and_retirement(with_underlay: bool) {
             native()
         );
         let start = Instant::now();
-        let spec = SourceRequest::new(frame, cal, scan.camera_to_ap1, field).unwrap();
+        let spec = SourceRequest::new(frame, cal, scan.camera_to_ap1(), field).unwrap();
         let specs = if with_underlay {
             vec![spec.clone(), spec.underlay().unwrap()]
         } else {

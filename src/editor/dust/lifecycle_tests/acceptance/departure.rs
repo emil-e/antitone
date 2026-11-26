@@ -55,7 +55,7 @@ fn successful_new_or_open_retires_a_running_search_without_accepting_or_waiting_
                 (editor.document.state.project.clone(), editor.status.clone())
             });
             assert!(
-                call.input.context.scan().is_ok(),
+                call.input.context.source.camera_image().is_ok(),
                 "captured physical input remains usable through cleanup"
             );
             call.complete(Err("late retired search failure".into()));

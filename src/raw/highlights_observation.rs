@@ -6,7 +6,7 @@ use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     processing::{InputSettings, RollSettings},
     render_fixture::RenderFixture,
-    scan::{ImageSource, Scan},
+    scan::{DevelopedSource, ImageSource},
 };
 use std::{
     path::{Path, PathBuf},
@@ -110,18 +110,18 @@ fn supplied_early_highlights_source_observation() {
         let mut retained = None;
         for _ in 0..3 {
             let start = Instant::now();
-            let scan = Scan::open(&root.join(relative), None).unwrap();
+            let scan = DevelopedSource::open(&root.join(relative), None).unwrap();
             timings.push(start.elapsed().as_secs_f64() * 1000.);
             retained = Some(scan);
         }
         let scan = retained.unwrap();
         if name == "zv1" {
             assert!(
-                scan.source().metadata().lens_identity().unwrap().is_some(),
+                scan.metadata().lens_identity().unwrap().is_some(),
                 "Sony optics must remain enabled"
             );
         }
-        let image = scan.source().camera_image().unwrap();
+        let image = scan.camera_image().unwrap();
         let mut hash = blake3::Hasher::new();
         let mut row = vec![[0.; 4]; image.width as usize];
         for y in 0..image.height {
@@ -137,12 +137,12 @@ fn supplied_early_highlights_source_observation() {
         println!(
             "{name} development_ms={timings:?} continuous={} source_bytes={:?} camera_hash={}",
             image.is_continuous(),
-            scan.source().retained_bytes(),
+            scan.retained_bytes(),
             hash.finalize()
         );
-        let bounds: CellRegion = scan.area.try_into().unwrap();
+        let bounds: CellRegion = scan.area().try_into().unwrap();
         for ev in [0., -2.] {
-            let program = ImageSource::new(&scan, InputSettings::Digital)
+            let program = ImageSource::new(&scan, InputSettings::Digital, None, None)
                 .unwrap()
                 .gpu_program()
                 .unwrap();
@@ -153,7 +153,7 @@ fn supplied_early_highlights_source_observation() {
                     ..Default::default()
                 },
                 AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-                scan.area,
+                scan.area(),
             )
             .unwrap();
             let image = original_image(

@@ -11,7 +11,7 @@ use std::sync::Mutex;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::roll_analysis::{self, FrameSamples, MAX_SAMPLES_PER_FRAME};
+use crate::roll_analysis::{self, AnalysisSamples, FrameSamples, MAX_SAMPLES_PER_FRAME};
 
 #[cfg(all(test, feature = "ocio-reference"))]
 mod diagnostics;
@@ -55,7 +55,7 @@ const MIN_PICTURE_SAMPLES: usize = 512;
 const MIN_ROLL_FILM_SAMPLES: usize = 2048;
 const MIN_BALANCE_SAMPLES: usize = 256;
 
-fn require_picture(samples: &crate::scan::AnalysisSamples) -> Result<(), Error> {
+fn require_picture(samples: &AnalysisSamples) -> Result<(), Error> {
     if samples.pixels.len() < MIN_PICTURE_SAMPLES {
         return Err(Error::Project(format!(
             "only {} picture samples; need {MIN_PICTURE_SAMPLES}. Enlarge the picture area or check the capture",
@@ -86,8 +86,8 @@ fn require_statistics(
 
 struct FrameMeasurements {
     camera_to_ap1: glam::DMat3,
-    film: crate::scan::AnalysisSamples,
-    picture: crate::scan::AnalysisSamples,
+    film: AnalysisSamples,
+    picture: AnalysisSamples,
 }
 
 pub(super) struct Outcome {

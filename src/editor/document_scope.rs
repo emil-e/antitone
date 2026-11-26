@@ -222,12 +222,11 @@ impl DocumentScope {
         id: SourceId,
     ) -> Result<crate::image_recipe::ImageRecipe, crate::Error> {
         let source = self.state.project.source(id)?;
-        let mut recipe = self
-            .state
-            .project
-            .image_recipe_with_reference(source, self.exposure_value(source))?;
-        recipe.neutral.source_development = self.development_for(source, self.state.project.input);
-        Ok(recipe)
+        self.state.project.image_recipe_with_source(
+            source,
+            self.development_for(source, self.state.project.input),
+            self.exposure_value(source),
+        )
     }
 
     pub fn accept_save(&mut self, saved: Document) {

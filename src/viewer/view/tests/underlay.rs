@@ -72,11 +72,16 @@ fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_c
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
         for corrected in [false, true] {
-            let mut scan = scan();
+            let scan = scan();
             let field = corrected.then(|| {
                 Arc::new(
                     crate::flat_field::FlatField::from_nodes(
-                        [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+                        [
+                            scan.area().x,
+                            scan.area().y,
+                            scan.area().width,
+                            scan.area().height,
+                        ],
                         [2, 2],
                         vec![
                             DVec3::new(0.8, 0.9, 1.),
@@ -88,13 +93,13 @@ fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_c
                     .unwrap(),
                 )
             });
-            scan.set_flat_field(field.clone());
+
             let cal = calibration();
             let gpu = field
                 .as_ref()
                 .map(|f| Arc::new(GpuFlatField::new(&device, f.clone()).unwrap()));
             let composition = Composition::new(
-                scan.area,
+                scan.area(),
                 Default::default(),
                 crate::geometry::PhotoOrientation {
                     turns: crate::geometry::QuarterTurns::One,
@@ -109,7 +114,7 @@ fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_c
                 [35, 27],
             )
             .unwrap();
-            let spec = SourceRequest::new(regional, cal, scan.camera_to_ap1, field).unwrap();
+            let spec = SourceRequest::new(regional, cal, scan.camera_to_ap1(), field).unwrap();
             let mut underlay = spec.underlay().unwrap();
             let resized_frame = FrameRaster {
                 output: [19, 17],
@@ -184,7 +189,7 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
             [8, 16],
         )
         .unwrap();
-        let spec = SourceRequest::new(detail_frame, input, scan.camera_to_ap1, None).unwrap();
+        let spec = SourceRequest::new(detail_frame, input, scan.camera_to_ap1(), None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
         let resized_frame = FrameRaster {
             output: [8, 8],
@@ -268,7 +273,7 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                 let base_values = image(&device, &queue, &base.image);
                 let mut turned = FrameRaster::full(
                     Composition::new(
-                        scan.area,
+                        scan.area(),
                         Default::default(),
                         crate::geometry::PhotoOrientation {
                             turns: crate::geometry::QuarterTurns::One,
@@ -491,7 +496,7 @@ fn physical_view_underlay_constant_signed_hdr_charts_have_no_tone_or_colour_seam
             [8, 16],
         )
         .unwrap();
-        let spec = SourceRequest::new(regional, input, scan.camera_to_ap1, None).unwrap();
+        let spec = SourceRequest::new(regional, input, scan.camera_to_ap1(), None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
         let resized_frame = FrameRaster {
             output: [8, 8],
@@ -560,7 +565,7 @@ fn physical_view_underlay_in_flight_callbacks_do_not_retain_support_or_renderer_
             [8, 16],
         )
         .unwrap();
-        let spec = SourceRequest::new(regional, cal, scan.camera_to_ap1, None).unwrap();
+        let spec = SourceRequest::new(regional, cal, scan.camera_to_ap1(), None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
         let resized_frame = FrameRaster {
             output: [8, 8],
@@ -640,7 +645,7 @@ fn physical_view_underlay_texture_composition_does_not_inherit_storage_buffer_si
             [8, 16],
         )
         .unwrap();
-        let spec = SourceRequest::new(regional, cal, scan.camera_to_ap1, None).unwrap();
+        let spec = SourceRequest::new(regional, cal, scan.camera_to_ap1(), None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
         let resized_frame = FrameRaster {
             output: [8, 8],

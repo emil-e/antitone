@@ -1,5 +1,5 @@
 use super::*;
-use crate::raw::fixture;
+use crate::{raw::fixture, scan::DevelopedSource};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 fn request(path: &std::path::Path) -> Request {
@@ -58,10 +58,7 @@ fn poll_ticket(
 #[test]
 fn async_joined_consumers_wake_independently_and_share_frozen_pixels() {
     let file = fixture::bayer_dng();
-    let source = Scan::open(file.path(), Some([1.; 4]))
-        .unwrap()
-        .source()
-        .clone();
+    let source = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
     let expected = source.clone();
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
@@ -95,10 +92,7 @@ fn async_joined_consumers_wake_independently_and_share_frozen_pixels() {
 #[test]
 fn a_new_demand_during_native_retirement_starts_fresh_instead_of_receiving_retirement() {
     let file = fixture::bayer_dng();
-    let source = Scan::open(file.path(), Some([1.; 4]))
-        .unwrap()
-        .source()
-        .clone();
+    let source = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
     let job = request(file.path());
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
@@ -181,10 +175,7 @@ fn native_ticket_can_be_awaited_when_completion_precedes_its_first_poll() {
 fn foreground_runs_before_the_next_background_native_phase_on_one_thread() {
     let a = fixture::bayer_dng();
     let b = fixture::bayer_dng();
-    let source = Scan::open(a.path(), Some([1.; 4]))
-        .unwrap()
-        .source()
-        .clone();
+    let source = DevelopedSource::open(a.path(), Some([1.; 4])).unwrap();
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let trace = Arc::new(Mutex::new(Vec::new()));
@@ -238,10 +229,7 @@ fn selecting_the_last_eager_source_promotes_its_existing_queued_load() {
     let sources: HashMap<_, _> = [&first, &middle, &selected]
         .into_iter()
         .map(|file| {
-            let source = Scan::open(file.path(), Some([1.; 4]))
-                .unwrap()
-                .source()
-                .clone();
+            let source = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
             (file.path().to_owned(), source)
         })
         .collect();
@@ -301,10 +289,7 @@ fn selecting_the_last_eager_source_promotes_its_existing_queued_load() {
 #[test]
 fn foreground_joins_started_work_after_thumbnail_waiter_cancels() {
     let file = fixture::bayer_dng();
-    let source = Scan::open(file.path(), Some([1.; 4]))
-        .unwrap()
-        .source()
-        .clone();
+    let source = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
     let expected_source = source.clone();
     let job = request(file.path());
     let (entered, starts) = mpsc::channel();
@@ -373,10 +358,10 @@ fn actual_native_development_preserves_frozen_pixels_and_native_charge() {
     let file = fixture::bayer_dng();
     let scheduler = SourceLoader::new();
     let job = request(file.path());
-    let expected = Scan::open(file.path(), Some([1.; 4])).unwrap();
+    let expected = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
     let result = scheduler.load(job, Priority::Eager, || false).unwrap();
-    assert_eq!(result.retained_bytes(), expected.source().retained_bytes());
-    let a = expected.source().camera_image().unwrap();
+    assert_eq!(result.retained_bytes(), expected.retained_bytes());
+    let a = expected.camera_image().unwrap();
     let b = result.camera_image().unwrap();
     for y in 0..a.height {
         for x in 0..a.width {
@@ -749,10 +734,7 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
 fn cancelled_queued_demand_never_runs_native_work() {
     let a = fixture::bayer_dng();
     let b = fixture::bayer_dng();
-    let source = Scan::open(a.path(), Some([1.; 4]))
-        .unwrap()
-        .source()
-        .clone();
+    let source = DevelopedSource::open(a.path(), Some([1.; 4])).unwrap();
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let calls = Arc::new(AtomicUsize::new(0));
@@ -982,10 +964,7 @@ fn sdk_steps_hold_native_execution_exclusive_so_they_keep_the_full_budget() {
 fn overlapping_owners_run_native_steps_on_separate_threads() {
     let a = fixture::bayer_dng();
     let b = fixture::bayer_dng();
-    let source = Scan::open(a.path(), Some([1.; 4]))
-        .unwrap()
-        .source()
-        .clone();
+    let source = DevelopedSource::open(a.path(), Some([1.; 4])).unwrap();
     let barrier = Arc::new((Mutex::new(0usize), Condvar::new()));
     let threads = Arc::new(Mutex::new(Vec::new()));
     let recorded = threads.clone();
@@ -1024,10 +1003,7 @@ fn overlapping_owners_run_native_steps_on_separate_threads() {
 fn foreground_starts_on_the_free_owner_while_a_background_step_runs() {
     let a = fixture::bayer_dng();
     let b = fixture::bayer_dng();
-    let source = Scan::open(a.path(), Some([1.; 4]))
-        .unwrap()
-        .source()
-        .clone();
+    let source = DevelopedSource::open(a.path(), Some([1.; 4])).unwrap();
     let expected = source.clone();
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
@@ -1064,10 +1040,7 @@ fn foreground_starts_on_the_free_owner_while_a_background_step_runs() {
 fn background_work_yields_while_foreground_demand_lives() {
     let a = fixture::bayer_dng();
     let b = fixture::bayer_dng();
-    let source = Scan::open(a.path(), Some([1.; 4]))
-        .unwrap()
-        .source()
-        .clone();
+    let source = DevelopedSource::open(a.path(), Some([1.; 4])).unwrap();
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Arc::new(Mutex::new(resume));
@@ -1113,8 +1086,8 @@ fn background_work_yields_while_foreground_demand_lives() {
 fn concurrent_native_development_preserves_each_sources_distinct_pixels() {
     let a = fixture::bayer_dng();
     let b = fixture::bayer_dng_with_rgb([6000, 24000, 36000]);
-    let expected_a = Scan::open(a.path(), Some([1.; 4])).unwrap();
-    let expected_b = Scan::open(b.path(), Some([1.; 4])).unwrap();
+    let expected_a = DevelopedSource::open(a.path(), Some([1.; 4])).unwrap();
+    let expected_b = DevelopedSource::open(b.path(), Some([1.; 4])).unwrap();
     assert_ne!(
         expected_a.pixel(16, 16).unwrap(),
         expected_b.pixel(16, 16).unwrap()
@@ -1130,7 +1103,7 @@ fn concurrent_native_development_preserves_each_sources_distinct_pixels() {
     let source_b = second.join().unwrap().unwrap();
     for (source, expected) in [(&source_a, &expected_a), (&source_b, &expected_b)] {
         let developed = source.camera_image().unwrap();
-        let frozen = expected.source().camera_image().unwrap();
+        let frozen = expected.camera_image().unwrap();
         assert_eq!(
             (developed.width, developed.height),
             (frozen.width, frozen.height)
@@ -1150,10 +1123,7 @@ fn concurrent_native_development_preserves_each_sources_distinct_pixels() {
 fn closing_the_pair_wakes_waiters_and_stops_both_owners() {
     let a = fixture::bayer_dng();
     let b = fixture::bayer_dng();
-    let source = Scan::open(a.path(), Some([1.; 4]))
-        .unwrap()
-        .source()
-        .clone();
+    let source = DevelopedSource::open(a.path(), Some([1.; 4])).unwrap();
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Arc::new(Mutex::new(resume));

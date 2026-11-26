@@ -13,7 +13,7 @@ use crate::{
     },
     processing::{InputSettings, RollSettings},
     rendering::OutputTarget,
-    scan::Scan,
+    scan::DevelopedSource,
 };
 use std::sync::Arc;
 
@@ -35,7 +35,8 @@ impl OutputReference {
 }
 
 pub(crate) struct OriginalControls<'a> {
-    pub scan: &'a Scan,
+    pub source: &'a Arc<DevelopedSource>,
+    pub reference_ev: Option<f64>,
     pub field: Option<Arc<GpuFlatField>>,
     pub input: InputSettings,
     pub roll: RollSettings,
@@ -54,17 +55,15 @@ impl OriginalControls<'_> {
         device: &wgpu::Device,
         renderer: &crate::render_fixture::RenderFixture,
     ) -> Result<Request, Error> {
-        if self.scan.area != self.composition.area()
-            || self.scan.flat_field() != self.field.as_ref().map(|field| field.field())
-        {
+        if self.source.area() != self.composition.area() {
             return Err(Error::Gpu("fixture source/photograph mismatch".into()));
         }
         let photograph = PhotographTaps::authored_original(
             &device.limits(),
-            crate::acquisition::camera::camera_source(self.scan)?,
+            crate::acquisition::camera::camera_source(self.source)?,
             self.field,
-            InputTransform::for_scan(self.scan, self.input)?,
-            Grading::new(&device.limits(), self.roll, self.grade, self.scan.area)?,
+            InputTransform::for_source(self.source, self.input, self.reference_ev)?,
+            Grading::new(&device.limits(), self.roll, self.grade, self.source.area())?,
             self.repairs.to_vec(),
             &self.stages,
         )?;

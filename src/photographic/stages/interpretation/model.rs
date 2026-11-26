@@ -121,7 +121,7 @@ impl Inversion {
         })
     }
 
-    /// Scan, calibration and output are native-camera RGB.
+    /// Input light, calibration and output are native-camera RGB.
     pub fn apply(&self, scan: DVec3) -> Result<InvertedPixel, Error> {
         let mut rgb = DVec3::ZERO;
         let parameters = &self.parameters;

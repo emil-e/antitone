@@ -47,13 +47,13 @@ fn authored_capture_balance_is_per_source_across_input_stage_switches() {
                 pollster::block_on(physical.source(&loader, crate::source::Priority::Foreground))
                     .unwrap()
                     .prepared
-                    .scan();
+                    .source;
             let expected = if input.is_negative() {
                 crate::project::UNITY_WB
             } else {
                 [balance[0], balance[1], balance[2], balance[1]]
             };
-            assert_eq!(scan.white_balance, expected);
+            assert_eq!(scan.white_balance(), expected);
             assert_eq!(
                 document
                     .source_key_with(source.id, &initialization)
@@ -138,19 +138,19 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
                 .unwrap()
             };
             let developed = load(&document, &loader);
-            let scan = developed.context.scan().unwrap();
-            assert_eq!(scan.area, header.image_area().unwrap());
+            let scan = developed.context.source.clone();
+            assert_eq!(scan.area(), header.image_area().unwrap());
             let [width, height] = header.source_dimensions().unwrap();
             assert_eq!(scan.dimensions().unwrap(), (width, height));
             assert_eq!(
-                scan.source().white_balance(),
+                scan.white_balance(),
                 if digital {
                     header.as_shot_wb()
                 } else {
                     crate::project::UNITY_WB
                 }
             );
-            assert!(scan.camera_to_ap1.is_finite());
+            assert!(scan.camera_to_ap1().is_finite());
             if digital {
                 assert!(developed.context.reference.is_some());
                 eprintln!(
@@ -177,7 +177,7 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
                 .unwrap();
             assert!(ready.proxy.size().into_iter().all(|n| n > 0 && n <= 1024));
             let composition =
-                Composition::new(scan.area, Default::default(), expected.orientation).unwrap();
+                Composition::new(scan.area(), Default::default(), expected.orientation).unwrap();
             let frame = FrameRaster::new(
                 composition,
                 FramePoint([0., 0.]),
@@ -186,7 +186,12 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
             )
             .unwrap();
             let settings = document.project.input;
-            let matrix = scan.positive_matrix(&settings).unwrap();
+            let matrix = settings
+                .positive_matrix(
+                    scan.camera_to_ap1(),
+                    ready.reference.as_ref().map(|reference| reference.ev()),
+                )
+                .unwrap();
             let grade = expected.grade_snapshot().unwrap();
             let spec = SourceRequest::new(frame, settings, matrix, None).unwrap();
             let source = ready
@@ -200,7 +205,7 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
                     document.project.roll,
                     grade.clone(),
                     matrix,
-                    scan.area,
+                    scan.area(),
                 )
                 .unwrap(),
             )
@@ -278,14 +283,14 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
                 1,
                 "cold reopen must actually redevelop the source, not reuse original leases"
             );
-            let reopened_scan = reopened.context.scan().unwrap();
+            let reopened_scan = reopened.context.source.clone();
             let reopened_pixels = reopened_scan.preview_source(128).unwrap().2;
             assert!(
                 reopened_pixels == *bases.last().unwrap(),
                 "save/reopen must preserve developed camera pixels"
             );
             assert_eq!(reopened.context.reference, ready.reference);
-            let area = scan.area;
+            let area = scan.area();
             let export_size = [area.width.min(192), area.height.min(128)];
             let export_pixels = (export_size[0] * export_size[1]) as usize;
             let crop = Composition::with_crop(
@@ -318,7 +323,12 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
                     &device,
                     &queue,
                     crate::gpu_export::authored::Request {
-                        scan: &reopened_scan,
+                        source: &reopened_scan,
+                        reference_ev: reopened
+                            .context
+                            .reference
+                            .as_ref()
+                            .map(|reference| reference.ev()),
                         field: None,
                         input: settings,
                         roll: document.project.roll,
@@ -357,7 +367,7 @@ pub(super) fn import_reopen_view_and_bounded_exports(paths: &[PathBuf]) {
                 path.display(),
                 header.width,
                 header.height,
-                scan.area
+                scan.area()
             );
         }
         let wb = header.as_shot_wb();

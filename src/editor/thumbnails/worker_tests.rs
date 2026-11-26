@@ -16,8 +16,8 @@ fn cold_positive_captures_resolved_starting_exposure_before_authoring_its_graph(
     document.import(&[file.path().to_owned()]).unwrap();
     let id = document.project.order[0];
     let source = document.project.source(id).unwrap().clone();
-    let scan = Scan::open(file.path(), document.project.acquisition_wb()).unwrap();
-    let camera = Arc::new(crate::scan::CameraPixels::from_scan(&scan).unwrap());
+    let scan = DevelopedSource::open(file.path(), document.project.acquisition_wb()).unwrap();
+    let camera = Arc::new(crate::scan::CameraPixels::from_source(&scan).unwrap());
     let (device, queue, _) = crate::photographic::test_support::render_context();
     let loader = source_loading::SourceLoader::new();
     let thumbnails = Thumbnails::with_developments(
@@ -84,7 +84,7 @@ fn cold_positive_captures_resolved_starting_exposure_before_authoring_its_graph(
         let program = crate::photographic::graph::input_transform(&native.definition)
             .unwrap()
             .expect("thumbnail retains one source interpretation");
-        assert_eq!(program.matrix(), scan.camera_to_ap1 * ev.exp2());
+        assert_eq!(program.matrix(), scan.camera_to_ap1() * ev.exp2());
     }
     loader.close_and_wait().unwrap();
 }
@@ -97,8 +97,8 @@ fn retiring_the_document_releases_retention_while_its_physical_thumbnail_job_fin
     let document: super::super::document_scope::DocumentScope = document.into();
     let id = document.project.order[0];
     let source = document.project.source(id).unwrap().clone();
-    let scan = Scan::open(file.path(), document.project.acquisition_wb()).unwrap();
-    let proxy = Arc::new(Proxy::from_scan(&scan).unwrap());
+    let scan = DevelopedSource::open(file.path(), document.project.acquisition_wb()).unwrap();
+    let proxy = Arc::new(Proxy::from_source(&scan).unwrap());
     let pixels = Arc::downgrade(&proxy);
     let cache = Arc::downgrade(&document.cache);
     let (device, queue) = pollster::block_on(async {
@@ -227,11 +227,11 @@ fn ready_thumbnail_processing_is_serial_and_visible_work_precedes_queued_eager_w
     for id in &ids {
         let source = document.project.source(*id).unwrap();
         let path = document.source_path(*id).unwrap();
-        let scan = Scan::open(&path, document.project.acquisition_wb()).unwrap();
+        let scan = DevelopedSource::open(&path, document.project.acquisition_wb()).unwrap();
         thumbnails.seed(
             source,
             document.file_key(&path),
-            Arc::new(Proxy::from_scan(&scan).unwrap()),
+            Arc::new(Proxy::from_source(&scan).unwrap()),
         );
     }
     let first = ids[0];

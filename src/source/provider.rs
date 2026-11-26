@@ -107,11 +107,9 @@ pub(super) async fn proxy<P: SourceProvider + ?Sized>(
             "proxy source differs from requested development".into(),
         ));
     }
-    let proxy = crate::background::run(move |_| {
-        CameraPixels::from_scan(&crate::scan::Scan::from_source(source)).map(Arc::new)
-    })
-    .await
-    .map_err(|_| Error::UnusableSample("proxy preparation panicked"))??;
+    let proxy = crate::background::run(move |_| CameraPixels::from_source(&source).map(Arc::new))
+        .await
+        .map_err(|_| Error::UnusableSample("proxy preparation panicked"))??;
     if let Some(cache) = cache {
         cache.publish_proxy(key, proxy.clone())?;
     }

@@ -11,7 +11,7 @@ use crate::{
     },
     processing::InputSettings,
     rendering::OutputTarget,
-    scan::Scan,
+    scan::DevelopedSource,
 };
 use glam::DVec3;
 use std::path::Path;
@@ -19,12 +19,12 @@ use std::path::Path;
 #[test]
 fn reopened_tiff_and_ap0_exr_include_independent_halation_after_the_full_grade() {
     let (device, queue, renderer) = context();
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
     .unwrap();
-    let a = scan.area;
+    let a = scan.area();
     let composition = Composition::new(a, Default::default(), Default::default()).unwrap();
     let halo = HalationSettings {
         enabled: true,
@@ -56,7 +56,9 @@ fn reopened_tiff_and_ap0_exr_include_independent_halation_after_the_full_grade()
         },
     ])
     .unwrap();
-    let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
+    let matrix = InputSettings::Digital
+        .positive_matrix(scan.camera_to_ap1(), None)
+        .unwrap();
     // Exposure-only grading has an analytic gain: 0.4 EV outside the hard circle,
     // 0.4 + 2 × 0.8 = 2 EV inside. The varying gain does not commute with halation.
     let gain = |[x, y]: [u32; 2]| {
@@ -133,7 +135,8 @@ fn reopened_tiff_and_ap0_exr_include_independent_halation_after_the_full_grade()
                 &device,
                 &queue,
                 Request {
-                    scan: &scan,
+                    source: &scan,
+                    reference_ev: None,
                     field: None,
                     input: InputSettings::Digital,
                     roll: Default::default(),

@@ -3,7 +3,7 @@ use crate::{
     Error,
     project::{Source, SourceDevelopment, SourceId},
     raw::{Metadata, RawFile},
-    scan::Scan,
+    scan::DevelopedSource,
 };
 use std::path::{Path, PathBuf};
 type Result<T> = std::result::Result<T, Error>;
@@ -69,18 +69,15 @@ pub(crate) fn verify_source(expected: &Source, actual: &Source) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn verify_scan(source: &Source, scan: &Scan) -> Result<()> {
-    let (width, height) = scan.dimensions()?;
-    let area = scan.area;
+pub(crate) fn verify_development(source: &Source, developed: &DevelopedSource) -> Result<()> {
+    let image = developed.camera_image()?;
+    let area = developed.area();
     let actual = SourceDevelopment {
-        decode: scan
-            .source()
-            .metadata()
-            .development(scan.source().white_balance()),
-        dimensions: [width, height],
+        decode: developed.metadata().development(developed.white_balance()),
+        dimensions: [image.width, image.height],
         active_area: [area.x, area.y, area.width, area.height],
-        camera_model: scan.camera_model.clone(),
-        camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
+        camera_model: developed.camera_model().to_owned(),
+        camera_to_ap1: developed.camera_to_ap1().to_cols_array_2d(),
     };
     if !source.development.same_processing(&actual) {
         return Err(failure(

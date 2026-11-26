@@ -65,8 +65,8 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         ..Default::default()
     }
     .write();
-    let mut scan = crate::scan::Scan::open(file.path(), None).unwrap();
-    let a = scan.area;
+    let scan = crate::scan::DevelopedSource::open(file.path(), None).unwrap();
+    let a = scan.area();
     let correction = Arc::new(
         crate::flat_field::FlatField::from_nodes(
             [a.x, a.y, a.width, a.height],
@@ -80,7 +80,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         )
         .unwrap(),
     );
-    scan.set_flat_field(Some(correction.clone()));
+
     let field = Arc::new(GpuFlatField::new(&device, correction.clone()).unwrap());
     let base = Calibration {
         dmin: DVec3::splat(1.05),
@@ -127,7 +127,9 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
             settings,
             roll,
             grade.clone(),
-            scan.positive_matrix(&settings).unwrap(),
+            settings
+                .positive_matrix(scan.camera_to_ap1(), None)
+                .unwrap(),
             a,
         )
         .unwrap(),
@@ -176,7 +178,8 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
     let stages = input.definition();
     let repairs = vec![repair];
     let request = || crate::rendering::execution::test_support::OriginalControls {
-        scan: &scan,
+        source: &scan,
+        reference_ev: None,
         field: Some(field.clone()),
         input: InputSettings::from(base),
         roll,
@@ -230,9 +233,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
             "fixture must detect omitted {omitted}: {difference}"
         );
     }
-    let uncorrected = crate::scan::Scan::from_source(scan.source().clone());
     let mut control = request();
-    control.scan = &uncorrected;
     control.field = None;
     let control = canonical(&renderer, &device, &queue, control);
     let control = reconstructed(&control, frame);
@@ -247,7 +248,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         &renderer,
         &device,
         &queue,
-        (&scan, Some(field)),
+        (&scan, Some(field), None),
         input,
         OutputTarget::Srgb,
         (&std::sync::atomic::AtomicU64::new(1), 1),
@@ -373,9 +374,9 @@ fn immutable_programs_are_reused_without_retaining_the_native_source() {
         ..Default::default()
     }
     .write();
-    let scan = crate::scan::Scan::open(file.path(), None).unwrap();
-    let lease = Arc::downgrade(scan.source());
-    let area = scan.area;
+    let scan = crate::scan::DevelopedSource::open(file.path(), None).unwrap();
+    let lease = Arc::downgrade(&scan);
+    let area = scan.area();
     let mut count = 0;
     let mut result = None;
     for exposure in [0., 0.5] {
@@ -388,7 +389,9 @@ fn immutable_programs_are_reused_without_retaining_the_native_source() {
                     ..Default::default()
                 },
                 AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-                scan.positive_matrix(&InputSettings::Digital).unwrap(),
+                InputSettings::Digital
+                    .positive_matrix(scan.camera_to_ap1(), None)
+                    .unwrap(),
                 area,
             )
             .unwrap(),
@@ -397,7 +400,7 @@ fn immutable_programs_are_reused_without_retaining_the_native_source() {
             &renderer,
             &device,
             &queue,
-            (&scan, None),
+            (&scan, None, None),
             input,
             OutputTarget::Srgb,
             (&std::sync::atomic::AtomicU64::new(1), 1),

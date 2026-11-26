@@ -337,21 +337,12 @@ fn physical_view(
 #[cfg(feature = "editor")]
 pub(crate) fn preview(
     limits: &wgpu::Limits,
-    scan: &crate::scan::Scan,
+    developed: &Arc<crate::scan::DevelopedSource>,
     field: Option<Arc<GpuFlatField>>,
     recipe: &ImageRecipe,
     frame: crate::frame_raster::FrameRaster,
 ) -> Result<(Value, crate::acquisition::Plan), Error> {
-    let program = InputTransform::from_recipe(&recipe.neutral)?;
-    if !program.matches_native(scan)?
-        || scan.flat_field() != recipe.neutral.correction.as_ref()
-        || recipe.neutral.correction.as_ref() != field.as_ref().map(|field| field.field())
-    {
-        return Err(Error::Gpu(
-            "physical-view source authority differs from originals".into(),
-        ));
-    }
-    let source = crate::acquisition::camera::camera_source(scan)?;
+    let source = crate::acquisition::camera::camera_source(developed)?;
     if frame.composition.area() != source.domain().finite()?.source()? {
         return Err(Error::InvalidParameter(
             "frame belongs to a different source grid",

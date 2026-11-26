@@ -54,17 +54,26 @@ fn variable_field(a: SourceRegion) -> Arc<crate::flat_field::FlatField> {
 fn cached_camera_sampling_preserves_original_correction_coordinates_and_omits_reference_exposure() {
     let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([6000, 12000, 9000]);
-    let mut scan = Scan::open(file.path(), None).unwrap();
-    let a = scan.area;
-    scan.set_flat_field(Some(variable_field(a)));
-    scan.reference_exposure = Some(crate::exposure_reference::ReferenceExposure::Matched(
-        crate::exposure_reference::StartingExposure {
-            ev: 8.,
-            samples: 1024,
-            spread: 0.,
-        },
-    ));
-    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    let a = scan.area();
+    let scan_field = Some(variable_field(a));
+    let positive = crate::scan::ImageSource::new(
+        &scan,
+        crate::processing::InputSettings::Digital,
+        Some(8.),
+        scan_field.clone(),
+    )
+    .unwrap();
+    let point = [a.x + 24, a.y + 24];
+    let unscaled =
+        crate::flat_field::sample_camera_light(&scan, scan_field.as_deref(), point).unwrap();
+    assert!(
+        positive.sample(point).unwrap().abs().max_element()
+            > 100. * (scan.camera_to_ap1() * unscaled).abs().max_element(),
+        "a Digital baseline would substantially change these camera samples",
+    );
+    let sampler =
+        CameraSampler::new(renderer.evaluation(), &queue, &scan, scan_field.clone()).unwrap();
     let area = SourceRegion::from([a.x + 8, a.y + 8, 48, 48]);
     let actual = sampler
         .sample(area, 16, |p| p.x >= a.x + 20, || false)
@@ -74,12 +83,19 @@ fn cached_camera_sampling_preserves_original_correction_coordinates_and_omits_re
     assert_eq!(actual.pixels.len(), expected_points.len());
     let mut coordinate_control: f64 = 0.;
     for (actual, [x, y]) in actual.pixels.iter().zip(expected_points) {
-        let expected = scan.pixel(x, y).unwrap();
+        let expected =
+            crate::flat_field::sample_camera_light(&scan, scan_field.as_deref(), [x, y]).unwrap();
         assert!((*actual - expected).abs().max_element() < 2e-6 * expected.abs().max_element());
         coordinate_control = coordinate_control.max(
-            (expected - scan.pixel(x - 8, y - 8).unwrap())
-                .abs()
-                .max_element(),
+            (expected
+                - crate::flat_field::sample_camera_light(
+                    &scan,
+                    scan_field.as_deref(),
+                    [x - 8, y - 8],
+                )
+                .unwrap())
+            .abs()
+            .max_element(),
         );
     }
     assert!(coordinate_control > 1e-3);
@@ -95,9 +111,9 @@ fn cached_camera_sampling_preserves_original_correction_coordinates_and_omits_re
 fn gathered_work_reads_only_selected_cached_centres_after_the_original_is_released() {
     let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([6000, 12000, 9000]);
-    let scan = Scan::open(file.path(), None).unwrap();
-    let weak = Arc::downgrade(scan.source());
-    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    let weak = Arc::downgrade(&scan);
+    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan, None).unwrap();
     drop(scan);
     assert!(weak.upgrade().is_none());
     let count = crate::roll_analysis::MAX_SAMPLES_PER_FRAME;
@@ -137,9 +153,9 @@ fn gathered_work_reads_only_selected_cached_centres_after_the_original_is_releas
 fn flat_corrected_camera_samples_are_kept_even_with_very_low_signal() {
     let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([2; 3]);
-    let mut scan = Scan::open(file.path(), None).unwrap();
-    let a = scan.area;
-    scan.set_flat_field(Some(Arc::new(
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    let a = scan.area();
+    let scan_field = Some(Arc::new(
         crate::flat_field::FlatField::from_nodes(
             [a.x, a.y, a.width, a.height],
             [2, 2],
@@ -151,8 +167,9 @@ fn flat_corrected_camera_samples_are_kept_even_with_very_low_signal() {
             ],
         )
         .unwrap(),
-    )));
-    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
+    ));
+    let sampler =
+        CameraSampler::new(renderer.evaluation(), &queue, &scan, scan_field.clone()).unwrap();
     let area = SourceRegion::from([a.x + 8, a.y + 8, 48, 48]);
     let actual = sampler
         .sample(area, 16, |_| true, || false)
@@ -161,7 +178,9 @@ fn flat_corrected_camera_samples_are_kept_even_with_very_low_signal() {
     let points = positions(a, area, area.x, 16);
     let expected: Vec<_> = points
         .iter()
-        .map(|&[x, y]| scan.pixel(x, y).unwrap())
+        .map(|&[x, y]| {
+            crate::flat_field::sample_camera_light(&scan, scan_field.as_deref(), [x, y]).unwrap()
+        })
         .collect();
     assert!(expected.iter().any(|p| p.min_element() < 1. / 65535.));
     assert!(expected.iter().any(|p| p.min_element() > 1. / 65535.));
@@ -177,16 +196,16 @@ fn one_cached_payload_supports_changed_regions_and_correction_without_original_p
     let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     for rgb in [[6000, 12000, 9000], [2; 3], [65535; 3]] {
         let file = crate::raw::fixture::bayer_dng_with_rgb(rgb);
-        let scan = Scan::open(file.path(), None).unwrap();
-        let a = scan.area;
-        let weak = Arc::downgrade(scan.source());
+        let scan = DevelopedSource::open(file.path(), None).unwrap();
+        let a = scan.area();
+        let weak = Arc::downgrade(&scan);
         let input = Arc::new(AnalysisInput::capture(&scan, || false).unwrap().unwrap());
         let bytes = input.retained_bytes();
         drop(scan);
         assert!(weak.upgrade().is_none());
-        let mut reference = Scan::open(file.path(), None).unwrap();
+        let reference = DevelopedSource::open(file.path(), None).unwrap();
         for field in [None, Some(variable_field(a))] {
-            reference.set_flat_field(field.clone());
+            let reference_field = field.clone();
             let sampler =
                 CameraSampler::retained(renderer.evaluation(), &queue, input.clone(), field)
                     .unwrap();
@@ -198,7 +217,14 @@ fn one_cached_payload_supports_changed_regions_and_correction_without_original_p
                     .unwrap();
                 let expected: Vec<_> = positions(a, a, minimum_x, 16)
                     .iter()
-                    .map(|&[x, y]| reference.pixel(x, y).unwrap())
+                    .map(|&[x, y]| {
+                        crate::flat_field::sample_camera_light(
+                            &reference,
+                            reference_field.as_deref(),
+                            [x, y],
+                        )
+                        .unwrap()
+                    })
                     .collect();
                 assert_eq!(actual.pixels.len(), expected.len());
                 for (actual, expected) in actual.pixels.iter().zip(expected) {
@@ -223,10 +249,10 @@ fn one_cached_payload_supports_changed_regions_and_correction_without_original_p
 fn native_white_remains_usable_evidence() {
     let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([65535; 3]);
-    let scan = Scan::open(file.path(), None).unwrap();
-    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan, None).unwrap();
     let actual = sampler
-        .sample(scan.area, 1, |_| true, || false)
+        .sample(scan.area(), 1, |_| true, || false)
         .unwrap()
         .unwrap();
     assert_eq!(actual.pixels, vec![DVec3::ONE]);

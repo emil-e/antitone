@@ -147,14 +147,14 @@ fn held_work<T: Send + 'static>(
                     physical
                         .source(sources.as_ref(), crate::source::Priority::Foreground)
                         .await
-                        .map(|acquired| Some(acquired.prepared.scan()))
+                        .map(|acquired| Some(acquired.prepared.source))
                 },
             )
             .await
             .map_err(|error| error.to_string())?
             .expect("unviewed original");
             let result = background::compute(&stopped, move || {
-                entered.send(Arc::downgrade(scan.source())).unwrap();
+                entered.send(Arc::downgrade(&scan)).unwrap();
                 release.recv_timeout(LIMIT).unwrap();
                 drop(scan);
                 returned.send(()).unwrap();

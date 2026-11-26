@@ -97,11 +97,11 @@ impl Request {
                 return Ok(None);
             }
             let source = &demand.source;
-            let scan = source.scan()?;
             let targets = services.display.ready()?;
             let original = demand.capture.original(
                 &services.device.limits(),
-                &scan,
+                &source.source,
+                source.reference.as_ref().map(|reference| reference.ev()),
                 source.correction.gpu()?,
                 &services.looks,
                 targets.get(demand.target),

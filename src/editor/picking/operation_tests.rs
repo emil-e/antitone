@@ -5,7 +5,7 @@ use crate::{
 };
 use crate::{
     cancellation::Cancellation,
-    editor::measurement::{self, capture_scan, testing},
+    editor::measurement::{self, testing},
 };
 use async_executor::Task;
 use std::{
@@ -65,12 +65,10 @@ fn an_unlisted_caller_awaits_the_whole_interaction_and_receives_its_own_value_ty
     }
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     let requested = region(&editor);
-    let expected = capture_scan(&editor)
-        .unwrap()
-        .reference_coverage(requested)
-        .unwrap();
+    let source = editor.source_context().unwrap().source;
+    let expected = crate::sampling::camera::reference_coverage(&source, None, requested).unwrap();
     let before = editor.document.project.clone();
-    let mut image = capture_scan(&editor).unwrap();
+    let image = editor.source_context().unwrap().source;
     let called = Arc::new(AtomicBool::new(false));
     with_application(editor, |app| {
         let sampled = called.clone();
@@ -79,9 +77,9 @@ fn an_unlisted_caller_awaits_the_whole_interaction_and_receives_its_own_value_ty
             Display::sample("Custom camera statistics"),
             move |region, _| {
                 sampled.store(true, Ordering::Relaxed);
-                let bounds = region.exact_rectangle(image.area).unwrap();
+                let bounds = region.exact_rectangle(image.area()).unwrap();
                 Ok(Statistics {
-                    mean: image.reference_coverage(region)?,
+                    mean: crate::sampling::camera::reference_coverage(&image, None, region)?,
                     area: bounds.width * bounds.height,
                 })
             },
@@ -348,8 +346,8 @@ fn retirement_withdraws_running_work_without_releasing_its_physical_inputs() {
     for drop_caller in [false, true] {
         let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
         editor.document.cache.set_budget(0);
-        let mut image = capture_scan(&editor).unwrap();
-        let source = Arc::downgrade(image.source());
+        let image = editor.source_context().unwrap().source;
+        let source = Arc::downgrade(&image);
         let before = editor.document.project.clone();
         let gate = testing::Gate::install(&mut editor);
         let resumed = Rc::new(Cell::new(false));
@@ -361,8 +359,10 @@ fn retirement_withdraws_running_work_without_releasing_its_physical_inputs() {
                 .spawn(move |cx| async move {
                     let region = pick(&cx, Display::sample("Held measurement")).await?;
                     let value = measurement::run(&cx, "Held measurement", async move {
-                        measurement::query(&worker_cx, move |_| image.reference_coverage(region))
-                            .await
+                        measurement::query(&worker_cx, move |_| {
+                            crate::sampling::camera::reference_coverage(&image, None, region)
+                        })
+                        .await
                     })
                     .await;
                     continued.set(true);

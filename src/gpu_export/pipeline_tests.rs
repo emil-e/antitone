@@ -31,12 +31,12 @@ fn matches_native_arithmetic(actual: [f32; 3], expected: [f32; 3]) -> bool {
 #[test]
 fn supplied_pipeline_uses_original_neighbours_before_rotated_output_reconstruction() {
     let (device, queue, renderer) = super::tests::context();
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
     .unwrap();
-    let area = scan.area;
+    let area = scan.area();
     let composition = Composition::with_crop(
         area,
         Default::default(),
@@ -51,7 +51,9 @@ fn supplied_pipeline_uses_original_neighbours_before_rotated_output_reconstructi
         }),
     )
     .unwrap();
-    let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
+    let matrix = InputSettings::Digital
+        .positive_matrix(scan.camera_to_ap1(), None)
+        .unwrap();
     let at = |x: u32, y: u32| matrix * scan.pixel(x, y).unwrap();
     let bias =
         |x, y| DVec3::splat((f64::from(x) + 0.5) * 0.000001 + (f64::from(y) + 0.5) * 0.000002);
@@ -115,7 +117,8 @@ fn supplied_pipeline_uses_original_neighbours_before_rotated_output_reconstructi
         &device,
         &queue,
         Request {
-            scan: &scan,
+            source: &scan,
+            reference_ev: None,
             field: None,
             input: InputSettings::Digital,
             roll: Default::default(),

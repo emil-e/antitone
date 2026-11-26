@@ -30,18 +30,18 @@ fn photographic_reference_initialization() {
         }
         let preview_ms = tick.elapsed().as_secs_f64() * 1000.;
         let tick = Instant::now();
-        let scan = Scan::from_raw(raw, Some(wb)).unwrap();
+        let source = Arc::new(DevelopedSource::from_raw(raw, Some(wb)).unwrap());
         let develop_ms = tick.elapsed().as_secs_f64() * 1000.;
         let tick = Instant::now();
         let memo = OnceLock::new();
-        let prepared = native(None, &memo, InputSettings::Digital, scan.source()).unwrap();
+        let prepared = native(None, &memo, InputSettings::Digital, &source).unwrap();
         let proxy = prepared.proxy;
         let prepare_ms = tick.elapsed().as_secs_f64() * 1000.;
         let reference = memo.get().unwrap();
         let tick = Instant::now();
         for _ in 0..10 {
             assert!(
-                native(None, &memo, InputSettings::Digital, scan.source())
+                native(None, &memo, InputSettings::Digital, &source)
                     .unwrap()
                     .proxy
                     .is_none()

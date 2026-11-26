@@ -52,7 +52,9 @@ fn removing_a_photo_releases_its_sampling_inputs_and_undo_does_not_restore_worki
     let mut editor = crate::editor::tests::authored_fixture(&["roll-0.dng", "roll-1.dng"]);
     let id = editor.document.project.order[0];
     let document = editor.document.capture();
-    let scan = crate::scan::Scan::open(&document.source_path(id).unwrap(), Some([1.; 4])).unwrap();
+    let scan =
+        crate::scan::DevelopedSource::open(&document.source_path(id).unwrap(), Some([1.; 4]))
+            .unwrap();
     let input = std::sync::Arc::new(
         crate::scan::AnalysisInput::capture(&scan, || false)
             .unwrap()

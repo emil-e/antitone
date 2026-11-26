@@ -8,7 +8,7 @@ use crate::{
     exposure_reference::{self, ReferenceExposure, UnavailableReference as Unavailable},
     processing::{InputSettings, exposure_multiplier},
     project::SourceDevelopment,
-    scan::{CameraPixels, CameraProxy, DevelopedSource, Scan},
+    scan::{CameraPixels, CameraProxy, DevelopedSource},
     source::PreviewResult,
 };
 use std::sync::{Arc, OnceLock};
@@ -17,12 +17,6 @@ pub(crate) struct PreparedSource {
     pub source: Arc<DevelopedSource>,
     pub reference: Option<ReferenceExposure>,
     pub proxy: Option<Arc<CameraPixels>>,
-}
-
-impl PreparedSource {
-    pub fn scan(&self) -> Scan {
-        Scan::with_reference(self.source.clone(), self.reference.clone())
-    }
 }
 
 /// Acquire physical inputs before resolving the captured photo's exposure.
@@ -91,10 +85,9 @@ pub(crate) fn native_with_preview(
         resolve(
             preview.unwrap_or_else(|| embedded_preview::read(source.path(), &development)),
             || {
-                let proxy = store.cloned().map_or_else(
-                    || CameraPixels::from_scan(&Scan::from_source(source.clone())).map(Arc::new),
-                    Ok,
-                )?;
+                let proxy = store
+                    .cloned()
+                    .map_or_else(|| CameraPixels::from_source(source).map(Arc::new), Ok)?;
                 sampled = Some(proxy.clone());
                 Ok(proxy)
             },
@@ -121,24 +114,22 @@ pub(crate) fn proxy(
     CameraProxy::new(proxy.clone(), value)
 }
 
-/// Prepare a captured photograph without changing its caller's source or intent.
-pub(crate) fn native_image(
-    scan: &Scan,
+/// Resolve starting exposure only if the Digital capture has not already supplied it.
+#[cfg(any(feature = "editor", test))]
+pub(crate) fn native_recipe(
+    source: &Arc<DevelopedSource>,
+    available: Option<&ReferenceExposure>,
     recipe: &crate::image_recipe::ImageRecipe,
-) -> Result<(Scan, crate::image_recipe::ImageRecipe), Error> {
-    let reference = recipe
-        .neutral
-        .reference
-        .clone()
-        .or_else(|| scan.reference_exposure.clone())
-        .map_or_else(OnceLock::new, OnceLock::from);
-    let prepared = native(None, &reference, recipe.neutral.input, scan.source())?;
-    let mut scan = prepared.scan();
-    scan.set_flat_field(recipe.neutral.correction.clone());
+) -> Result<crate::image_recipe::ImageRecipe, Error> {
+    recipe.neutral.require_source(source)?;
     let mut recipe = recipe.clone();
-    recipe.neutral.reference = image_reference(&recipe, prepared.reference.as_ref());
-    recipe.neutral.require_scan(&scan)?;
-    Ok((scan, recipe))
+    if !recipe.neutral.input.is_negative() {
+        recipe.neutral.reference = match image_reference(&recipe, available) {
+            Some(reference) => Some(reference),
+            None => native(None, &OnceLock::new(), recipe.neutral.input, source)?.reference,
+        };
+    }
+    Ok(recipe)
 }
 
 /// Bind an available preparation fact only when the capture does not already specify it.

@@ -28,7 +28,7 @@ fn source_and_visit_replacement_retire_old_work_without_pinning_its_source_in_th
     for replace_visit in [false, true] {
         let (editor, pixels, base, scheduler) = fixture();
         let old_source = Arc::downgrade(&pixels.source);
-        let original = camera_source(&pixels.scan().unwrap()).unwrap();
+        let original = camera_source(&pixels.source).unwrap();
         let old_key = original.identity().unwrap().clone();
         drop(original);
         let authored = crate::dng_fixture::Fixture {
@@ -37,9 +37,9 @@ fn source_and_visit_replacement_retire_old_work_without_pinning_its_source_in_th
             ..Default::default()
         }
         .write();
-        let scan = Scan::open(authored.path(), None).unwrap();
+        let scan = DevelopedSource::open(authored.path(), None).unwrap();
         let composition =
-            Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+            Composition::new(scan.area(), Default::default(), Default::default()).unwrap();
         let next = SourceRequest::inspection_fixture(
             FrameRaster::new(
                 composition,
@@ -48,13 +48,13 @@ fn source_and_visit_replacement_retire_old_work_without_pinning_its_source_in_th
                 [64, 48],
             )
             .unwrap(),
-            scan.camera_to_ap1,
+            scan.camera_to_ap1(),
             None,
         )
         .unwrap();
         let input = source::Context {
             reference: None,
-            source: scan.source().clone(),
+            source: scan.clone(),
             correction: Default::default(),
         };
         let original = camera_source(&scan).unwrap();

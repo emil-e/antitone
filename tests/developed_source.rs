@@ -1,9 +1,10 @@
 #![cfg(all(feature = "raw", feature = "project"))]
 
 use antitone::{
-    flat_field::FlatField,
+    flat_field::{FlatField, sample_camera_light},
     raw::{RawFile, Rect},
-    scan::{DevelopedSource, Scan},
+    sampling::camera::reference,
+    scan::DevelopedSource,
 };
 use glam::{DMat3, DVec3};
 use std::sync::{Arc, Barrier};
@@ -56,14 +57,13 @@ fn frozen_pixels_and_metadata_match_unique_development() {
     );
     drop(raw);
 
-    let scan = Scan::open(file.path(), Some(WB)).unwrap();
-    let source = scan.source();
+    let source = DevelopedSource::open(file.path(), Some(WB)).unwrap();
     assert_eq!(format!("{:?}", source.metadata()), format!("{metadata:?}"));
     assert_eq!(source.white_balance(), WB);
-    assert_eq!(source.camera_model(), scan.camera_model);
-    assert_eq!(source.camera_to_ap1(), scan.camera_to_ap1);
-    assert_eq!(source.area(), scan.area);
-    assert_eq!(codes(source), expected);
+    assert_eq!(source.camera_model(), metadata.camera_model());
+    assert_eq!(source.camera_to_ap1(), metadata.camera_to_ap1().unwrap());
+    assert_eq!(source.area(), metadata.image_area().unwrap());
+    assert_eq!(codes(&source), expected);
     let image = source.camera_image().unwrap();
     assert_eq!(
         (
@@ -81,53 +81,46 @@ fn frozen_pixels_and_metadata_match_unique_development() {
 #[test]
 fn leases_keep_native_storage_alive_with_independent_correction_contexts() {
     let file = fixture::bayer_dng();
-    let first = Scan::open(file.path(), Some(WB)).unwrap();
-    let source = first.source().clone();
+    let source = DevelopedSource::open(file.path(), Some(WB)).unwrap();
     let weak = Arc::downgrade(&source);
-    let original = first.pixel(16, 16).unwrap();
-    let mut corrected = Scan::from_source(source.clone());
-    let mut plain = Scan::from_source(source.clone());
-    assert!(Arc::ptr_eq(first.source(), corrected.source()));
+    let corrected_lease = source.clone();
+    let original = source.pixel(16, 16).unwrap();
     let area = source.area();
-    let field = Arc::new(
-        FlatField::from_nodes(
-            [area.x, area.y, area.width, area.height],
-            [2, 2],
-            vec![DVec3::splat(2.0); 4],
-        )
-        .unwrap(),
+    let field = FlatField::from_nodes(
+        [area.x, area.y, area.width, area.height],
+        [2, 2],
+        vec![DVec3::splat(2.0); 4],
+    )
+    .unwrap();
+    let point = [16, 16];
+    let baseline_proxy = source.preview_source(8).unwrap();
+    assert_eq!(
+        sample_camera_light(&corrected_lease, Some(&field), point).unwrap(),
+        original * 2.0
     );
-    corrected.set_flat_field(Some(field.clone()));
-    assert_eq!(corrected.pixel(16, 16).unwrap(), original * 2.0);
-    assert_eq!(plain.pixel(16, 16).unwrap(), original);
-    let mean = plain.reference(region()).unwrap();
-    let corrected_mean = corrected.reference(region()).unwrap();
+    assert_eq!(source.pixel(16, 16).unwrap(), original);
+    let mean = reference(&source, None, region()).unwrap();
+    let corrected_mean = reference(&corrected_lease, Some(&field), region()).unwrap();
     // Plain and corrected references group their ordinary sums differently.
     assert!((corrected_mean - mean * 2.0).abs().max_element() < 1e-12);
-    let fresh = Scan::from_source(corrected.source().clone());
-    assert!(fresh.flat_field().is_none());
-    assert_eq!(fresh.pixel(16, 16).unwrap(), original);
-    let (_, _, preview) = plain.preview_source(8).unwrap();
-    assert_eq!(fresh.preview_source(8).unwrap().2, preview);
-    let outside = Arc::new(
-        FlatField::from_nodes(
-            [area.width, area.height, 1, 1],
-            [2, 2],
-            vec![DVec3::splat(3.); 4],
-        )
-        .unwrap(),
+    let outside = FlatField::from_nodes(
+        [area.width, area.height, 1, 1],
+        [2, 2],
+        vec![DVec3::splat(3.); 4],
+    )
+    .unwrap();
+    assert_eq!(
+        sample_camera_light(&corrected_lease, Some(&outside), point).unwrap(),
+        original
     );
-    corrected.set_flat_field(Some(outside));
-    assert_eq!(corrected.pixel(16, 16).unwrap(), original);
-    corrected.set_flat_field(Some(field));
-    assert_eq!(corrected.pixel(16, 16).unwrap(), original * 2.0);
-    drop(first);
+    assert_eq!(source.preview_source(8).unwrap(), baseline_proxy);
     drop(source);
-    drop(plain);
-    drop(fresh);
     assert!(weak.upgrade().is_some());
-    assert_eq!(corrected.pixel(16, 16).unwrap(), original * 2.0);
-    drop(corrected);
+    assert_eq!(
+        sample_camera_light(&corrected_lease, Some(&field), point).unwrap(),
+        original * 2.0
+    );
+    drop(corrected_lease);
     assert!(weak.upgrade().is_none());
 }
 
@@ -135,10 +128,8 @@ fn leases_keep_native_storage_alive_with_independent_correction_contexts() {
 fn synchronized_handoff_concurrent_readers_and_receiver_final_release() {
     fn send_sync<T: Send + Sync>() {}
     send_sync::<DevelopedSource>();
-    send_sync::<Scan>();
     let file = fixture::bayer_dng();
-    let producer = Scan::open(file.path(), Some(WB)).unwrap();
-    let source = producer.source().clone();
+    let source = DevelopedSource::open(file.path(), Some(WB)).unwrap();
     let expected = codes(&source);
     let weak = Arc::downgrade(&source);
     let barrier = Arc::new(Barrier::new(3));
@@ -166,17 +157,16 @@ fn synchronized_handoff_concurrent_readers_and_receiver_final_release() {
     let b = std::thread::spawn(move || {
         let source = receive.recv().unwrap();
         final_barrier.wait();
-        let mut consumer = Scan::from_source(source.clone());
         for _ in 0..8 {
-            assert!(consumer.reference(region()).is_ok());
+            assert!(reference(&source, None, region()).is_ok());
         }
         let actual = codes(&source);
         wait.recv().unwrap();
-        drop(consumer);
+
         drop(source);
         actual
     });
-    drop(producer);
+
     send.send(source).unwrap();
     drop(send);
     barrier.wait();

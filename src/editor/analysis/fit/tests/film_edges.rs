@@ -43,8 +43,8 @@ fn attach_film(request: &mut Request, index: usize, boundaries: [Boundary; 4]) {
 
 // This fixture is smaller than the cache limit: each cached site is one original
 // pixel. Independently enumerate the source-wide 90x91 statistical strata.
-fn statistical_sites(scan: &Scan) -> Vec<[u32; 2]> {
-    assert_eq!(array(scan.area), [8, 8, 496, 496]);
+fn statistical_sites(source: &DevelopedSource) -> Vec<[u32; 2]> {
+    assert_eq!(array(source.area()), [8, 8, 496, 496]);
     (0..91)
         .flat_map(|y| {
             (0..90).map(move |x| [8 + (2 * x + 1) * 496 / 180, 8 + (2 * y + 1) * 496 / 182])
@@ -116,14 +116,14 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
         let mut state = services.fit(request.clone(), captured.clone()).unwrap();
         state.geometry().unwrap();
         for index in 0..2 {
-            let scan = futures_lite::future::block_on(services.acquire(
+            let source = futures_lite::future::block_on(services.acquire(
                 Arc::new(request.clone()),
                 index,
                 Cancellation::default(),
             ))
             .unwrap()
             .unwrap();
-            let sites = statistical_sites(&scan);
+            let sites = statistical_sites(&source);
             assert_eq!(sites.len(), 8190);
             let mut expected_film = vec![];
             let mut expected_picture = vec![];
@@ -135,7 +135,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
                 if index == 0 && x < 114 {
                     continue;
                 }
-                let p = scan.pixel(x, y).unwrap();
+                let p = source.camera_image().unwrap().pixel(x, y).unwrap();
                 expected_film.push(p);
                 if picture {
                     expected_picture.push(p);
@@ -144,7 +144,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
             if index == 0 {
                 assert!(expected_picture.len() < nominal_picture);
             }
-            assert!(state.sample(index, scan, None, || false).unwrap());
+            assert!(state.sample(index, source, None, || false).unwrap());
             let frame = &state.owned[index];
             for (samples, pixels) in [
                 (&frame.film, expected_film),
@@ -266,14 +266,14 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
     let mut state = services.fit(request.clone(), captured).unwrap();
     state.geometry().unwrap();
     for index in 0..2 {
-        let scan = futures_lite::future::block_on(services.acquire(
+        let source = futures_lite::future::block_on(services.acquire(
             Arc::new(request.clone()),
             index,
             Cancellation::default(),
         ))
         .unwrap()
         .unwrap();
-        let sites = statistical_sites(&scan);
+        let sites = statistical_sites(&source);
         let mut film = vec![];
         let mut picture = vec![];
         for [x, y] in sites {
@@ -282,13 +282,13 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
             if index == 0 && x <= 98 {
                 continue;
             }
-            let p = scan.pixel(x, y).unwrap();
+            let p = source.camera_image().unwrap().pixel(x, y).unwrap();
             film.push(p);
             if (96..416).contains(&x) && (96..416).contains(&y) {
                 picture.push(p);
             }
         }
-        assert!(state.sample(index, scan, None, || false).unwrap());
+        assert!(state.sample(index, source, None, || false).unwrap());
         let expected = [film.len(), picture.len()];
         assert!(expected[0] > expected[1] && expected[1] >= MIN_PICTURE_SAMPLES);
         assert_eq!(
@@ -381,14 +381,14 @@ fn shared_holder_support_filters_authored_analysis_without_trimming_nominal_crop
     let captured = input(&services, &request);
     let mut state = services.fit(request.clone(), captured).unwrap();
     state.geometry().unwrap();
-    let scan = futures_lite::future::block_on(services.acquire(
+    let source = futures_lite::future::block_on(services.acquire(
         Arc::new(request.clone()),
         0,
         Cancellation::default(),
     ))
     .unwrap()
     .unwrap();
-    assert!(state.sample(0, scan, None, || false).unwrap());
+    assert!(state.sample(0, source, None, || false).unwrap());
     // The holder y312 boundary keeps centres above its 2px inward band.
     assert_eq!(state.owned[0].film.pixels.len(), 4950);
     assert_eq!(state.owned[0].picture.pixels.len(), 2262);
@@ -430,14 +430,14 @@ fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
     let mut state = services.fit(request.clone(), captured).unwrap();
     state.geometry().unwrap();
     for index in 0..2 {
-        let scan = futures_lite::future::block_on(services.acquire(
+        let source = futures_lite::future::block_on(services.acquire(
             Arc::new(request.clone()),
             index,
             Cancellation::default(),
         ))
         .unwrap()
         .unwrap();
-        assert!(state.sample(index, scan, None, || false).unwrap());
+        assert!(state.sample(index, source, None, || false).unwrap());
         // Ten source-wide strata columns leave enough picture statistics, but
         // their 910 film samples per photo cannot satisfy the 2048 roll minimum.
         assert_eq!(state.owned[index].picture.pixels.len(), 590);
@@ -485,14 +485,14 @@ fn unknown_camera_and_inferred_limits_do_not_exclude_samples() {
     let captured = input(&services, &request);
     let mut state = services.fit(request.clone(), captured).unwrap();
     state.geometry().unwrap();
-    let scan = futures_lite::future::block_on(services.acquire(
+    let source = futures_lite::future::block_on(services.acquire(
         Arc::new(request),
         0,
         Cancellation::default(),
     ))
     .unwrap()
     .unwrap();
-    assert!(state.sample(0, scan, None, || false).unwrap());
+    assert!(state.sample(0, source, None, || false).unwrap());
     assert_eq!(state.owned[0].film.pixels.len(), 8190);
     assert_eq!(state.owned[0].picture.pixels.len(), 3422);
     scheduler.close_and_wait().unwrap();

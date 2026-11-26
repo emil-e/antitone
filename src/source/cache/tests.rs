@@ -1,6 +1,6 @@
 use super::*;
 use crate::source::{self as source_loading, Priority, SourceLoader, SourceProvider};
-use crate::{project::SourceDevelopment, raw::fixture, scan::Scan, source::Charges};
+use crate::{project::SourceDevelopment, raw::fixture, scan::DevelopedSource, source::Charges};
 use std::sync::OnceLock;
 use std::sync::{
     Weak,
@@ -13,10 +13,7 @@ fn input() -> (
     Arc<DevelopedSource>,
 ) {
     let file = fixture::bayer_dng();
-    let source = Scan::open(file.path(), Some([1.; 4]))
-        .unwrap()
-        .source()
-        .clone();
+    let source = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
     let metadata = source.metadata();
     let image = source.camera_image().unwrap();
     let area = source.area();

@@ -39,7 +39,7 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
     };
     fixture.lists[1].push(Opcode::gain(0.5, 1));
     let file = fixture.write();
-    let scan = Scan::open(file.path(), None).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
     let calibration = Calibration {
         dmin: DVec3::splat(0.75),
         dmax: DVec3::splat(0.01),
@@ -56,10 +56,10 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
     let loaded = Project::load(&project_path).unwrap();
     serde_json::to_value(&loaded).unwrap();
     let source = loaded.source(id).unwrap();
-    let scan = Scan::open(&source.path, loaded.acquisition_wb()).unwrap();
+    let scan = DevelopedSource::open(&source.path, loaded.acquisition_wb()).unwrap();
     assert_eq!(record(file.path(), &scan).development, source.development);
-    for y in scan.area.y..scan.area.y + scan.area.height {
-        for x in scan.area.x..scan.area.x + scan.area.width {
+    for y in scan.area().y..scan.area().y + scan.area().height {
+        for x in scan.area().x..scan.area().x + scan.area().width {
             assert_eq!(
                 scan.pixel(x, y).unwrap(),
                 camera_pixel(x, y),
@@ -79,15 +79,19 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
     )
     .unwrap();
     let composition = Composition::new(
-        scan.area,
+        scan.area(),
         RollOrientation::default(),
         PhotoOrientation::default(),
     )
     .unwrap();
     let oracle_input = InputSettings::negative(calibration);
-    let oracle =
-        AdjustmentLayerPipeline::new(oracle_input, loaded.roll, grade.clone(), scan.camera_to_ap1)
-            .unwrap();
+    let oracle = AdjustmentLayerPipeline::new(
+        oracle_input,
+        loaded.roll,
+        grade.clone(),
+        scan.camera_to_ap1(),
+    )
+    .unwrap();
     let (device, queue, renderer) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -114,7 +118,8 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
             &device,
             &queue,
             Request {
-                scan: &scan,
+                source: &scan,
+                reference_ev: None,
                 field: None,
                 input: InputSettings::negative(calibration),
                 roll: loaded.roll,

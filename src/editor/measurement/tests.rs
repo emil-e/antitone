@@ -1,5 +1,5 @@
 use super::*;
-use crate::editor::{PickerCase, Scan};
+use crate::editor::PickerCase;
 use crate::source as source_loading;
 use crate::{raw::Rect, source::SourceCache};
 use std::sync::Arc;
@@ -36,25 +36,30 @@ fn captured_measurement_keeps_the_shared_gpu_copy_after_correction_replacement_a
             map.clone(),
         )));
     let captured = editor.correction();
-    let input = capture_input(&editor).unwrap();
+    let input = editor.capture_source_context().unwrap();
     editor.document.project.set_flat_field(None);
     let services = editor.source_services.clone().unwrap();
     drop(editor);
 
-    let (mut scan, field) = pollster::block_on(input).unwrap();
+    let context = pollster::block_on(input).unwrap();
+    let field = context.correction.gpu().unwrap();
     let shared = pollster::block_on(captured.acquire()).unwrap().unwrap();
     assert!(Arc::ptr_eq(field.as_ref().unwrap(), &shared.gpu));
-    assert!(Arc::ptr_eq(scan.flat_field().unwrap(), &map));
+    assert!(Arc::ptr_eq(context.correction.map().unwrap(), &map));
+    let scan = context.source.clone();
+    let scan_field = Some(map);
     let coverage = Coverage::rectangle(Rect {
         x: area.x + 8,
         y: area.y + 8,
         width: 32,
         height: 32,
     });
-    let expected = scan.reference_coverage(coverage).unwrap();
+    let expected =
+        crate::sampling::camera::reference_coverage(&scan, scan_field.as_deref(), coverage)
+            .unwrap();
     let samples = query::Samples::new(
         (&services.evaluation, &services.queue),
-        &mut scan,
+        &context.source,
         field,
         coverage,
         &|| false,
@@ -69,21 +74,21 @@ fn captured_measurement_keeps_the_shared_gpu_copy_after_correction_replacement_a
 #[test]
 fn original_grid_measurement_does_not_require_display_initialization() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
-    let mut scan = capture_scan(&editor).unwrap();
+    let scan = editor.source_context().unwrap().source;
     let mut services = editor.source_services.clone().unwrap();
     let display_error = Error::Gpu("injected display initialization failure".into());
     services.display = super::super::display::Warmup::failed(display_error.clone());
 
     let coverage = Coverage::rectangle(Rect {
-        x: scan.area.x + 8,
-        y: scan.area.y + 8,
+        x: scan.area().x + 8,
+        y: scan.area().y + 8,
         width: 32,
         height: 32,
     });
-    let expected = scan.reference_coverage(coverage).unwrap();
+    let expected = crate::sampling::camera::reference_coverage(&scan, None, coverage).unwrap();
     let samples = query::Samples::new(
         (&services.evaluation, &services.queue),
-        &mut scan,
+        &scan,
         None,
         coverage,
         &|| false,
@@ -111,7 +116,7 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
             .await
             .unwrap();
         let renderers = Arc::new(crate::editor::display::DisplayFixture::for_device(&device));
-        let (ready, mut scan) = crate::editor::prepare_source(
+        let (ready, scan) = crate::editor::prepare_source(
             &renderers,
             &device,
             &queue,
@@ -127,16 +132,19 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
             width: 32,
             height: 32,
         });
-        let expected = scan.reference_coverage(region).unwrap();
-        let dark = scan
-            .reference(Rect {
+        let expected = crate::sampling::camera::reference_coverage(&scan, None, region).unwrap();
+        let dark = crate::sampling::camera::reference(
+            &scan,
+            None,
+            Rect {
                 x: 80,
                 y: 16,
                 width: 32,
                 height: 32,
-            })
-            .unwrap();
-        let lease = Arc::downgrade(scan.source());
+            },
+        )
+        .unwrap();
+        let lease = Arc::downgrade(&scan);
         let mut editor = Editor::state();
         let scheduler = source_loading::SourceLoader::new();
         editor.source_services = Some(crate::editor::source::Services::fixture(
@@ -248,27 +256,15 @@ fn cancelling_an_unpolled_measurement_releases_its_input_without_admission() {
 fn service_rejection_retires_the_pick_without_changing_processing_or_history() {
     let mut editor = crate::editor::tests::with_document_services(crate::editor::tests::fixture());
     crate::editor::tests::add_ready_fixture(&mut editor);
-    let area = Scan::from_source(
-        editor
-            .document
-            .visit
-            .canvas
-            .ready
-            .as_ref()
-            .unwrap()
-            .developed
-            .clone(),
-    )
-    .area;
+    let area = editor.source_context().unwrap().source.area();
     let region = Coverage::rectangle(Rect {
         x: area.x + area.width + 16,
         y: area.y + area.height + 16,
         width: 4,
         height: 4,
     });
-    let expected_error = capture_scan(&editor)
-        .unwrap()
-        .reference_coverage(region)
+    let source = editor.source_context().unwrap().source;
+    let expected_error = crate::sampling::camera::reference_coverage(&source, None, region)
         .expect_err("coverage outside the sensor must be rejected")
         .to_string();
     let before = editor.document.state.project.clone();
@@ -524,20 +520,19 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
     let executor = async_executor::LocalExecutor::new();
     let measurement = executor.spawn(async move {
         let source = ticket.await.map_err(|error| error.to_string())?;
-        let scan = Scan::from_source(source.clone());
+        let scan = source.clone();
         // The SDK marks repeated/interpolated border samples ineligible. Admission
         // is the subject here, so measure an ordinary interior rather than borders.
-        let area = scan.area;
+        let area = scan.area();
         let region = Rect {
             x: area.x + 8,
             y: area.y + 8,
             width: area.width - 16,
             height: area.height - 16,
         };
-        let mut image = Scan::from_source(source);
+        let image = source;
         crate::background::run(move |_| {
-            image
-                .reference_coverage(Coverage::rectangle(region))
+            crate::sampling::camera::reference_coverage(&image, None, Coverage::rectangle(region))
                 .map_err(|error| error.to_string())
         })
         .await

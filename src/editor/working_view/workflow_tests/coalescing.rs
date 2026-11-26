@@ -5,7 +5,7 @@ use crate::photographic::graph::view_source::SourceRequest;
 use crate::photographic::test_inputs::AuthoredPhotograph;
 
 fn capture(pixels: &source::Context, base: &SourceRequest, offset: f64, wb: f64) -> Demand {
-    let scan = pixels.scan().unwrap();
+    let scan = pixels.source.clone();
     let calibration = (Calibration {
         dmin: DVec3::splat(0.8),
         dmax: DVec3::splat(0.2),
@@ -28,8 +28,8 @@ fn capture(pixels: &source::Context, base: &SourceRequest, offset: f64, wb: f64)
             exposure: 0.,
         },
         AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
-        scan.camera_to_ap1,
-        scan.area,
+        scan.camera_to_ap1(),
+        scan.area(),
     )
     .unwrap();
     let spec = SourceRequest::for_processing(base.frame(), &processing)

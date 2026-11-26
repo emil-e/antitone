@@ -7,7 +7,8 @@ use super::{
 };
 use crate::{
     Error, adjustment_layers::AdjustmentLayerSnapshot, coverage::Coverage,
-    photographic::stages::flat_field::GpuFlatField, scan::Scan,
+    exposure_reference::ReferenceExposure, photographic::stages::flat_field::GpuFlatField,
+    scan::DevelopedSource,
 };
 #[cfg(test)]
 use crate::{
@@ -113,20 +114,21 @@ impl LayerInput {
 
     pub fn measure(
         self,
-        image: &mut Scan,
+        source: &Arc<DevelopedSource>,
+        reference: Option<&ReferenceExposure>,
         field: Option<Arc<GpuFlatField>>,
         region: Coverage,
         gpu: measurement::Gpu<'_>,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Balance, Error> {
-        query::layer(gpu, image, field, region, self, cancelled)
+        query::layer(gpu, source, reference, field, region, self, cancelled)
     }
 }
 
 pub(super) async fn pick_roll(cx: UiContext<'_, Editor>) {
     let Some((region, captured)) = picking::pick_with(&cx, ROLL, |editor| {
         Ok::<_, String>((
-            measurement::capture_input(editor)?,
+            editor.capture_source_context()?,
             measurement::capture_gpu(editor),
             roll_input(editor)?,
         ))
@@ -135,7 +137,7 @@ pub(super) async fn pick_roll(cx: UiContext<'_, Editor>) {
     else {
         return;
     };
-    let (image, gpu, input) = match captured {
+    let (source, gpu, input) = match captured {
         Ok(input) => input,
         Err(error) => {
             cx.update(|editor| editor.status = error);
@@ -144,12 +146,22 @@ pub(super) async fn pick_roll(cx: UiContext<'_, Editor>) {
     };
     let worker_cx = cx.clone();
     let Some(value) = measurement::run(&cx, ROLL.label, async move {
-        let (mut image, field) = image.await?;
+        let context = source.await?;
+        let field = context
+            .correction
+            .gpu()
+            .map_err(|error| error.to_string())?;
         measurement::query(&worker_cx, move |cancelled| {
             let gpu = measurement::query_gpu(gpu.as_ref())?;
-            query::roll(gpu, &mut image, field, region, input, &|| {
-                cancelled.is_cancelled()
-            })
+            query::roll(
+                gpu,
+                &context.source,
+                context.reference.as_ref(),
+                field,
+                region,
+                input,
+                &|| cancelled.is_cancelled(),
+            )
         })
         .await
     })
@@ -167,7 +179,7 @@ pub(super) async fn pick_roll(cx: UiContext<'_, Editor>) {
 pub(super) async fn pick_layer(cx: UiContext<'_, Editor>) {
     let Some((region, captured)) = picking::pick_with(&cx, LAYER, |editor| {
         Ok::<_, String>((
-            measurement::capture_input(editor)?,
+            editor.capture_source_context()?,
             measurement::capture_gpu(editor),
             LayerInput::capture(editor)?,
             (
@@ -184,7 +196,7 @@ pub(super) async fn pick_layer(cx: UiContext<'_, Editor>) {
     else {
         return;
     };
-    let (image, gpu, input, target) = match captured {
+    let (source, gpu, input, target) = match captured {
         Ok(input) => input,
         Err(error) => {
             cx.update(|editor| editor.status = error);
@@ -193,10 +205,21 @@ pub(super) async fn pick_layer(cx: UiContext<'_, Editor>) {
     };
     let worker_cx = cx.clone();
     let Some(value) = measurement::run(&cx, LAYER.label, async move {
-        let (mut image, field) = image.await?;
+        let context = source.await?;
+        let field = context
+            .correction
+            .gpu()
+            .map_err(|error| error.to_string())?;
         measurement::query(&worker_cx, move |cancelled| {
             let gpu = measurement::query_gpu(gpu.as_ref())?;
-            input.measure(&mut image, field, region, gpu, &|| cancelled.is_cancelled())
+            input.measure(
+                &context.source,
+                context.reference.as_ref(),
+                field,
+                region,
+                gpu,
+                &|| cancelled.is_cancelled(),
+            )
         })
         .await
     })

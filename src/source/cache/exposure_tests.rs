@@ -4,9 +4,18 @@ use crate::{
     processing::InputSettings,
     project::SourceDevelopment,
     raw::{RawFile, fixture},
-    scan::{CameraProxy, Scan},
+    scan::{CameraProxy, DevelopedSource},
 };
 use std::sync::OnceLock;
+
+fn prepared_matrix(prepared: &crate::photo_preparation::PreparedSource) -> glam::DMat3 {
+    InputSettings::Digital
+        .positive_matrix(
+            prepared.source.camera_to_ap1(),
+            prepared.reference.as_ref().map(|reference| reference.ev()),
+        )
+        .unwrap()
+}
 
 fn matched(ev: f64) -> ReferenceExposure {
     ReferenceExposure::Matched(StartingExposure {
@@ -19,13 +28,15 @@ fn matched(ev: f64) -> ReferenceExposure {
 #[test]
 fn independent_exposure_values_share_the_same_cached_native_and_proxy_pixels() {
     let file = fixture::bayer_dng();
-    let scan = Scan::from_raw(
-        RawFile::open_uncorrected(file.path()).unwrap(),
-        Some([1.; 4]),
-    )
-    .unwrap();
-    let original = scan.source().clone();
-    let pixels = Arc::new(CameraPixels::from_scan(&scan).unwrap());
+    let scan = Arc::new(
+        DevelopedSource::from_raw(
+            RawFile::open_uncorrected(file.path()).unwrap(),
+            Some([1.; 4]),
+        )
+        .unwrap(),
+    );
+    let original = scan.clone();
+    let pixels = Arc::new(CameraPixels::from_source(&scan).unwrap());
     let development =
         SourceDevelopment::from_metadata(&original.metadata(), original.white_balance()).unwrap();
     let key = SourceKey::capture(file.path(), &development).unwrap();
@@ -55,16 +66,10 @@ fn independent_exposure_values_share_the_same_cached_native_and_proxy_pixels() {
     assert!(Arc::ptr_eq(&cache.get(&key).unwrap(), &original));
     assert!(Arc::ptr_eq(&cache.get_proxy(&key).unwrap(), &pixels));
     for (prepared, proxy, gain) in [(&first, &first_proxy, 2.), (&second, &second_proxy, 4.)] {
-        assert_eq!(
-            prepared
-                .scan()
-                .positive_matrix(&InputSettings::Digital)
-                .unwrap(),
-            scan.camera_to_ap1 * gain
-        );
+        assert_eq!(prepared_matrix(prepared), scan.camera_to_ap1() * gain);
         assert_eq!(
             proxy.positive_matrix(&InputSettings::Digital).unwrap(),
-            scan.camera_to_ap1 * gain
+            scan.camera_to_ap1() * gain
         );
         assert!(
             prepared.proxy.is_none(),
@@ -72,11 +77,8 @@ fn independent_exposure_values_share_the_same_cached_native_and_proxy_pixels() {
         );
     }
     assert_eq!(
-        first
-            .scan()
-            .positive_matrix(&InputSettings::Digital)
-            .unwrap(),
-        scan.camera_to_ap1 * 2.,
+        prepared_matrix(&first),
+        scan.camera_to_ap1() * 2.,
         "a later interpretation cannot alter an earlier consumer"
     );
 }
@@ -84,11 +86,13 @@ fn independent_exposure_values_share_the_same_cached_native_and_proxy_pixels() {
 #[test]
 fn recorded_exposure_outlives_its_cache_without_retaining_optional_pixels() {
     let file = fixture::bayer_dng();
-    let scan = Scan::from_raw(
-        RawFile::open_uncorrected(file.path()).unwrap(),
-        Some([1.; 4]),
-    )
-    .unwrap();
+    let scan = Arc::new(
+        DevelopedSource::from_raw(
+            RawFile::open_uncorrected(file.path()).unwrap(),
+            Some([1.; 4]),
+        )
+        .unwrap(),
+    );
     let exposures = crate::exposure_metadata::Store::default();
     let id = crate::project::SourceId(1);
     let reference = exposures.memo(id, file.path());
@@ -100,14 +104,10 @@ fn recorded_exposure_outlives_its_cache_without_retaining_optional_pixels() {
     assert!(weak.upgrade().is_none());
 
     let prepared =
-        crate::photo_preparation::native(None, &reference, InputSettings::Digital, scan.source())
-            .unwrap();
+        crate::photo_preparation::native(None, &reference, InputSettings::Digital, &scan).unwrap();
     assert_eq!(
-        prepared
-            .scan()
-            .positive_matrix(&InputSettings::Digital)
-            .unwrap(),
-        scan.camera_to_ap1 * 1.75_f64.exp2()
+        prepared_matrix(&prepared),
+        scan.camera_to_ap1() * 1.75_f64.exp2()
     );
     assert!(prepared.proxy.is_none());
 }

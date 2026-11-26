@@ -9,7 +9,7 @@ fn equal_acquired_calculations_share_inspection_work_across_independent_view_han
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
         let spec =
-            SourceRequest::inspection_fixture(frame(&scan), scan.camera_to_ap1, None).unwrap();
+            SourceRequest::inspection_fixture(frame(&scan), scan.camera_to_ap1(), None).unwrap();
         let source = ViewImage::prefix(
             &device,
             &queue,
@@ -54,7 +54,9 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
-        let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
+        let matrix = InputSettings::Digital
+            .positive_matrix(scan.camera_to_ap1(), None)
+            .unwrap();
         let input = AuthoredPhotograph::from(Arc::new(
             AuthoredPhotograph::new(
                 &device.limits(),
@@ -62,7 +64,7 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
                 Default::default(),
                 AdjustmentLayerSnapshot::new(vec![]).unwrap(),
                 matrix,
-                scan.area,
+                scan.area(),
             )
             .unwrap(),
         ))
@@ -137,7 +139,9 @@ fn anonymous_supplied_values_with_equal_view_descriptions_do_not_alias_previous_
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
-        let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
+        let matrix = InputSettings::Digital
+            .positive_matrix(scan.camera_to_ap1(), None)
+            .unwrap();
         let spec = SourceRequest::new(frame(&scan), InputSettings::Digital, matrix, None).unwrap();
         let region = spec.input_region().unwrap();
         let source = |pixel: [f32; 4]| {
@@ -169,7 +173,7 @@ fn anonymous_supplied_values_with_equal_view_descriptions_do_not_alias_previous_
             },
             AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
             matrix,
-            scan.area,
+            scan.area(),
         )
         .unwrap();
         let first =
@@ -217,11 +221,11 @@ fn original_adapter_rejects_a_different_capture_even_when_program_and_layout_mat
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
         let file = crate::dng_fixture::Fixture::default().write();
-        let unrelated = Scan::open(file.path(), None).unwrap();
-        let spec = SourceRequest::inspection_fixture(frame(&scan), scan.camera_to_ap1, None)
+        let unrelated = DevelopedSource::open(file.path(), None).unwrap();
+        let spec = SourceRequest::inspection_fixture(frame(&scan), scan.camera_to_ap1(), None)
             .unwrap()
             .with_identity(crate::acquisition::camera::identity::Identity::camera(
-                unrelated.source().identity(),
+                unrelated.identity(),
             ));
         let gate = queue.clone();
         let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));

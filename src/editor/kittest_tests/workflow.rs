@@ -265,7 +265,7 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
         harness.read(|editor| assert_eq!(editor.document.state.project, project));
         harness.read(|editor| assert!(editor.document.source));
         harness.read(|editor| assert!(editor.calibration().is_none()));
-        let scan = Scan::open(&fixture("patches.dng"), Some(wb)).unwrap();
+        let scan = DevelopedSource::open(&fixture("patches.dng"), Some(wb)).unwrap();
         stage(&mut harness, "Rendering");
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
             select_target(&mut harness, target);
@@ -298,7 +298,7 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
                         // SDK's matching camera matrix already defines balanced white;
                         // source inspection adds the shared one-stop display convention and EV.
                         let working =
-                            scan.camera_to_ap1 * scan.pixel(x, y).unwrap() * (2. * ev.exp2());
+                            scan.camera_to_ap1() * scan.pixel(x, y).unwrap() * (2. * ev.exp2());
                         let linear = target.linear_to_srgb()
                             * crate::rendering::CpuRenderer::new(target)
                                 .unwrap()

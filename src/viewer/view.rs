@@ -11,7 +11,7 @@ use crate::photographic::stages::grain::GrainSettings;
 #[cfg(test)]
 use crate::photographic::test_inputs::AuthoredPhotograph;
 #[cfg(test)]
-use crate::scan::Scan;
+use crate::scan::DevelopedSource;
 use crate::{
     frame_raster::FrameRaster, geometry::TextureMapping, rendering::OutputTarget, viewer::GpuImage,
 };

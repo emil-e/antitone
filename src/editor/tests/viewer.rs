@@ -1134,19 +1134,8 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
             width: 24,
             height: 24,
         });
-        let expected = Scan::from_source(
-            editor
-                .document
-                .visit
-                .canvas
-                .ready
-                .as_ref()
-                .unwrap()
-                .developed
-                .clone(),
-        )
-        .reference_coverage(region)
-        .unwrap();
+        let source = editor.source_context().unwrap().source;
+        let expected = crate::sampling::camera::reference_coverage(&source, None, region).unwrap();
         editor.set_dmin(Some(expected * 1.05));
 
         with_application(editor, |app| {

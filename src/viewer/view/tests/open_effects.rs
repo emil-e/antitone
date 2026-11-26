@@ -80,17 +80,18 @@ fn native(
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
     renderer: &crate::render_fixture::RenderFixture,
-    scan: &crate::scan::Scan,
+    scan: &Arc<crate::scan::DevelopedSource>,
     stages: Assembly,
 ) -> Vec<[f32; 4]> {
-    let area = scan.area;
+    let area = scan.area();
     let size = [area.width, area.height];
     let mut result = vec![[0.; 4]; (size[0] * size[1]) as usize];
     crate::rendering::execution::execute(
         renderer.evaluation(),
         queue,
         crate::rendering::execution::test_support::OriginalControls {
-            scan,
+            source: scan,
+            reference_ev: None,
             field: None,
             input: InputSettings::Digital,
             roll: Default::default(),
@@ -142,9 +143,9 @@ fn a_supplied_effect_runs_through_native_regional_and_resident_purposes() {
         ..Default::default()
     }
     .write();
-    let scan = crate::scan::Scan::open(file.path(), None).unwrap();
-    let area = scan.area;
-    let source = crate::scan::ImageSource::new(&scan, InputSettings::Digital).unwrap();
+    let scan = crate::scan::DevelopedSource::open(file.path(), None).unwrap();
+    let area = scan.area();
+    let source = crate::scan::ImageSource::new(&scan, InputSettings::Digital, None, None).unwrap();
     let scalar = crate::adjustment_layers::GradingPipeline::new(
         Default::default(),
         AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -199,13 +200,15 @@ fn a_supplied_effect_runs_through_native_regional_and_resident_purposes() {
         let processing = input(
             &device,
             area,
-            scan.positive_matrix(&InputSettings::Digital).unwrap(),
+            InputSettings::Digital
+                .positive_matrix(scan.camera_to_ap1(), None)
+                .unwrap(),
         );
         let regional = crate::refinement::refine(
             &renderer,
             &device,
             &queue,
-            (&scan, None),
+            (&scan, None, None),
             processing.clone(),
             target,
             (&std::sync::atomic::AtomicU64::new(1), 1),
@@ -231,7 +234,9 @@ fn a_supplied_effect_runs_through_native_regional_and_resident_purposes() {
             renderer.drt(target),
             [area.width, area.height],
             &pixels,
-            scan.positive_matrix(&InputSettings::Digital).unwrap(),
+            InputSettings::Digital
+                .positive_matrix(scan.camera_to_ap1(), None)
+                .unwrap(),
             Some(
                 SourceGeometry::new(
                     [area.x, area.y, area.width, area.height],

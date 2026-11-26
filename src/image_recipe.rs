@@ -36,24 +36,24 @@ pub struct ImageRecipe {
 }
 
 impl SourceRecipe {
+    /// Check the acquired camera basis against the recipe's registered development and input.
     #[cfg(feature = "raw")]
-    /// The consumer owns the immutable source lease and freshness fence, not the selected viewer.
-    pub fn require_scan(&self, scan: &crate::scan::Scan) -> Result<(), Error> {
-        scan.source().require_input(&self.input)?;
-        let actual = SourceDevelopment::from_metadata(
-            &scan.source().metadata(),
-            scan.source().white_balance(),
-        )?;
-        if !self.source_development.resolved()?.same_processing(&actual)
-            || self.correction.as_ref() != scan.flat_field()
-        {
+    pub fn require_source(&self, source: &crate::scan::DevelopedSource) -> Result<(), Error> {
+        source.require_input(&self.input)?;
+        let actual = SourceDevelopment::from_metadata(&source.metadata(), source.white_balance())?;
+        if !self.source_development.resolved()?.same_processing(&actual) {
             return Err(Error::Raw(
                 "captured recipe differs from developed source".into(),
             ));
         }
+        Ok(())
+    }
+
+    #[cfg(feature = "raw")]
+    pub(crate) fn require_reference(&self, available_ev: Option<f64>) -> Result<(), Error> {
         if !self.input.is_negative()
             && let Some(reference) = &self.reference
-            && scan.reference_exposure.as_ref().map(|value| value.ev()) != Some(reference.ev())
+            && available_ev != Some(reference.ev())
         {
             return Err(Error::Raw(
                 "captured recipe differs from recorded exposure baseline".into(),
@@ -116,20 +116,30 @@ impl Project {
         source: &Source,
         reference: Option<crate::exposure_reference::ReferenceExposure>,
     ) -> Result<ImageRecipe, Error> {
+        let development = crate::development_metadata::Development::captured(
+            source,
+            &source.path,
+            self.input,
+            self.development_metadata
+                .as_ref()
+                .unwrap_or(&Default::default()),
+        );
+        self.image_recipe_with_source(source, development, reference)
+    }
+
+    pub(crate) fn image_recipe_with_source(
+        &self,
+        source: &Source,
+        development: crate::development_metadata::Development,
+        reference: Option<crate::exposure_reference::ReferenceExposure>,
+    ) -> Result<ImageRecipe, Error> {
         source
             .repairs
             .validate(source.development.active_area.into())?;
         Ok(ImageRecipe {
             neutral: SourceRecipe {
                 source: source.id,
-                source_development: crate::development_metadata::Development::captured(
-                    source,
-                    &source.path,
-                    self.input,
-                    self.development_metadata
-                        .as_ref()
-                        .unwrap_or(&Default::default()),
-                ),
+                source_development: development,
                 input: self.input,
                 reference,
                 correction: self.active_flat_field().map(|field| field.map.clone()),

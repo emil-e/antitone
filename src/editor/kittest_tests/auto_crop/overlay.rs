@@ -167,13 +167,14 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
                 captured
             });
             for photo in &captured.photos {
+                let recipe = photo.intent.recipe(None).unwrap();
                 assert_eq!(
-                    photo.recipe.composition.crop(),
+                    recipe.composition.crop(),
                     before
-                        .source(photo.recipe.neutral.source)
+                        .source(recipe.neutral.source)
                         .unwrap()
                         .crop
-                        .unwrap_or_else(|| Crop::from_region(photo.recipe.composition.area())),
+                        .unwrap_or_else(|| Crop::from_region(recipe.composition.area())),
                     "Export captures accepted framing, not the batch preview"
                 );
             }

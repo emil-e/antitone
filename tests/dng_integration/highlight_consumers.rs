@@ -15,10 +15,11 @@ fn repaired_source_supplies_measurements_proxies_and_scene_linear_export() {
     };
     fixture.lists[2].push(Opcode::warp(&[[0.98, 0.015, 0., 0., 0., 0.]], [0.5, 0.5]));
     let file = fixture.write();
-    let mut scan = Scan::open(file.path(), None).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
     let mean = (2. * 3686. / 4096. + 1. + 1.5) / 3.;
     let expected = DVec3::splat(mean);
-    let measured = scan.reference(Rect::from([12, 12, 3, 3])).unwrap();
+    let measured =
+        antitone::sampling::camera::reference(&scan, None, Rect::from([12, 12, 3, 3])).unwrap();
     assert!((measured - expected).abs().max_element() < 2e-6);
     let (_, _, proxy) = scan.preview_source(8).unwrap();
     assert!(!proxy.is_empty());
@@ -48,13 +49,14 @@ fn repaired_source_supplies_measurements_proxies_and_scene_linear_export() {
         &device,
         &queue,
         Request {
-            scan: &scan,
+            source: &scan,
+            reference_ev: None,
             field: None,
             input: InputSettings::Digital,
             roll: Default::default(),
             grade: AdjustmentLayerSnapshot::new(vec![]).unwrap(),
             repairs: &[],
-            composition: Composition::new(scan.area, Default::default(), Default::default())
+            composition: Composition::new(scan.area(), Default::default(), Default::default())
                 .unwrap(),
             format: Format::Exr(ExrPrecision::Full),
             luts: Default::default(),
@@ -65,7 +67,7 @@ fn repaired_source_supplies_measurements_proxies_and_scene_linear_export() {
     )
     .unwrap();
     let image = exr::prelude::read_first_flat_layer_from_file(path).unwrap();
-    let expected = antitone::color::ap1_to_ap0() * scan.camera_to_ap1 * expected;
+    let expected = antitone::color::ap1_to_ap0() * scan.camera_to_ap1() * expected;
     assert_eq!(image.layer_data.channel_data.list.len(), 3);
     for channel in &image.layer_data.channel_data.list {
         let c = match channel.name.to_string().as_str() {

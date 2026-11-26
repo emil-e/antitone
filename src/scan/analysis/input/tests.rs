@@ -3,16 +3,16 @@ use super::*;
 #[test]
 fn capture_owns_one_original_rgb_raster_without_a_native_lease() {
     let file = crate::raw::fixture::bayer_dng_with_rgb([6000, 12000, 9000]);
-    let scan = Scan::open(file.path(), None).unwrap();
-    let native = Arc::downgrade(scan.source());
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    let native = Arc::downgrade(&scan);
     let input = AnalysisInput::capture(&scan, || false).unwrap().unwrap();
-    let area = scan.area;
+    let area = scan.area();
     assert_eq!(input.size(), [area.width, area.height]);
     assert_eq!(
         input.retained_bytes(),
         (size_of::<AnalysisInput>() + area.width as usize * area.height as usize * 12) as u64
     );
-    let image = scan.source().camera_image().unwrap();
+    let image = scan.camera_image().unwrap();
     for (index, &pixel) in input.pixels.iter().enumerate() {
         let x = area.x + index as u32 % area.width;
         let y = area.y + index as u32 / area.width;
@@ -49,33 +49,28 @@ fn regular_windows_and_statistical_edits_reuse_original_source_positions() {
         ..Default::default()
     }
     .write();
-    let scan = Scan::open(file.path(), None).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
     let input = AnalysisInput::capture(&scan, || false).unwrap().unwrap();
-    let maximum = u64::from(scan.area.width.max(scan.area.height));
-    let expected_size = [scan.area.width, scan.area.height]
+    let maximum = u64::from(scan.area().width.max(scan.area().height));
+    let expected_size = [scan.area().width, scan.area().height]
         .map(|extent| ((2 * u64::from(extent) * 1024 + maximum) / (2 * maximum)) as u32);
     assert_eq!(input.size(), expected_size);
     let [width, height] = expected_size.map(|v| v as usize);
     assert!(input.retained_bytes() <= (12 * 1024 * 1024 + size_of::<AnalysisInput>()) as u64);
     for index in [0usize, width - 1, 515 * width + 391, width * height - 1] {
-        let x = scan.area.x
-            + (((2 * (index % width) + 1) as u64 * u64::from(scan.area.width)) / (2 * width) as u64)
-                as u32;
-        let y = scan.area.y
-            + (((2 * (index / width) + 1) as u64 * u64::from(scan.area.height))
+        let x = scan.area().x
+            + (((2 * (index % width) + 1) as u64 * u64::from(scan.area().width))
+                / (2 * width) as u64) as u32;
+        let y = scan.area().y
+            + (((2 * (index / width) + 1) as u64 * u64::from(scan.area().height))
                 / (2 * height) as u64) as u32;
         assert_eq!(input.position(index).unwrap(), [x, y]);
-        let expected = scan
-            .source()
-            .camera_image()
-            .unwrap()
-            .pixel_samples(x, y)
-            .unwrap();
+        let expected = scan.camera_image().unwrap().pixel_samples(x, y).unwrap();
         assert_eq!(input.pixel(index).unwrap(), expected);
     }
     let area = Rect {
-        x: scan.area.x + 37,
-        y: scan.area.y + 51,
+        x: scan.area().x + 37,
+        y: scan.area().y + 51,
         width: 1501,
         height: 1037,
     };
@@ -112,7 +107,7 @@ fn regular_windows_and_statistical_edits_reuse_original_source_positions() {
 #[test]
 fn selection_does_not_read_excluded_pixels() {
     let file = crate::raw::fixture::bayer_dng_with_rgb([2; 3]);
-    let scan = Scan::open(file.path(), None).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
     let mut input = AnalysisInput::capture(&scan, || false).unwrap().unwrap();
     input.pixels[0][0] = f32::NAN;
     let indices = input

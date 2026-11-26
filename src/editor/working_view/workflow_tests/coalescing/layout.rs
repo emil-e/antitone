@@ -7,7 +7,7 @@ use std::sync::mpsc;
 fn superseded_layouts_cannot_publish_and_cached_inputs_keep_visit_independent_ownership() {
     for warm in [false, true] {
         let (editor, pixels, base, scheduler) = fixture();
-        let original = camera_source(&pixels.scan().unwrap()).unwrap();
+        let original = camera_source(&pixels.source).unwrap();
         let key = original.identity().unwrap().clone();
         let make = |low, high| {
             base.clone()

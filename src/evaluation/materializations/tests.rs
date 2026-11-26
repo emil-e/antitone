@@ -760,7 +760,7 @@ fn in_flight_sharing_and_abandonment_do_not_depend_on_optional_retention() {
 #[test]
 fn original_and_reconstruction_definitions_own_their_value_identity() {
     let file = crate::raw::fixture::bayer_dng();
-    let scan = crate::scan::Scan::open(file.path(), Some([1.; 4])).unwrap();
+    let scan = crate::scan::DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
     let first = crate::acquisition::camera::camera_source(&scan).unwrap();
     let second = crate::acquisition::camera::camera_source(&scan).unwrap();
     assert!(!first.same_capture(&second));

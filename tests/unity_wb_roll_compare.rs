@@ -8,37 +8,39 @@ use antitone::{
     project::{Project, UNITY_WB},
     raw::Rect,
     roll_analysis::{FrameSamples, MAX_SAMPLES_PER_FRAME, estimate},
-    scan::Scan,
+    scan::DevelopedSource,
 };
 use glam::DVec3;
 use std::path::PathBuf;
 
 fn samples(
-    scan: &mut Scan,
+    scan: &DevelopedSource,
     area: Rect,
     areas: &antitone::scan_regions::Areas,
 ) -> (Vec<DVec3>, Vec<DVec3>) {
-    let active = scan.area;
-    let film = scan
-        .analysis_samples_in(
-            area,
-            MAX_SAMPLES_PER_FRAME,
-            |f| areas.contains_footprint(f, active, false),
-            || false,
-        )
-        .unwrap()
-        .unwrap()
-        .pixels;
-    let picture = scan
-        .analysis_samples_in(
-            area,
-            MAX_SAMPLES_PER_FRAME,
-            |f| areas.contains_footprint(f, active, true),
-            || false,
-        )
-        .unwrap()
-        .unwrap()
-        .pixels;
+    let active = scan.area();
+    let film = antitone::roll_analysis::scalar::samples(
+        scan,
+        None,
+        area,
+        MAX_SAMPLES_PER_FRAME,
+        |f| areas.contains_footprint(f, active, false),
+        || false,
+    )
+    .unwrap()
+    .unwrap()
+    .pixels;
+    let picture = antitone::roll_analysis::scalar::samples(
+        scan,
+        None,
+        area,
+        MAX_SAMPLES_PER_FRAME,
+        |f| areas.contains_footprint(f, active, true),
+        || false,
+    )
+    .unwrap()
+    .unwrap()
+    .pixels;
     (film, picture)
 }
 
@@ -52,10 +54,10 @@ fn unity_wb_roll_analysis_matches_as_shot_look() {
     assert!(project.input.is_negative());
     let first = project.order.first().copied().unwrap();
     let first_path = project.source(first).unwrap().path.clone();
-    let first_shot = Scan::open(&first_path, None).unwrap();
-    let as_shot_wb = first_shot.white_balance;
+    let first_shot = DevelopedSource::open(&first_path, None).unwrap();
+    let as_shot_wb = first_shot.white_balance();
     assert_ne!(as_shot_wb, UNITY_WB);
-    let matrix = first_shot.camera_to_ap1;
+    let matrix = first_shot.camera_to_ap1();
     drop(first_shot);
 
     let mut unity_samples = (Vec::new(), Vec::new());
@@ -72,9 +74,9 @@ fn unity_wb_roll_analysis_matches_as_shot_look() {
             (&mut unity_samples, Some(UNITY_WB)),
             (&mut as_shot_samples, Some(as_shot_wb)),
         ] {
-            let mut scan = Scan::open(&source.path, wb).unwrap();
-            assert_eq!(scan.camera_to_ap1, matrix);
-            let (film, picture) = samples(&mut scan, area, &entry.areas);
+            let scan = DevelopedSource::open(&source.path, wb).unwrap();
+            assert_eq!(scan.camera_to_ap1(), matrix);
+            let (film, picture) = samples(&scan, area, &entry.areas);
             target.0.push(film);
             target.1.push(picture);
         }

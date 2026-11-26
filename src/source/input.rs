@@ -88,7 +88,7 @@ impl Acquired {
     ) -> Result<Option<CameraSamples>, Error> {
         let key = SourceKey::for_load(&self.file.path, self.file.clone(), &self.record.development);
         let development = self.record.development;
-        let scan = self.prepared.scan();
+        let source = self.prepared.source;
         let stopped = cancelled.clone();
         #[cfg(test)]
         let observer = self.capture_observer;
@@ -97,7 +97,7 @@ impl Acquired {
             if let Some(observer) = observer {
                 observer();
             }
-            crate::scan::AnalysisInput::capture(&scan, || stopped.is_cancelled())
+            crate::scan::AnalysisInput::capture(&source, || stopped.is_cancelled())
                 .map(|pixels| pixels.map(Arc::new))
         })
         .await?
@@ -265,14 +265,13 @@ impl Input {
         )
         .await?;
         let record = self.record()?;
-        super::verify_scan(&record, &prepared.scan())?;
+        let developed = &prepared.source;
+        super::verify_development(&record, developed)?;
         if let Definition::Photo(photo) = &self.definition {
             photo.development.observe_preview(
-                prepared
-                    .scan()
-                    .source()
+                developed
                     .metadata()
-                    .source_preview(prepared.scan().source().white_balance()),
+                    .source_preview(developed.white_balance()),
             );
         }
         Ok(Acquired {

@@ -16,8 +16,12 @@ fn physical_view_adjustment_layer_resources() {
     observation::with_monitor(exercise).unwrap();
 }
 
-fn snapshot(scan: &Scan, local: bool, edit: u32) -> Result<AdjustmentLayerSnapshot, Error> {
-    let area = scan.area;
+fn snapshot(
+    scan: &DevelopedSource,
+    local: bool,
+    edit: u32,
+) -> Result<AdjustmentLayerSnapshot, Error> {
+    let area = scan.area();
     let (x, y, w, h) = (
         f64::from(area.x),
         f64::from(area.y),
@@ -89,7 +93,7 @@ fn exercise(
         })
     })?;
     let private_raw = std::env::var_os("ANTITONE_SCREEN_RAW").is_some();
-    let (mut scan, basis) = if private_raw {
+    let (scan, basis) = if private_raw {
         let root = std::path::PathBuf::from(
             std::env::var_os("ANTITONE_RAW_SAMPLES").ok_or("set absolute ANTITONE_RAW_SAMPLES")?,
         );
@@ -114,13 +118,18 @@ fn exercise(
     let context = egui::Context::default();
     println!(
         "local_resources output=1920x1080 private_raw={private_raw} native_source_bytes={:?} excludes=native_host_scopes isolated_timings=false",
-        scan.source().retained_bytes()
+        scan.retained_bytes()
     );
     for corrected in [false, true] {
         let field = corrected.then(|| {
             Arc::new(
                 crate::flat_field::FlatField::from_nodes(
-                    [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+                    [
+                        scan.area().x,
+                        scan.area().y,
+                        scan.area().width,
+                        scan.area().height,
+                    ],
                     [2, 2],
                     vec![
                         DVec3::new(0.8, 0.9, 1.),
@@ -133,11 +142,10 @@ fn exercise(
             )
         });
         let (cal, sources) = monitor.phase("local-acquisition", || {
-            scan.set_flat_field(field.clone());
             let cal = (basis).validate()?;
             let mut frame = frame(&scan);
             frame.output = [1920, 1080];
-            let spec = SourceRequest::new(frame, cal, scan.camera_to_ap1, field.clone())?;
+            let spec = SourceRequest::new(frame, cal, scan.camera_to_ap1(), field.clone())?;
             let specs = vec![spec.clone(), spec.underlay()?];
             let gpu_field = field
                 .as_ref()
@@ -178,8 +186,8 @@ fn exercise(
                         cal,
                         RollSettings::default(),
                         snapshot.clone(),
-                        scan.camera_to_ap1,
-                        scan.area,
+                        scan.camera_to_ap1(),
+                        scan.area(),
                     )?)
                     .into()
                 } else {

@@ -9,7 +9,7 @@ use crate::rendering::OutputTarget;
 use std::sync::atomic::AtomicU64;
 
 struct Case {
-    scan: Arc<crate::scan::Scan>,
+    scan: Arc<crate::scan::DevelopedSource>,
     node: Value,
     input: AuthoredPhotograph,
     demand: crate::refinement::ViewRequest,
@@ -18,12 +18,14 @@ struct Case {
 fn case(
     device: &wgpu::Device,
     renderer: &crate::render_fixture::RenderFixture,
-    scan: Arc<crate::scan::Scan>,
+    scan: Arc<crate::scan::DevelopedSource>,
     size: [u32; 2],
 ) -> Case {
-    let area = scan.area;
+    let area = scan.area();
     let composition = Composition::new(area, Default::default(), Default::default()).unwrap();
-    let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
+    let matrix = InputSettings::Digital
+        .positive_matrix(scan.camera_to_ap1(), None)
+        .unwrap();
     let roll = RollSettings {
         exposure: -0.3,
         ..Default::default()
@@ -103,7 +105,7 @@ fn regional(
         renderer,
         device,
         queue,
-        (&case.scan, None),
+        (&case.scan, None, None),
         case.input.clone(),
         OutputTarget::Srgb,
         (&AtomicU64::new(1), 1),
@@ -123,7 +125,7 @@ fn authored_native_source_and_real_grade_mtf_display_match_regional_execution() 
         ..Default::default()
     }
     .write();
-    let scan = Arc::new(crate::scan::Scan::open(file.path(), None).unwrap());
+    let scan = crate::scan::DevelopedSource::open(file.path(), None).unwrap();
     let case = case(&device, &renderer, scan, [73, 59]);
     let original = regional(&device, &queue, &renderer, &case);
     let original = crate::viewer::readback::image_pixels(&device, &queue, &original);
@@ -164,7 +166,7 @@ fn native_evaluation_resource_comparison() {
         ..Default::default()
     }
     .write();
-    let scan = Arc::new(crate::scan::Scan::open(file.path(), None).unwrap());
+    let scan = crate::scan::DevelopedSource::open(file.path(), None).unwrap();
     let case = case(&device, &renderer, scan, [147, 113]);
     let peak = Arc::new(AtomicU64::new(0));
     let submissions = Arc::new(AtomicU64::new(0));

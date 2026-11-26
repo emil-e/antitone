@@ -572,7 +572,7 @@ fn sparse_eligibility_is_rejected_before_any_grade_installation() {
     let mut editor = state();
     let before = editor.document.state.project.clone();
     let request = capture_request(&editor);
-    let samples = crate::scan::AnalysisSamples {
+    let samples = AnalysisSamples {
         pixels: vec![DVec3::splat(0.1)],
         ..Default::default()
     };

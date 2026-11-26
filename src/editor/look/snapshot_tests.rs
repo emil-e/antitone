@@ -121,7 +121,13 @@ fn export_form_captures_only_the_asset_accepted_at_confirmation_and_frozen_outpu
                 request
             });
             assert_eq!(
-                captured.photos[0].recipe.luts.lut.as_ref(),
+                captured.photos[0]
+                    .intent
+                    .recipe(None)
+                    .unwrap()
+                    .luts
+                    .lut
+                    .as_ref(),
                 Some(if accept_before_capture {
                     &chosen
                 } else {
@@ -139,7 +145,16 @@ fn export_form_captures_only_the_asset_accepted_at_confirmation_and_frozen_outpu
                 draft.suffix = "_after".into();
                 editor.capture_export(&draft).unwrap()
             });
-            assert_eq!(after.photos[0].recipe.luts.lut.as_ref(), Some(&chosen));
+            assert_eq!(
+                after.photos[0]
+                    .intent
+                    .recipe(None)
+                    .unwrap()
+                    .luts
+                    .lut
+                    .as_ref(),
+                Some(&chosen)
+            );
             let captured_path = captured.photos[0].path.clone();
             let after_path = after.photos[0].path.clone();
             (captured, captured_path, after, after_path)

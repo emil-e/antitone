@@ -5,7 +5,7 @@ use antitone::{
     processing::InputSettings,
     project::{Project, Save, Source, SourceDevelopment, SourceId},
     raw::{RawFile, Rect},
-    scan::Scan,
+    scan::DevelopedSource,
     source::{SourceCache, SourceKey},
 };
 use glam::DVec3;
@@ -37,20 +37,20 @@ mod render_fixture;
 #[path = "dng_integration/exports.rs"]
 mod exports;
 
-fn record(path: &Path, scan: &Scan) -> Source {
-    let metadata = scan.source().metadata();
-    let area = scan.area;
+fn record(path: &Path, scan: &DevelopedSource) -> Source {
+    let metadata = scan.metadata();
+    let area = scan.area();
     Source {
         id: SourceId(0),
         capture_time: None,
         development_mode: antitone::project::DevelopmentMode::Unity,
         path: path.into(),
         development: SourceDevelopment {
-            decode: metadata.development(scan.white_balance),
+            decode: metadata.development(scan.white_balance()),
             dimensions: metadata.source_dimensions().unwrap(),
             active_area: [area.x, area.y, area.width, area.height],
-            camera_model: scan.camera_model.clone(),
-            camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
+            camera_model: scan.camera_model().to_owned(),
+            camera_to_ap1: scan.camera_to_ap1().to_cols_array_2d(),
         },
 
         repairs: Default::default(),
@@ -81,24 +81,24 @@ fn sdk_scan_preserves_the_fixed_basis_and_continuous_samples() {
         &Cancellation::default(),
     )
     .unwrap();
-    let scan = Scan::open(file.path(), Some(wb)).unwrap();
-    assert_eq!(scan.white_balance, wb);
-    assert_eq!(scan.area, Rect::from([3, 5, 48, 46]));
-    assert!(scan.source().metadata().lens_identity().unwrap().is_none());
+    let scan = DevelopedSource::open(file.path(), Some(wb)).unwrap();
+    assert_eq!(scan.white_balance(), wb);
+    assert_eq!(scan.area(), Rect::from([3, 5, 48, 46]));
+    assert!(scan.metadata().lens_identity().unwrap().is_none());
     assert_eq!(
-        scan.source().metadata().dng_identity().unwrap(),
+        scan.metadata().dng_identity().unwrap(),
         blake3::Hash::from_bytes(header.interpretation_id)
             .to_hex()
             .as_str()
     );
-    let image = scan.source().camera_image().unwrap();
+    let image = scan.camera_image().unwrap();
     assert!(image.is_continuous());
     let actual = image.pixel(12, 12).unwrap();
     let expected = DVec3::new(0.25, 0.1875, 0.375);
     assert!((actual - expected).abs().max_element() < 1e-7);
-    let neutral = scan.camera_to_ap1 * DVec3::ONE;
+    let neutral = scan.camera_to_ap1() * DVec3::ONE;
     assert!((neutral - DVec3::ONE).abs().max_element() < 2e-6);
-    let lease = scan.source().clone();
+    let lease = scan.clone();
     drop(scan);
     std::thread::spawn(move || {
         let actual = lease.camera_image().unwrap().pixel(12, 12).unwrap();
@@ -125,8 +125,8 @@ fn lossless_jpeg_14bit_preserves_developed_pixels() {
         ..Default::default()
     }
     .write();
-    let a = Scan::open(plain.path(), None).unwrap();
-    let b = Scan::open(compressed.path(), None).unwrap();
+    let a = DevelopedSource::open(plain.path(), None).unwrap();
+    let b = DevelopedSource::open(compressed.path(), None).unwrap();
     assert_eq!(a.dimensions().unwrap(), b.dimensions().unwrap());
     let (width, height) = a.dimensions().unwrap();
     for y in 0..height {
@@ -144,9 +144,10 @@ fn shared_sdk_repairs_in_range_bad_pixel_markers_for_measurements() {
     };
     fixture.lists[0].push(Opcode::bad_pixels(1000, 2));
     let file = fixture.write();
-    let mut scan = Scan::open(file.path(), None).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
     let expected = DVec3::new(0.25, 0.375, 0.5);
-    let measured = scan.reference(Rect::from([24, 24, 1, 1])).unwrap();
+    let measured =
+        antitone::sampling::camera::reference(&scan, None, Rect::from([24, 24, 1, 1])).unwrap();
     assert!((measured - expected).abs().max_element() < 1e-7);
 }
 
@@ -158,8 +159,9 @@ fn shared_sdk_measurements_accept_repaired_sensor_black() {
     };
     fixture.lists[0].push(Opcode::bad_pixels(64, 2));
     let file = fixture.write();
-    let mut scan = Scan::open(file.path(), None).unwrap();
-    let repaired = scan.reference(Rect::from([24, 24, 1, 1])).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    let repaired =
+        antitone::sampling::camera::reference(&scan, None, Rect::from([24, 24, 1, 1])).unwrap();
     assert!(
         (repaired - DVec3::new(0.25, 0.375, 0.5))
             .abs()
@@ -182,17 +184,20 @@ fn uniform_source(code: u16) -> fixture_path::FixturePath {
 #[test]
 fn developed_white_remains_usable_for_reference_analysis_and_flat_field_estimation() {
     let file = uniform_source(4160);
-    let mut scan = Scan::open(file.path(), None).unwrap();
-    assert_eq!(scan.reference(scan.area).unwrap(), DVec3::ONE);
-    let samples = scan
-        .analysis_samples(scan.area, 1, || false)
-        .unwrap()
-        .unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    assert_eq!(
+        antitone::sampling::camera::reference(&scan, None, scan.area()).unwrap(),
+        DVec3::ONE
+    );
+    let samples =
+        antitone::roll_analysis::scalar::samples(&scan, None, scan.area(), 1, |_| true, || false)
+            .unwrap()
+            .unwrap();
     assert_eq!(samples.attempted, 1);
     assert_eq!(samples.pixels, vec![DVec3::ONE]);
 
     // A constant reference has no spatial illumination variation, even at sensor white.
-    let field = scan.estimate_flat_field(scan.area).unwrap();
+    let field = antitone::flat_field::reference::estimate(&scan, scan.area()).unwrap();
     let first = field.nodes()[0];
     assert!(
         field
@@ -200,27 +205,30 @@ fn developed_white_remains_usable_for_reference_analysis_and_flat_field_estimati
             .iter()
             .all(|&gain| (gain - first).abs().max_element() < 1e-12)
     );
-    let corrected = scan.camera_to_ap1 * first;
+    let corrected = scan.camera_to_ap1() * first;
     assert!((corrected - DVec3::splat(corrected.y)).abs().max_element() < 2e-6);
-    assert_eq!(scan.reference(scan.area).unwrap(), DVec3::ONE);
+    assert_eq!(
+        antitone::sampling::camera::reference(&scan, None, scan.area()).unwrap(),
+        DVec3::ONE
+    );
 }
 
 #[test]
 fn zero_signal_is_sampled_but_cannot_define_a_reference_or_flat_field() {
     let file = uniform_source(64);
-    let mut scan = Scan::open(file.path(), None).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
     assert!(matches!(
-        scan.reference(scan.area),
+        antitone::sampling::camera::reference(&scan, None, scan.area()),
         Err(antitone::Error::UnusableSample(_))
     ));
-    let samples = scan
-        .analysis_samples(scan.area, 1, || false)
-        .unwrap()
-        .unwrap();
+    let samples =
+        antitone::roll_analysis::scalar::samples(&scan, None, scan.area(), 1, |_| true, || false)
+            .unwrap()
+            .unwrap();
     assert_eq!(samples.attempted, 1);
     assert_eq!(samples.pixels, vec![DVec3::ZERO]);
     assert!(matches!(
-        scan.estimate_flat_field(scan.area),
+        antitone::flat_field::reference::estimate(&scan, scan.area()),
         Err(antitone::Error::UnusableSample(_))
     ));
 }
@@ -232,8 +240,8 @@ fn sdk_project_roundtrip_restores_accepted_wb_and_cache_keeps_interpretations_di
         ..Default::default()
     }
     .write();
-    let scan = Scan::open(file.path(), None).unwrap();
-    assert_eq!(scan.white_balance, [2., 1., 1.5, 1.]);
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    assert_eq!(scan.white_balance(), [2., 1., 1.5, 1.]);
     let source = record(file.path(), &scan);
     let mut project = Project {
         input: InputSettings::Digital,
@@ -245,7 +253,7 @@ fn sdk_project_roundtrip_restores_accepted_wb_and_cache_keeps_interpretations_di
     project.save(&path, Save::New).unwrap();
     let loaded = Project::load(&path).unwrap();
     serde_json::to_value(&loaded).unwrap();
-    let reopened = Scan::open(
+    let reopened = DevelopedSource::open(
         &loaded.source(id).unwrap().path,
         Some(loaded.source(id).unwrap().development.decode.white_balance),
     )
@@ -257,10 +265,10 @@ fn sdk_project_roundtrip_restores_accepted_wb_and_cache_keeps_interpretations_di
     let key = SourceKey::capture(file.path(), &loaded.source(id).unwrap().development).unwrap();
     let store = SourceCache::new(u64::MAX);
     store
-        .publish_source(key.clone(), scan.source().clone())
+        .publish_source(key.clone(), scan.clone())
         .unwrap()
         .unwrap();
-    assert!(Arc::ptr_eq(&store.get(&key).unwrap(), scan.source()));
+    assert!(Arc::ptr_eq(&store.get(&key).unwrap(), &scan));
     let mut recorded = loaded.source(id).unwrap().development.clone();
     recorded.decode.backend_version.push_str("-previous");
     let current = SourceKey::capture(file.path(), &recorded).unwrap();
@@ -272,13 +280,13 @@ fn sdk_project_roundtrip_restores_accepted_wb_and_cache_keeps_interpretations_di
         current.development().decode.backend_version,
         antitone::dng::INTERPRETATION
     );
-    assert!(Arc::ptr_eq(&store.get(&current).unwrap(), scan.source()));
+    assert!(Arc::ptr_eq(&store.get(&current).unwrap(), &scan));
     let mut wrong = loaded.source(id).unwrap().development.clone();
     wrong.decode.white_balance[0] *= 2.;
     let stale = SourceKey::capture(file.path(), &wrong).unwrap();
     assert_ne!(stale, key);
     assert!(store.get(&stale).is_none());
-    assert!(store.publish_source(stale, scan.source().clone()).is_err());
+    assert!(store.publish_source(stale, scan.clone()).is_err());
     let legacy = antitone::project::Development::new(antitone::raw::version(), [1.; 4]);
     assert_ne!(
         legacy.backend, loaded.sources[0].development.decode.backend,
@@ -292,8 +300,8 @@ fn sdk_flat_reference_uses_camera_coordinates_without_saved_opcode_fingerprints(
     let mut fixture = Fixture::default();
     fixture.lists[1].push(Opcode::gain(0.5, 1));
     let gained = fixture.write();
-    let a = Scan::open(plain.path(), None).unwrap();
-    let b = Scan::open(gained.path(), None).unwrap();
+    let a = DevelopedSource::open(plain.path(), None).unwrap();
+    let b = DevelopedSource::open(gained.path(), None).unwrap();
     let reference = record(plain.path(), &a);
     let other = record(gained.path(), &b);
     assert_eq!(
@@ -304,7 +312,7 @@ fn sdk_flat_reference_uses_camera_coordinates_without_saved_opcode_fingerprints(
         reference.development.camera_to_ap1,
         other.development.camera_to_ap1
     );
-    let area = a.area;
+    let area = a.area();
     let map = antitone::flat_field::FlatField::from_nodes(
         [area.x, area.y, area.width, area.height],
         [2, 2],
@@ -334,7 +342,7 @@ fn large_corner_gain_keeps_picture_samples_usable() {
     gain.data[last..].copy_from_slice(&32_f32.to_be_bytes());
     fixture.lists[1].push(gain);
     let file = fixture.write();
-    let scan = Scan::open(file.path(), Some([1.; 4])).unwrap();
+    let scan = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
     let pixel = scan.pixel(4, 6).unwrap();
     assert!(
         pixel.is_finite()
@@ -355,10 +363,10 @@ fn large_corner_gain_keeps_picture_samples_usable() {
 fn sdk_runtime_wb_rejects_unequal_greens_and_out_of_range_gains_and_normalizes_valid_requests() {
     let file = Fixture::default().write();
     for wb in [[2., 1., 1.5, 0.75], [512., 1., 1., 1.]] {
-        assert!(Scan::open(file.path(), Some(wb)).is_err());
+        assert!(DevelopedSource::open(file.path(), Some(wb)).is_err());
     }
-    let canonical = Scan::open(file.path(), Some([4., 2., 3., 2.])).unwrap();
-    assert_eq!(canonical.white_balance, [2., 1., 1.5, 1.]);
+    let canonical = DevelopedSource::open(file.path(), Some([4., 2., 3., 2.])).unwrap();
+    assert_eq!(canonical.white_balance(), [2., 1., 1.5, 1.]);
 }
 
 #[test]
@@ -367,7 +375,7 @@ fn shared_source_open_rejects_required_instructions_before_any_libraw_fallback()
     fixture.lists[1].push(Opcode::unknown(false));
     let file = fixture.write();
     assert!(RawFile::open(file.path()).is_err());
-    assert!(Scan::open(file.path(), None).is_err());
+    assert!(DevelopedSource::open(file.path(), None).is_err());
 }
 
 #[test]
@@ -377,7 +385,7 @@ fn header_open_does_not_accept_missing_sensor_payload_as_a_completed_source() {
     bytes.truncate(bytes.len() - 64 * 64 * 2);
     std::fs::write(file.path(), bytes).unwrap();
     assert!(RawFile::open(file.path()).is_ok());
-    assert!(Scan::open(file.path(), None).is_err());
+    assert!(DevelopedSource::open(file.path(), None).is_err());
 }
 
 #[test]
@@ -393,20 +401,19 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
     ] {
         let path = Path::new(&directory).join(name);
         let started = std::time::Instant::now();
-        let scan = Scan::open(&path, None).unwrap();
-        let wb = scan.white_balance;
+        let scan = DevelopedSource::open(&path, None).unwrap();
+        let wb = scan.white_balance();
         let dimensions = scan.dimensions().unwrap();
-        let area = scan.area;
+        let area = scan.area();
         let point = (area.x + area.width / 2, area.y + area.height / 2);
         let before = scan
-            .source()
             .camera_image()
             .unwrap()
             .pixel(point.0, point.1)
             .unwrap();
         assert!(before.is_finite());
-        assert!(scan.source().camera_image().unwrap().is_continuous());
-        assert!(scan.source().metadata().dng_identity().is_some());
+        assert!(scan.camera_image().unwrap().is_continuous());
+        assert!(scan.metadata().dng_identity().is_some());
         let (w, h, proxy) = scan.preview_source(256).unwrap();
         assert_eq!(proxy.len(), w as usize * h as usize);
         let mut project = Project {
@@ -419,18 +426,17 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
         project.save(&destination, Save::New).unwrap();
         println!(
             "{name} dimensions={dimensions:?} area={area:?} WB={wb:?} retained_bytes={:?} cold_seconds={:.3}",
-            scan.source().retained_bytes(),
+            scan.retained_bytes(),
             started.elapsed().as_secs_f64()
         );
         drop(scan);
         let loaded = Project::load(&destination).unwrap();
         serde_json::to_value(&loaded).unwrap();
         let source = loaded.source(id).unwrap();
-        let reopened = Scan::open(&source.path, loaded.acquisition_wb()).unwrap();
+        let reopened = DevelopedSource::open(&source.path, loaded.acquisition_wb()).unwrap();
         assert_eq!(record(&path, &reopened).development, source.development);
         assert_eq!(
             reopened
-                .source()
                 .camera_image()
                 .unwrap()
                 .pixel(point.0, point.1)
@@ -440,10 +446,10 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
         let key = SourceKey::capture(&source.path, &source.development).unwrap();
         let store = SourceCache::new(u64::MAX);
         store
-            .publish_source(key.clone(), reopened.source().clone())
+            .publish_source(key.clone(), reopened.clone())
             .unwrap()
             .unwrap();
-        assert!(Arc::ptr_eq(&store.get(&key).unwrap(), reopened.source()));
+        assert!(Arc::ptr_eq(&store.get(&key).unwrap(), &reopened));
     }
 }
 
@@ -452,17 +458,12 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
 fn supplied_m9_shared_source_and_project_roundtrip() {
     let path = std::env::var_os("ANTITONE_M9_SAMPLE").expect("set ANTITONE_M9_SAMPLE");
     let path = Path::new(&path);
-    let scan = Scan::open(path, None).unwrap();
+    let scan = DevelopedSource::open(path, None).unwrap();
     let dimensions = scan.dimensions().unwrap();
     assert_eq!(dimensions, (5216, 3472));
-    assert_eq!(scan.area, Rect::from([2, 2, 5212, 3468]));
-    let wb = scan.white_balance;
-    let before = scan
-        .source()
-        .camera_image()
-        .unwrap()
-        .pixel(1024, 1024)
-        .unwrap();
+    assert_eq!(scan.area(), Rect::from([2, 2, 5212, 3468]));
+    let wb = scan.white_balance();
+    let before = scan.camera_image().unwrap().pixel(1024, 1024).unwrap();
     let (w, h, proxy) = scan.preview_source(256).unwrap();
     assert_eq!(proxy.len(), w as usize * h as usize);
     let mut project = Project {
@@ -477,18 +478,14 @@ fn supplied_m9_shared_source_and_project_roundtrip() {
     let loaded = Project::load(&destination).unwrap();
     serde_json::to_value(&loaded).unwrap();
     let source = loaded.source(id).unwrap();
-    let scan = Scan::open(&source.path, loaded.acquisition_wb()).unwrap();
+    let scan = DevelopedSource::open(&source.path, loaded.acquisition_wb()).unwrap();
     assert_eq!(record(path, &scan).development, source.development);
     assert_eq!(
-        scan.source()
-            .camera_image()
-            .unwrap()
-            .pixel(1024, 1024)
-            .unwrap(),
+        scan.camera_image().unwrap().pixel(1024, 1024).unwrap(),
         before
     );
     println!(
         "M9 shared/project dimensions={dimensions:?} WB={wb:?} retained_bytes={:?} proxy={w}x{h}",
-        scan.source().retained_bytes()
+        scan.retained_bytes()
     );
 }

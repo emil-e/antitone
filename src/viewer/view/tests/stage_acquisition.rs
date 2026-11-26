@@ -10,7 +10,7 @@ use crate::{
 
 fn capture(
     device: &wgpu::Device,
-    scan: &Scan,
+    scan: &DevelopedSource,
     film: GrainSettings,
     frame_size: [u32; 2],
 ) -> AuthoredPhotograph {
@@ -20,8 +20,10 @@ fn capture(
             InputSettings::Digital,
             Default::default(),
             AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-            scan.positive_matrix(&InputSettings::Digital).unwrap(),
-            scan.area,
+            InputSettings::Digital
+                .positive_matrix(scan.camera_to_ap1(), None)
+                .unwrap(),
+            scan.area(),
         )
         .unwrap(),
     ))
@@ -52,13 +54,13 @@ fn small_source_composed_processing_accepts_and_executes_finite_grain() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
         let fixture = crate::dng_fixture::Fixture::default().write();
-        let scan = Scan::open(fixture.path(), None).unwrap();
+        let scan = DevelopedSource::open(fixture.path(), None).unwrap();
         assert!(
-            scan.area.height <= 64,
+            scan.area().height <= 64,
             "exercise the formerly false-rejected small-source domain"
         );
         let composition =
-            Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+            Composition::new(scan.area(), Default::default(), Default::default()).unwrap();
         let frame = FrameRaster::new(
             composition,
             FramePoint([8., 8.]),
@@ -71,12 +73,14 @@ fn small_source_composed_processing_accepts_and_executes_finite_grain() {
             &device,
             &scan,
             settings,
-            [scan.area.width, scan.area.height],
+            [scan.area().width, scan.area().height],
         );
         let spec = SourceRequest::new(
             frame,
             InputSettings::Digital,
-            scan.positive_matrix(&InputSettings::Digital).unwrap(),
+            InputSettings::Digital
+                .positive_matrix(scan.camera_to_ap1(), None)
+                .unwrap(),
             None,
         )
         .unwrap()
@@ -105,7 +109,7 @@ fn small_source_composed_processing_accepts_and_executes_finite_grain() {
                     amount: 0.,
                     ..settings
                 },
-                [scan.area.width, scan.area.height],
+                [scan.area().width, scan.area().height],
             ),
         );
         let grain = render(&device, &queue, source, &input);
@@ -131,16 +135,19 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
                 ..Default::default()
             }
             .write();
-            let scan = Scan::open(fixture.path(), None).unwrap();
+            let scan = DevelopedSource::open(fixture.path(), None).unwrap();
             let composition = if ramp {
-                Composition::new(scan.area, Default::default(), Default::default()).unwrap()
+                Composition::new(scan.area(), Default::default(), Default::default()).unwrap()
             } else {
                 Composition::with_crop(
-                    scan.area,
+                    scan.area(),
                     Default::default(),
                     Default::default(),
                     Some(crate::crop::Crop {
-                        center: [f64::from(scan.area.x) + 12., f64::from(scan.area.y) + 12.],
+                        center: [
+                            f64::from(scan.area().x) + 12.,
+                            f64::from(scan.area().y) + 12.,
+                        ],
                         size: [18, 18],
                         angle: 0.21,
                     }),
@@ -167,7 +174,9 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
                 colour: 0.5,
             };
             let input = capture(&device, &scan, film, composition.crop().size);
-            let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
+            let matrix = InputSettings::Digital
+                .positive_matrix(scan.camera_to_ap1(), None)
+                .unwrap();
             let spec = SourceRequest::new(frame, InputSettings::Digital, matrix, None)
                 .unwrap()
                 .with_definition(input.definition())
@@ -188,7 +197,7 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
             let scalar = InputPipeline::new(InputSettings::Digital, matrix).unwrap();
             if !ramp {
                 let expected = scalar
-                    .apply(scan.pixel(scan.area.x + 12, scan.area.y + 12).unwrap())
+                    .apply(scan.pixel(scan.area().x + 12, scan.area().y + 12).unwrap())
                     .unwrap()
                     .rgb;
                 for p in pixels {
@@ -220,13 +229,13 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
                         for dx in -radius..=radius {
                             let weight =
                                 (-0.5 * f64::from(dx * dx + dy * dy) / (sigma * sigma)).exp();
-                            let sx = (scan.area.x as i32 + x + dx).clamp(
-                                scan.area.x as i32,
-                                (scan.area.x + scan.area.width - 1) as i32,
+                            let sx = (scan.area().x as i32 + x + dx).clamp(
+                                scan.area().x as i32,
+                                (scan.area().x + scan.area().width - 1) as i32,
                             ) as u32;
-                            let sy = (scan.area.y as i32 + y + dy).clamp(
-                                scan.area.y as i32,
-                                (scan.area.y + scan.area.height - 1) as i32,
+                            let sy = (scan.area().y as i32 + y + dy).clamp(
+                                scan.area().y as i32,
+                                (scan.area().y + scan.area().height - 1) as i32,
                             ) as u32;
                             let value = scalar.apply(scan.pixel(sx, sy).unwrap()).unwrap().rgb;
                             expected += weight * value / (mass * mass);
@@ -265,12 +274,12 @@ fn padded_repaired_graph_preserves_layout_at_crop_and_source_edges() {
             ..Default::default()
         }
         .write();
-        let scan = Scan::open(fixture.path(), None).unwrap();
+        let scan = DevelopedSource::open(fixture.path(), None).unwrap();
         for at_source_edge in [false, true] {
             let point = [
                 // The current healer needs two real exterior pixels around its support.
-                scan.area.x + if at_source_edge { 2 } else { 40 },
-                scan.area.y + 40,
+                scan.area().x + if at_source_edge { 2 } else { 40 },
+                scan.area().y + 40,
             ];
             // An explicit neutral repair payload isolates raster reconstruction from healer fitting.
             let repair = Repair {
@@ -281,14 +290,15 @@ fn padded_repaired_graph_preserves_layout_at_crop_and_source_edges() {
                 support: SupportMask::new(point, [3, 3], vec![true; 9]).unwrap(),
             };
             let evaluated = Arc::new(
-                crate::dust_repair::evaluate(&repair, scan.area, |_| Ok([1.5, -0.2, 0.3])).unwrap(),
+                crate::dust_repair::evaluate(&repair, scan.area(), |_| Ok([1.5, -0.2, 0.3]))
+                    .unwrap(),
             );
             let patches = crate::photographic::stages::healing::fixtures::replacements(
                 std::slice::from_ref(&evaluated),
             )
             .unwrap();
             let composition = Composition::with_crop(
-                scan.area,
+                scan.area(),
                 Default::default(),
                 Default::default(),
                 Some(crate::crop::Crop {
@@ -331,7 +341,9 @@ fn padded_repaired_graph_preserves_layout_at_crop_and_source_edges() {
             let spec = SourceRequest::new(
                 frame,
                 InputSettings::Digital,
-                scan.positive_matrix(&InputSettings::Digital).unwrap(),
+                InputSettings::Digital
+                    .positive_matrix(scan.camera_to_ap1(), None)
+                    .unwrap(),
                 None,
             )
             .unwrap()

@@ -11,10 +11,10 @@ fn large_asymmetric_picture_uses_a_strided_view_of_the_same_cached_source_grid()
         ..Default::default()
     }
     .write();
-    let scan = Scan::open(file.path(), None).unwrap();
-    let area = SourceRegion::from([scan.area.x + 12, scan.area.y + 20, 901, 641]);
-    assert!(scan.area.contains_region(area));
-    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    let area = SourceRegion::from([scan.area().x + 12, scan.area().y + 20, 901, 641]);
+    assert!(scan.area().contains_region(area));
+    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan, None).unwrap();
     let raster = sampler
         .spatial(area, |f| area.contains_region(f), || false)
         .unwrap()
@@ -40,10 +40,10 @@ fn large_asymmetric_picture_uses_a_strided_view_of_the_same_cached_source_grid()
 fn spatial_camera_sites_keep_physical_correction_support_and_omit_reference_exposure() {
     let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([6000, 12000, 9000]);
-    let mut scan = Scan::open(file.path(), None).unwrap();
-    let weak = Arc::downgrade(scan.source());
-    let a = scan.area;
-    scan.set_flat_field(Some(Arc::new(
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    let weak = Arc::downgrade(&scan);
+    let a = scan.area();
+    let scan_field = Some(Arc::new(
         crate::flat_field::FlatField::from_nodes(
             [a.x, a.y, a.width, a.height],
             [2, 2],
@@ -55,16 +55,25 @@ fn spatial_camera_sites_keep_physical_correction_support_and_omit_reference_expo
             ],
         )
         .unwrap(),
-    )));
-    scan.reference_exposure = Some(crate::exposure_reference::ReferenceExposure::Matched(
-        crate::exposure_reference::StartingExposure {
-            ev: 8.,
-            samples: 1024,
-            spread: 0.,
-        },
     ));
+    let positive = crate::scan::ImageSource::new(
+        &scan,
+        crate::processing::InputSettings::Digital,
+        Some(8.),
+        scan_field.clone(),
+    )
+    .unwrap();
+    let point = [a.x + 24, a.y + 24];
+    let unscaled =
+        crate::flat_field::sample_camera_light(&scan, scan_field.as_deref(), point).unwrap();
+    assert!(
+        positive.sample(point).unwrap().abs().max_element()
+            > 100. * (scan.camera_to_ap1() * unscaled).abs().max_element(),
+        "a Digital baseline would substantially change these camera samples",
+    );
     let gate = queue.clone();
-    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
+    let sampler =
+        CameraSampler::new(renderer.evaluation(), &queue, &scan, scan_field.clone()).unwrap();
     let area = SourceRegion::from([a.x + 8, a.y + 8, 48, 48]);
     let inside = |f: SourceRegion| area.contains_region(f) && f.x >= a.x + 20;
     let raster = sampler.spatial(area, inside, || false).unwrap().unwrap();
@@ -80,15 +89,23 @@ fn spatial_camera_sites_keep_physical_correction_support_and_omit_reference_expo
             assert_eq!(raster.eligibility()[i], expected);
             if expected {
                 kept += 1;
-                let reference = scan.pixel(sx, sy).unwrap();
+                let reference =
+                    crate::flat_field::sample_camera_light(&scan, scan_field.as_deref(), [sx, sy])
+                        .unwrap();
                 assert!(
                     (raster.camera_samples()[i] - reference).abs().max_element()
                         < 2e-6 * reference.abs().max_element()
                 );
                 coordinate_control = coordinate_control.max(
-                    (reference - scan.pixel(sx - 8, sy - 8).unwrap())
-                        .abs()
-                        .max_element(),
+                    (reference
+                        - crate::flat_field::sample_camera_light(
+                            &scan,
+                            scan_field.as_deref(),
+                            [sx - 8, sy - 8],
+                        )
+                        .unwrap())
+                    .abs()
+                    .max_element(),
                 );
             }
         }
@@ -123,23 +140,26 @@ fn spatial_camera_sites_keep_physical_correction_support_and_omit_reference_expo
 fn corrected_spatial_samples_retain_low_light_inside_support() {
     let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([2; 3]);
-    let mut scan = Scan::open(file.path(), None).unwrap();
-    let a = scan.area;
-    scan.set_flat_field(Some(Arc::new(
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    let a = scan.area();
+    let scan_field = Some(Arc::new(
         crate::flat_field::FlatField::from_nodes(
             [a.x, a.y, a.width, a.height],
             [2, 2],
             vec![DVec3::splat(0.1), DVec3::ONE, DVec3::splat(0.1), DVec3::ONE],
         )
         .unwrap(),
-    )));
-    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
+    ));
+    let sampler =
+        CameraSampler::new(renderer.evaluation(), &queue, &scan, scan_field.clone()).unwrap();
     let area = SourceRegion::from([a.x + 8, a.y + 8, 48, 48]);
     let raster = sampler
         .spatial(area, |f| area.contains_region(f), || false)
         .unwrap()
         .unwrap();
-    let low = scan.pixel(a.x + 22, a.y + 22).unwrap();
+    let low =
+        crate::flat_field::sample_camera_light(&scan, scan_field.as_deref(), [a.x + 22, a.y + 22])
+            .unwrap();
     assert!(low.min_element() < 1. / 65535.);
     let index = 14 * 48 + 14;
     assert!(raster.eligibility()[index]);
@@ -150,10 +170,10 @@ fn corrected_spatial_samples_retain_low_light_inside_support() {
 fn uncorrected_spatial_capture_accepts_native_white_and_releases_the_original_lease() {
     let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([65535; 3]);
-    let scan = Scan::open(file.path(), None).unwrap();
-    let weak = Arc::downgrade(scan.source());
-    let area = SourceRegion::from([scan.area.x + 8, scan.area.y + 8, 48, 48]);
-    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    let weak = Arc::downgrade(&scan);
+    let area = SourceRegion::from([scan.area().x + 8, scan.area().y + 8, 48, 48]);
+    let sampler = CameraSampler::new(renderer.evaluation(), &queue, &scan, None).unwrap();
     let raster = sampler
         .spatial(area, |f| area.contains_region(f), || false)
         .unwrap()

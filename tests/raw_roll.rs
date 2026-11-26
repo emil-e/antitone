@@ -4,10 +4,11 @@ use antitone::{
         AdjustmentLayer, AdjustmentLayerPipeline, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
     },
     color::AP1_TO_XYZ,
+    flat_field::FlatField,
     processing::{Calibration, DEFAULT_GAMMA, InputSettings, NegativeInput, Response},
     raw::Rect,
-    roll_analysis::{self, FrameSamples, MAX_SAMPLES_PER_FRAME},
-    scan::Scan,
+    roll_analysis::{self, FrameSamples, MAX_SAMPLES_PER_FRAME, scalar::samples},
+    scan::DevelopedSource,
 };
 use glam::DVec3;
 use std::{fs, path::PathBuf};
@@ -46,21 +47,33 @@ fn authored_roll_keeps_its_known_baseline_with_isolated_sensor_white_in_film_sup
     let mut owned = Vec::new();
     let mut matrix = None;
     for (index, path) in sources.iter().enumerate() {
-        let mut scan = Scan::open(path, None).unwrap();
-        assert_eq!(scan.white_balance, [1.; 4]);
-        assert_eq!(scan.area, film);
+        let source = DevelopedSource::open(path, None).unwrap();
+        assert_eq!(source.white_balance(), [1.; 4]);
+        assert_eq!(source.area(), film);
         if let Some(matrix) = matrix {
-            assert_eq!(scan.camera_to_ap1, matrix);
+            assert_eq!(source.camera_to_ap1(), matrix);
         }
-        matrix = Some(scan.camera_to_ap1);
-        let film_samples = scan
-            .analysis_samples(film, MAX_SAMPLES_PER_FRAME, || false)
-            .unwrap()
-            .unwrap();
-        let picture_samples = scan
-            .analysis_samples(picture, MAX_SAMPLES_PER_FRAME, || false)
-            .unwrap()
-            .unwrap();
+        matrix = Some(source.camera_to_ap1());
+        let film_samples = samples(
+            &source,
+            None,
+            film,
+            MAX_SAMPLES_PER_FRAME,
+            |_| true,
+            || false,
+        )
+        .unwrap()
+        .unwrap();
+        let picture_samples = samples(
+            &source,
+            None,
+            picture,
+            MAX_SAMPLES_PER_FRAME,
+            |_| true,
+            || false,
+        )
+        .unwrap()
+        .unwrap();
         if index == 0 {
             assert!(film_samples.pixels.iter().any(|p| p.max_element() >= 1.));
         }
@@ -69,9 +82,16 @@ fn authored_roll_keeps_its_known_baseline_with_isolated_sensor_white_in_film_sup
             assert_eq!(samples.pixels.len(), count);
         }
         assert!(
-            scan.analysis_samples(picture, MAX_SAMPLES_PER_FRAME, || true)
-                .unwrap()
-                .is_none()
+            samples(
+                &source,
+                None,
+                picture,
+                MAX_SAMPLES_PER_FRAME,
+                |_| true,
+                || true
+            )
+            .unwrap()
+            .is_none()
         );
         owned.push((film_samples.pixels, picture_samples.pixels));
     }
@@ -153,6 +173,45 @@ fn authored_roll_keeps_its_known_baseline_with_isolated_sensor_white_in_film_sup
 }
 
 #[test]
+fn scalar_sampling_applies_the_captured_gain_at_the_original_pixel_centre() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/roll-0.dng");
+    let source = DevelopedSource::open(&path, None).unwrap();
+    let area = source.area();
+    let patch = Rect {
+        x: area.x + 16,
+        y: area.y + 16,
+        width: 8,
+        height: 8,
+    };
+    let left = DVec3::new(0.8, 1.1, 1.);
+    let right = DVec3::new(1.4, 0.9, 1.3);
+    let map = FlatField::from_nodes(
+        [patch.x, patch.y, patch.width, patch.height],
+        [2, 2],
+        vec![left, right, left, right],
+    )
+    .unwrap();
+    let camera = source
+        .camera_image()
+        .unwrap()
+        .pixel(patch.x + 4, patch.y + 4)
+        .unwrap();
+    assert!(camera.min_element() > 0.);
+
+    let uncorrected = samples(&source, None, patch, 1, |r| r == patch, || false)
+        .unwrap()
+        .unwrap();
+    let corrected = samples(&source, Some(&map), patch, 1, |r| r == patch, || false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(uncorrected.pixels, [camera]);
+    assert_eq!(corrected.attempted, 1);
+    assert_eq!(corrected.pixels.len(), 1);
+    let expected = camera * left.lerp(right, 4.5 / 8.);
+    assert!((corrected.pixels[0] - expected).abs().max_element() < 1e-12);
+}
+
+#[test]
 fn spatial_support_selects_original_samples_without_rephasing_the_grid() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
     let original_bytes = fs::read(&fixture).unwrap();
@@ -175,59 +234,68 @@ fn spatial_support_selects_original_samples_without_rephasing_the_grid() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("clipped.dng");
     fs::write(&path, &bytes).unwrap();
-    let mut scan = Scan::open(&path, None).unwrap();
-    let area = scan.area;
-    let original = scan
-        .analysis_samples(area, MAX_SAMPLES_PER_FRAME, || false)
-        .unwrap()
-        .unwrap();
+    let source = DevelopedSource::open(&path, None).unwrap();
+    let area = source.area();
+    let original = samples(
+        &source,
+        None,
+        area,
+        MAX_SAMPLES_PER_FRAME,
+        |_| true,
+        || false,
+    )
+    .unwrap()
+    .unwrap();
     let mut footprints = vec![];
-    let unrestricted = scan
-        .analysis_samples_in(
-            area,
-            MAX_SAMPLES_PER_FRAME,
-            |r| {
-                footprints.push(r);
-                true
-            },
-            || false,
-        )
-        .unwrap()
-        .unwrap();
+    let unrestricted = samples(
+        &source,
+        None,
+        area,
+        MAX_SAMPLES_PER_FRAME,
+        |r| {
+            footprints.push(r);
+            true
+        },
+        || false,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(unrestricted.pixels, original.pixels);
     assert_eq!(unrestricted.attempted, original.attempted);
     assert_eq!(original.attempted, original.pixels.len());
     assert!(original.pixels.contains(&DVec3::ZERO));
     assert!(original.pixels.iter().any(|p| p.max_element() >= 1.));
     let mut seen = vec![];
-    let excluded = scan
-        .analysis_samples_in(
-            area,
-            MAX_SAMPLES_PER_FRAME,
-            |r| {
-                seen.push(r);
-                false
-            },
-            || false,
-        )
-        .unwrap()
-        .unwrap();
+    let excluded = samples(
+        &source,
+        None,
+        area,
+        MAX_SAMPLES_PER_FRAME,
+        |r| {
+            seen.push(r);
+            false
+        },
+        || false,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(seen, footprints);
     assert_eq!(excluded.attempted, 0);
     assert!(excluded.pixels.is_empty());
     let mut subset = vec![];
-    let half = scan
-        .analysis_samples_in(
-            area,
-            MAX_SAMPLES_PER_FRAME,
-            |r| {
-                subset.push(r);
-                r.x + r.width <= area.x + area.width / 2
-            },
-            || false,
-        )
-        .unwrap()
-        .unwrap();
+    let half = samples(
+        &source,
+        None,
+        area,
+        MAX_SAMPLES_PER_FRAME,
+        |r| {
+            subset.push(r);
+            r.x + r.width <= area.x + area.width / 2
+        },
+        || false,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(subset, footprints);
     assert_eq!(
         half.attempted,

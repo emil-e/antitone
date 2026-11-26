@@ -1,5 +1,5 @@
 #![cfg(feature = "raw")]
-use antitone::{raw::RawFile, scan::Scan};
+use antitone::{raw::RawFile, scan::DevelopedSource};
 use glam::DVec3;
 use std::fs;
 
@@ -35,11 +35,11 @@ fn prebalanced_non_cfa_raw_preserves_camera_light_and_explicit_wb() {
     assert_eq!(raw.metadata.as_shot_wb(), sony_ycc::WB);
     assert_eq!(raw.metadata.source_dimensions().unwrap(), [128, 64]);
 
-    let unity = Scan::open(path, Some([1.; 4])).unwrap();
-    let automatic = Scan::open(path, None).unwrap();
+    let unity = DevelopedSource::open(path, Some([1.; 4])).unwrap();
+    let automatic = DevelopedSource::open(path, None).unwrap();
     // The unused fourth slot cannot control RGB normalization, even with an explicit gain.
     let custom_wb = [4096., 1024., 1536., 65536.];
-    let custom = Scan::open(path, Some(custom_wb)).unwrap();
+    let custom = DevelopedSource::open(path, Some(custom_wb)).unwrap();
     for (index, y) in sony_ycc::LUMINANCE.into_iter().enumerate() {
         // Sony's decoder produces Y for neutral Cb/Cr, with black 1024 and white 17536.
         let light = f64::from(y - 1024) / (17536. - 1024.);
@@ -85,12 +85,12 @@ fn supplied_accelerator_does_not_change_prebalanced_non_cfa_development() {
         std::sync::Arc::new(antitone::raw::demosaic::Demosaicer::new(&device, &queue, 0));
     let file = sony_ycc::source();
     for wb in [[1.; 4], sony_ycc::WB, [4096., 1024., 1536., 65536.]] {
-        let expected = Scan::open(file.path(), Some(wb)).unwrap();
+        let expected = DevelopedSource::open(file.path(), Some(wb)).unwrap();
         let mut raw = RawFile::open(file.path()).unwrap();
         raw.set_demosaicer(Some(accelerator.clone()));
-        let actual = Scan::from_raw(raw, Some(wb)).unwrap();
+        let actual = DevelopedSource::from_raw(raw, Some(wb)).unwrap();
         assert_eq!(
-            actual.source().demosaic_backend(),
+            actual.demosaic_backend(),
             antitone::raw::DemosaicBackend::LibRaw
         );
         assert_eq!(actual.dimensions().unwrap(), expected.dimensions().unwrap());
@@ -105,8 +105,8 @@ fn supplied_accelerator_does_not_change_prebalanced_non_cfa_development() {
 #[test]
 fn selected_ycbcr_raw_ifd_supplies_automatic_sony_shading() {
     let fixture = sony_ycc::source_with_profile(Some([2048, 1024, 1536]), true);
-    let scan = Scan::open(fixture.path(), None).unwrap();
-    assert!(scan.source().metadata().lens_identity().unwrap().is_some());
+    let scan = DevelopedSource::open(fixture.path(), None).unwrap();
+    assert!(scan.metadata().lens_identity().unwrap().is_some());
     let gain = 2_f64.sqrt();
     for (index, y) in sony_ycc::LUMINANCE.into_iter().enumerate() {
         let light = f64::from(y - 1024) / (17536. - 1024.);
@@ -174,16 +174,17 @@ fn prebalanced_camera_light_reaches_scene_linear_gpu_output() {
     .into_iter()
     .enumerate()
     {
-        let scan = Scan::open(fixture.path(), Some(wb)).unwrap();
+        let scan = DevelopedSource::open(fixture.path(), Some(wb)).unwrap();
         let composition =
-            Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+            Composition::new(scan.area(), Default::default(), Default::default()).unwrap();
         let path = directory.path().join(format!("{index}.exr"));
         gpu_export::write(
             &renderer,
             &device,
             &queue,
             Request {
-                scan: &scan,
+                source: &scan,
+                reference_ev: None,
                 field: None,
                 input: InputSettings::Digital,
                 roll: Default::default(),
@@ -200,7 +201,7 @@ fn prebalanced_camera_light_reaches_scene_linear_gpu_output() {
         .unwrap();
         let image = exr::prelude::read_first_flat_layer_from_file(path).unwrap();
         assert_eq!(image.layer_data.channel_data.list.len(), 3);
-        let matrix = ap1_to_ap0() * scan.camera_to_ap1;
+        let matrix = ap1_to_ap0() * scan.camera_to_ap1();
         for channel in &image.layer_data.channel_data.list {
             let c = match channel.name.to_string().as_str() {
                 "R" => 0,
@@ -228,20 +229,25 @@ fn prebalanced_camera_light_reaches_scene_linear_gpu_output() {
 }
 
 #[cfg(feature = "project")]
-fn record(scan: &Scan, path: &std::path::Path) -> antitone::project::Source {
+fn record(scan: &DevelopedSource, path: &std::path::Path) -> antitone::project::Source {
     use antitone::project::{Source, SourceDevelopment, SourceId};
-    let metadata = scan.source().metadata();
+    let metadata = scan.metadata();
     Source {
         capture_time: None,
         development_mode: antitone::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path: path.into(),
         development: SourceDevelopment {
-            decode: metadata.development(scan.white_balance),
+            decode: metadata.development(scan.white_balance()),
             dimensions: metadata.source_dimensions().unwrap(),
-            active_area: [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
-            camera_model: scan.camera_model.clone(),
-            camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
+            active_area: [
+                scan.area().x,
+                scan.area().y,
+                scan.area().width,
+                scan.area().height,
+            ],
+            camera_model: scan.camera_model().to_owned(),
+            camera_to_ap1: scan.camera_to_ap1().to_cols_array_2d(),
         },
         adjustment_layers: None,
         repairs: Default::default(),
@@ -256,8 +262,8 @@ fn accepted_wb_separates_cache_entries_with_the_same_geometry_basis_and_precisio
     use antitone::source::{SourceCache, SourceKey};
     use std::sync::Arc;
     let fixture = sony_ycc::source();
-    let unity = Scan::open(fixture.path(), Some([1.; 4])).unwrap();
-    let digital = Scan::open(fixture.path(), None).unwrap();
+    let unity = DevelopedSource::open(fixture.path(), Some([1.; 4])).unwrap();
+    let digital = DevelopedSource::open(fixture.path(), None).unwrap();
     let unity_record = record(&unity, fixture.path());
     let digital_record = record(&digital, fixture.path());
     let mut without_balance = digital_record.development.clone();
@@ -268,24 +274,21 @@ fn accepted_wb_separates_cache_entries_with_the_same_geometry_basis_and_precisio
     assert_ne!(unity_key, digital_key);
     let cache = SourceCache::new(u64::MAX);
     cache
-        .publish_source(unity_key.clone(), unity.source().clone())
+        .publish_source(unity_key.clone(), unity.clone())
         .unwrap()
         .unwrap();
     assert!(cache.get(&digital_key).is_none());
     assert!(
         cache
-            .publish_source(digital_key.clone(), unity.source().clone())
+            .publish_source(digital_key.clone(), unity.clone())
             .is_err()
     );
     cache
-        .publish_source(digital_key.clone(), digital.source().clone())
+        .publish_source(digital_key.clone(), digital.clone())
         .unwrap()
         .unwrap();
-    assert!(Arc::ptr_eq(&cache.get(&unity_key).unwrap(), unity.source()));
-    assert!(Arc::ptr_eq(
-        &cache.get(&digital_key).unwrap(),
-        digital.source()
-    ));
+    assert!(Arc::ptr_eq(&cache.get(&unity_key).unwrap(), &unity));
+    assert!(Arc::ptr_eq(&cache.get(&digital_key).unwrap(), &digital));
 }
 
 #[cfg(feature = "project")]
@@ -308,7 +311,7 @@ fn prebalanced_source_save_open_and_cold_development_retain_the_photographic_bas
             [1.; 4],
         ),
     ] {
-        let scan = Scan::open(path, Some(wb)).unwrap();
+        let scan = DevelopedSource::open(path, Some(wb)).unwrap();
         let pixels = [scan.pixel(32, 32).unwrap(), scan.pixel(96, 32).unwrap()];
         let mut project = Project {
             input,
@@ -327,9 +330,11 @@ fn prebalanced_source_save_open_and_cold_development_retain_the_photographic_bas
         serde_json::to_value(&loaded).unwrap();
         let source = loaded.source(id).unwrap();
         assert_eq!(source, project.source(id).unwrap());
-        let cold = Scan::open(&source.path, Some(source.development.decode.white_balance)).unwrap();
+        let cold =
+            DevelopedSource::open(&source.path, Some(source.development.decode.white_balance))
+                .unwrap();
         let recipe = loaded.image_recipe(id).unwrap();
-        recipe.neutral.require_scan(&cold).unwrap();
+        recipe.neutral.require_source(&cold).unwrap();
         assert_eq!(
             [cold.pixel(32, 32).unwrap(), cold.pixel(96, 32).unwrap()],
             pixels
@@ -337,7 +342,7 @@ fn prebalanced_source_save_open_and_cold_development_retain_the_photographic_bas
         let json = std::fs::read_to_string(&saved).unwrap();
         assert!(!json.contains("pre_applied_wb"));
         assert_eq!(source.development.decode.white_balance, wb);
-        let wrong_stage = Scan::open(
+        let wrong_stage = DevelopedSource::open(
             path,
             if input.is_negative() {
                 None
@@ -346,6 +351,6 @@ fn prebalanced_source_save_open_and_cold_development_retain_the_photographic_bas
             },
         )
         .unwrap();
-        assert!(recipe.neutral.require_scan(&wrong_stage).is_err());
+        assert!(recipe.neutral.require_source(&wrong_stage).is_err());
     }
 }

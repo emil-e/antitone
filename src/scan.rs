@@ -1,18 +1,16 @@
 use crate::flat_field::FlatField;
 use crate::{
     Error,
-    color::Balance,
-    coverage::Coverage,
     geometry::SourceRaster,
-    processing::{InputSettings, RollSettings},
+    processing::InputSettings,
     raw::{Developed, FrozenRaw, Metadata, RawFile, Rect},
-    sampling,
 };
 use glam::{DMat3, DVec3};
 use std::{path::Path, sync::Arc};
 
 type Result<T> = std::result::Result<T, Error>;
 
+#[cfg(feature = "editor")]
 mod analysis;
 #[cfg(feature = "editor")]
 pub(crate) use analysis::AnalysisInput;
@@ -23,15 +21,7 @@ pub use identity::CameraIdentity;
 mod image_source;
 pub use image_source::{ImageIdentity, ImageSource};
 
-#[derive(Debug, Default)]
-pub struct AnalysisSamples {
-    pub pixels: Vec<DVec3>,
-    #[cfg(feature = "editor")]
-    pub(crate) positions: Vec<[u32; 2]>,
-    pub attempted: usize,
-}
-
-/// Immutable native development shared by independent Scan consumers.
+/// Immutable native pixels and development facts shared by camera-source consumers.
 ///
 /// Neither the native owner nor mutation APIs are exposed:
 /// ```compile_fail
@@ -62,7 +52,26 @@ pub struct DevelopedSource {
 }
 
 impl DevelopedSource {
-    fn from_raw(mut raw: RawFile, white_balance: Option<[f64; 4]>) -> Result<Self> {
+    pub fn open(path: &Path, white_balance: Option<[f64; 4]>) -> Result<Arc<Self>> {
+        Self::open_with_priority(
+            path,
+            white_balance,
+            crate::raw::DevelopmentPriority::Foreground,
+        )
+    }
+
+    pub fn open_with_priority(
+        path: &Path,
+        white_balance: Option<[f64; 4]>,
+        priority: crate::raw::DevelopmentPriority,
+    ) -> Result<Arc<Self>> {
+        let mut raw = RawFile::open_with_wb(path, white_balance)?;
+        raw.set_development_priority(priority);
+        Self::from_raw(raw, white_balance).map(Arc::new)
+    }
+
+    /// Develop and freeze a caller-configured, uniquely owned RAW handle.
+    pub fn from_raw(mut raw: RawFile, white_balance: Option<[f64; 4]>) -> Result<Self> {
         let wb = white_balance.unwrap_or_else(|| raw.metadata.as_shot_wb());
         raw.prepare_basis(wb)?;
         let matrix = raw.metadata.camera_to_ap1()?;
@@ -135,11 +144,79 @@ impl DevelopedSource {
         Ok(())
     }
 
+    pub fn validate_area(&self, area: Rect) -> Result<()> {
+        if !self.area.contains_region(area) {
+            return Err(Error::InvalidParameter(
+                "view region is outside the active source area",
+            ));
+        }
+        Ok(())
+    }
+
     /// Source camera light, with LibRaw's WB-normalization scale already restored.
     pub fn camera_image(&self) -> Result<Developed<'_>> {
         self.raw
             .camera_image()?
             .with_source_scale(self.source_scale)
+    }
+
+    pub fn dimensions(&self) -> Result<(u32, u32)> {
+        let image = self.camera_image()?;
+        Ok((image.width, image.height))
+    }
+
+    pub fn pixel(&self, x: u32, y: u32) -> Result<DVec3> {
+        self.camera_image()?.pixel(x, y)
+    }
+
+    #[cfg(all(test, feature = "gpu"))]
+    pub(crate) fn tile_region(
+        &self,
+        area: Rect,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<[f32; 4]>> {
+        self.validate_area(area)?;
+        if width == 0 || height == 0 || x >= area.width || y >= area.height {
+            return Err(Error::InvalidParameter("invalid source tile"));
+        }
+        let mut pixels = vec![[0.; 4]; width as usize * height as usize];
+        self.camera_image()?.copy_samples(
+            Rect {
+                x: area.x + x,
+                y: area.y + y,
+                width: width.min(area.width - x),
+                height: height.min(area.height - y),
+            },
+            &mut pixels,
+            width as usize,
+        )?;
+        Ok(pixels)
+    }
+
+    pub fn preview_dimensions(&self, maximum: u32) -> Result<(u32, u32)> {
+        preview_dimensions(self.area, maximum)
+    }
+
+    /// Unconverted camera samples in code units at display-grid centres; no requantization.
+    pub fn preview_source(&self, maximum: u32) -> Result<(u32, u32, Vec<[f32; 4]>)> {
+        self.preview_source_in(self.area(), maximum)
+    }
+
+    fn preview_source_in(&self, area: Rect, maximum: u32) -> Result<(u32, u32, Vec<[f32; 4]>)> {
+        let (width, height) = preview_dimensions(area, maximum)?;
+        let image = self.camera_image()?;
+        let raster = SourceRaster::new(area, [width, height])?;
+        let mut pixels = Vec::with_capacity(width as usize * height as usize);
+        for y in 0..height {
+            for x in 0..width {
+                let [sx, sy] = raster.source_pixel([x, y])?;
+                pixels.push(image.pixel_samples(sx, sy)?);
+            }
+        }
+        Ok((width, height, pixels))
     }
 }
 
@@ -160,20 +237,21 @@ impl CameraPixels {
     #[cfg(feature = "editor")]
     pub(crate) const SAMPLING_VERSION: u32 = 1;
 
-    pub fn from_scan(scan: &Scan) -> Result<Self> {
-        Self::sample(scan, Self::MAX_EDGE)
+    pub fn from_source(source: &DevelopedSource) -> Result<Self> {
+        Self::sample(source, Self::MAX_EDGE)
     }
 
-    fn sample(scan: &Scan, maximum: u32) -> Result<Self> {
-        let (width, height) = scan.preview_dimensions(maximum)?;
-        let image = scan.source.camera_image()?;
+    fn sample(source: &DevelopedSource, maximum: u32) -> Result<Self> {
+        let area = source.area();
+        let (width, height) = preview_dimensions(area, maximum)?;
+        let image = source.camera_image()?;
         // A bounded stratified grid reduces grain/aliasing without reading every
         // original in each proxy footprint. Measurements use their own source sampling.
         let samples = [
-            (scan.area.width / width).clamp(1, 4),
-            (scan.area.height / height).clamp(1, 4),
+            (area.width / width).clamp(1, 4),
+            (area.height / height).clamp(1, 4),
         ];
-        let raster = SourceRaster::new(scan.area, [width * samples[0], height * samples[1]])?;
+        let raster = SourceRaster::new(area, [width * samples[0], height * samples[1]])?;
         let count = f64::from(samples[0] * samples[1]);
         let mut pixels = Vec::with_capacity(width as usize * height as usize);
         for y in 0..height {
@@ -198,11 +276,11 @@ impl CameraPixels {
             }
         }
         Ok(Self {
-            identity: Some(scan.source.identity()),
+            identity: Some(source.identity()),
             width,
             height,
             pixels: Arc::new(pixels),
-            matrix: scan.camera_to_ap1,
+            matrix: source.camera_to_ap1(),
         })
     }
 
@@ -243,19 +321,17 @@ impl CameraProxy {
     ) -> Self {
         Self { data, reference }
     }
-    pub fn from_scan(scan: &Scan) -> Result<Self> {
+    #[cfg(all(test, feature = "gpu"))]
+    pub(crate) fn from_source(
+        source: &DevelopedSource,
+        reference: Option<crate::exposure_reference::ReferenceExposure>,
+    ) -> Result<Self> {
         Ok(Self::new(
-            Arc::new(CameraPixels::from_scan(scan)?),
-            scan.reference_exposure.clone(),
+            Arc::new(CameraPixels::from_source(source)?),
+            reference,
         ))
     }
-    #[cfg(test)]
-    fn sample(scan: &Scan, maximum: u32) -> Result<Self> {
-        Ok(Self::new(
-            Arc::new(CameraPixels::sample(scan, maximum)?),
-            scan.reference_exposure.clone(),
-        ))
-    }
+
     pub fn positive_matrix(&self, input: &crate::processing::InputSettings) -> Result<DMat3> {
         input.positive_matrix(
             self.matrix,
@@ -269,412 +345,12 @@ mod proxy_tests;
 #[cfg(all(test, feature = "project"))]
 mod source_scale_tests;
 
-pub struct Scan {
-    source: Arc<DevelopedSource>,
-    pub reference_exposure: Option<crate::exposure_reference::ReferenceExposure>,
-    pub camera_to_ap1: DMat3,
-    pub camera_model: String,
-    pub area: Rect,
-    pub white_balance: [f64; 4],
-    flat_field: Option<Arc<FlatField>>,
-}
-
-impl Scan {
-    pub fn open(path: &Path, white_balance: Option<[f64; 4]>) -> Result<Self> {
-        Self::open_with_priority(
-            path,
-            white_balance,
-            crate::raw::DevelopmentPriority::Foreground,
-        )
+fn preview_dimensions(area: Rect, maximum: u32) -> Result<(u32, u32)> {
+    if maximum == 0 {
+        return Err(Error::InvalidParameter("preview size must be positive"));
     }
-
-    pub fn open_with_priority(
-        path: &Path,
-        white_balance: Option<[f64; 4]>,
-        priority: crate::raw::DevelopmentPriority,
-    ) -> Result<Self> {
-        let mut raw = RawFile::open_with_wb(path, white_balance)?;
-        raw.set_development_priority(priority);
-        Self::from_raw(raw, white_balance)
-    }
-
-    /// Develop and freeze a caller-configured, uniquely owned RAW handle.
-    pub fn from_raw(raw: RawFile, white_balance: Option<[f64; 4]>) -> Result<Self> {
-        Ok(Self::from_source(Arc::new(DevelopedSource::from_raw(
-            raw,
-            white_balance,
-        )?)))
-    }
-
-    /// Starts an independent consumer without a measured flat field or another RGB development.
-    pub fn from_source(source: Arc<DevelopedSource>) -> Self {
-        Self::with_reference(source, None)
-    }
-
-    /// Captures a consumer's fixed baseline without changing shared native pixels.
-    pub fn with_reference(
-        source: Arc<DevelopedSource>,
-        reference_exposure: Option<crate::exposure_reference::ReferenceExposure>,
-    ) -> Self {
-        Self {
-            reference_exposure,
-            camera_to_ap1: source.camera_to_ap1,
-            camera_model: source.camera_model.clone(),
-            area: source.area,
-            white_balance: source.white_balance,
-            flat_field: None,
-            source,
-        }
-    }
-
-    pub fn source(&self) -> &Arc<DevelopedSource> {
-        &self.source
-    }
-
-    pub fn dimensions(&self) -> Result<(u32, u32)> {
-        let image = self.source.camera_image()?;
-        Ok((image.width, image.height))
-    }
-
-    pub fn set_flat_field(&mut self, field: Option<Arc<FlatField>>) {
-        self.flat_field = field;
-    }
-
-    pub fn propose_flat_field_area(&self) -> Result<Option<Rect>> {
-        let a = self.area;
-        let side = a.width.max(a.height).div_ceil(256);
-        let size = [
-            a.width.div_ceil(side) as usize,
-            a.height.div_ceil(side) as usize,
-        ];
-        let image = self.source.camera_image()?;
-        let mut sums = vec![[0f64; 3]; size[0] * size[1]];
-        let mut counts = vec![0u64; sums.len()];
-        for y in 0..a.height {
-            for x in 0..a.width {
-                let i = (y / side) as usize * size[0] + (x / side) as usize;
-                let p = image.pixel_samples(a.x + x, a.y + y)?;
-                for c in 0..3 {
-                    sums[i][c] += f64::from(p[c]);
-                }
-                counts[i] += 1;
-            }
-        }
-        let values: Vec<_> = sums
-            .iter()
-            .zip(counts)
-            .map(|(p, n)| {
-                (crate::color::AP1_TO_XYZ
-                    * (self.camera_to_ap1 * (DVec3::new(p[0], p[1], p[2]) / (n as f64 * 65535.))))
-                    .y
-            })
-            .collect();
-        let center = values[(size[1] / 2) * size[0] + size[0] / 2];
-        Ok(
-            crate::flat_field::propose_support(&values, size, center).map(
-                |[left, top, right, bottom]| Rect {
-                    x: a.x + left as u32 * side,
-                    y: a.y + top as u32 * side,
-                    width: (right - left) as u32 * side,
-                    height: (bottom - top) as u32 * side,
-                },
-            ),
-        )
-    }
-
-    /// Estimate only inside accepted support, using area-weighted full-pixel camera statistics.
-    /// Existing correction is deliberately bypassed when analysing a reference.
-    pub fn estimate_flat_field(&mut self, region: Rect) -> Result<FlatField> {
-        self.validate_area(region)?;
-        let maximum = region.width.max(region.height) as f64;
-        let size = [
-            (region.width as f64 / maximum * 256.).round() as usize,
-            (region.height as f64 / maximum * 256.).round() as usize,
-        ];
-        if size.iter().any(|n| *n < 7) {
-            return Err(Error::UnusableSample("flat-field support is too narrow"));
-        }
-
-        let image = self.source.camera_image()?;
-        let mut means = Vec::with_capacity(size[0] * size[1]);
-        for gy in 0..size[1] {
-            for gx in 0..size[0] {
-                let left = region.x as f64 + gx as f64 * region.width as f64 / size[0] as f64;
-                let right =
-                    region.x as f64 + (gx + 1) as f64 * region.width as f64 / size[0] as f64;
-                let top = region.y as f64 + gy as f64 * region.height as f64 / size[1] as f64;
-                let bottom =
-                    region.y as f64 + (gy + 1) as f64 * region.height as f64 / size[1] as f64;
-                let mut sum = DVec3::ZERO;
-                for y in top.floor() as u32..bottom.ceil() as u32 {
-                    for x in left.floor() as u32..right.ceil() as u32 {
-                        let weight = (right.min(x as f64 + 1.) - left.max(x as f64))
-                            * (bottom.min(y as f64 + 1.) - top.max(y as f64));
-                        let p = image.pixel_samples(x, y)?;
-                        sum += DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) * weight;
-                    }
-                }
-                means.push(sum / ((right - left) * (bottom - top) * 65535.));
-            }
-        }
-        FlatField::estimate(
-            [region.x, region.y, region.width, region.height],
-            size,
-            &means,
-            [
-                self.area.x as f64 + self.area.width as f64 / 2.,
-                self.area.y as f64 + self.area.height as f64 / 2.,
-            ],
-        )
-    }
-
-    pub fn positive_matrix(&self, input: &crate::processing::InputSettings) -> Result<DMat3> {
-        input.positive_matrix(
-            self.source.camera_to_ap1,
-            self.reference_exposure
-                .as_ref()
-                .map(|reference| reference.ev()),
-        )
-    }
-
-    pub fn flat_field(&self) -> Option<&Arc<FlatField>> {
-        self.flat_field.as_ref()
-    }
-
-    pub fn pixel(&self, x: u32, y: u32) -> Result<DVec3> {
-        let mut camera = self.source.camera_image()?.pixel(x, y)?;
-        if let Some(field) = &self.flat_field {
-            camera *= field.gain([x as f64 + 0.5, y as f64 + 0.5])?;
-        }
-        Ok(camera)
-    }
-
-    /// Bounded original-pixel centres with local 8×8 spatial footprints.
-    /// The rectangle selects sampling support, not an output crop or film mask.
-    pub fn analysis_samples(
-        &mut self,
-        area: Rect,
-        budget: usize,
-        cancelled: impl FnMut() -> bool,
-    ) -> Result<Option<AnalysisSamples>> {
-        self.analysis_samples_in(area, budget, |_| true, cancelled)
-    }
-
-    /// Select original centres whose complete footprints lie within the supplied support.
-    /// The grid remains canonical to `area`; support never resizes/rephases it.
-    pub fn analysis_samples_in(
-        &mut self,
-        area: Rect,
-        budget: usize,
-        inside: impl FnMut(Rect) -> bool,
-        mut cancelled: impl FnMut() -> bool,
-    ) -> Result<Option<AnalysisSamples>> {
-        let Some(mut plan) = self.analysis_plan(area, budget, inside, &mut cancelled)? else {
-            return Ok(None);
-        };
-        for footprint in plan.footprints {
-            if cancelled() {
-                return Ok(None);
-            }
-            let pixel = self.pixel(footprint.centre[0], footprint.centre[1])?;
-            if !pixel.is_finite() {
-                return Err(Error::NumericalOverflow);
-            }
-            plan.samples.pixels.push(pixel);
-        }
-        Ok((!cancelled()).then_some(plan.samples))
-    }
-
-    pub fn reference(&mut self, region: Rect) -> Result<DVec3> {
-        self.validate_area(region)?;
-        let mean = if self.flat_field().is_some() {
-            let mut sum = DVec3::ZERO;
-            for y in region.y..region.y + region.height {
-                for x in region.x..region.x + region.width {
-                    sum += self.pixel(x, y)?;
-                }
-            }
-            sum / (region.width as f64 * region.height as f64)
-        } else {
-            self.source
-                .camera_image()?
-                .sample_mean(region, DMat3::IDENTITY)?
-        };
-        if !mean.is_finite() || mean.min_element() <= 0. {
-            return Err(Error::UnusableSample(
-                "reference mean must be finite and positive in every channel",
-            ));
-        }
-        Ok(mean)
-    }
-
-    fn patch(&mut self, region: Rect) -> Result<Vec<DVec3>> {
-        self.validate_area(region)?;
-        let mut pixels = Vec::with_capacity(region.width as usize * region.height as usize);
-        for y in region.y..region.y + region.height {
-            for x in region.x..region.x + region.width {
-                let pixel = self.pixel(x, y)?;
-                pixels.push(pixel);
-            }
-        }
-        Ok(pixels)
-    }
-
-    pub fn roll_neutral(&mut self, region: Rect, input: &InputSettings) -> Result<Balance> {
-        let negative = input.negative_input().ok_or(Error::InvalidParameter(
-            "white-balance fitting requires a negative input",
-        ))?;
-        let matrix = self.camera_to_ap1;
-        sampling::roll_neutral(negative, &self.patch(region)?, matrix)
-    }
-
-    pub fn reference_coverage(&mut self, coverage: Coverage) -> Result<DVec3> {
-        if let Some(region) = coverage.exact_rectangle(self.area) {
-            return self.reference(region);
-        }
-        let mean = sampling::weighted_mean_iter(
-            coverage
-                .pixels(self.area)?
-                .map(|([x, y], weight)| self.pixel(x, y).map(|p| (p, weight))),
-        )?;
-        if mean.min_element() <= 0. {
-            return Err(Error::UnusableSample(
-                "reference mean must be finite and positive in every channel",
-            ));
-        }
-        Ok(mean)
-    }
-
-    fn patch_coverage(&mut self, coverage: Coverage) -> Result<Vec<(DVec3, f64)>> {
-        coverage
-            .pixels(self.area)?
-            .map(|([x, y], weight)| {
-                let pixel = self.pixel(x, y)?;
-                Ok((pixel, weight))
-            })
-            .collect()
-    }
-
-    pub fn roll_neutral_coverage(
-        &mut self,
-        coverage: Coverage,
-        input: &InputSettings,
-    ) -> Result<Balance> {
-        if let Some(region) = coverage.exact_rectangle(self.area) {
-            return self.roll_neutral(region, input);
-        }
-        let negative = input.negative_input().ok_or(Error::InvalidParameter(
-            "white-balance fitting requires a negative input",
-        ))?;
-        let matrix = self.camera_to_ap1;
-        sampling::roll_neutral_weighted(negative, &self.patch_coverage(coverage)?, matrix)
-    }
-
-    /// Fit Roll WB or a selected layer's replacement from its captured upstream image.
-    pub fn white_balance_coverage(
-        &mut self,
-        coverage: Coverage,
-        input: &InputSettings,
-        roll: RollSettings,
-        upstream: crate::adjustment_layers::AdjustmentLayerSnapshot,
-        layer: Option<crate::adjustment_layers::AdjustmentLayer>,
-    ) -> Result<Balance> {
-        let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
-            *input,
-            roll,
-            upstream,
-            self.positive_matrix(input)?,
-        )?;
-        let pixels = coverage
-            .pixels(self.area)?
-            .map(|([x, y], area)| {
-                let pixel = self.pixel(x, y)?;
-                let result = pipeline.apply(pixel, [x, y])?;
-                let weight = match layer {
-                    Some(layer) => layer.weight(crate::geometry::SourcePoint([
-                        f64::from(x) + 0.5,
-                        f64::from(y) + 0.5,
-                    ]))?,
-                    None => 1.,
-                };
-                let exposure = layer.map_or(0., |layer| layer.photo.exposure) * weight;
-                Ok((
-                    result.rgb * crate::processing::exposure_multiplier(exposure)?,
-                    area,
-                    weight,
-                ))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        match layer {
-            Some(_) => sampling::adjustment_layer_white_balance(&pixels),
-            None => sampling::white_balance_weighted(
-                &pixels
-                    .into_iter()
-                    .map(|(rgb, area, _)| (rgb, area))
-                    .collect::<Vec<_>>(),
-            ),
-        }
-    }
-
-    pub fn tile_region(
-        &self,
-        area: Rect,
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
-    ) -> Result<Vec<[f32; 4]>> {
-        self.validate_area(area)?;
-        if width == 0 || height == 0 || x >= area.width || y >= area.height {
-            return Err(Error::InvalidParameter("invalid source tile"));
-        }
-        let image = self.source.camera_image()?;
-        let mut pixels = vec![[0.; 4]; width as usize * height as usize];
-        image.copy_samples(
-            Rect {
-                x: area.x + x,
-                y: area.y + y,
-                width: width.min(area.width - x),
-                height: height.min(area.height - y),
-            },
-            &mut pixels,
-            width as usize,
-        )?;
-        Ok(pixels)
-    }
-
-    pub fn validate_area(&self, area: Rect) -> Result<()> {
-        if !self.area.contains_region(area) {
-            return Err(Error::InvalidParameter(
-                "view region is outside the active source area",
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn preview_dimensions(&self, maximum: u32) -> Result<(u32, u32)> {
-        if maximum == 0 {
-            return Err(Error::InvalidParameter("preview size must be positive"));
-        }
-        let scale =
-            (f64::from(maximum) / f64::from(self.area.width.max(self.area.height))).min(1.0);
-        let width = (f64::from(self.area.width) * scale).round().max(1.0) as u32;
-        let height = (f64::from(self.area.height) * scale).round().max(1.0) as u32;
-        Ok((width, height))
-    }
-
-    /// Unconverted camera samples in code units at display-grid centres; no requantization.
-    pub fn preview_source(&self, maximum: u32) -> Result<(u32, u32, Vec<[f32; 4]>)> {
-        let (width, height) = self.preview_dimensions(maximum)?;
-        let image = self.source.camera_image()?;
-        let raster = SourceRaster::new(self.area, [width, height])?;
-        let mut pixels = Vec::with_capacity(width as usize * height as usize);
-        for y in 0..height {
-            for x in 0..width {
-                let [sx, sy] = raster.source_pixel([x, y])?;
-                pixels.push(image.pixel_samples(sx, sy)?);
-            }
-        }
-        Ok((width, height, pixels))
-    }
+    let scale = (f64::from(maximum) / f64::from(area.width.max(area.height))).min(1.0);
+    let width = (f64::from(area.width) * scale).round().max(1.0) as u32;
+    let height = (f64::from(area.height) * scale).round().max(1.0) as u32;
+    Ok((width, height))
 }

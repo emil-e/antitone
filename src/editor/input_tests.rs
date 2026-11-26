@@ -219,8 +219,8 @@ fn acquisition_shares_lazy_wb_and_persists_it_without_dirtying_or_redefaulting()
     let acquired =
         pollster::block_on(first.source(provider.as_ref(), source_loading::Priority::Foreground))
             .unwrap();
-    let scan = acquired.prepared.scan();
-    assert_eq!(scan.white_balance, [2., 1., 3., 1.]);
+    let scan = acquired.prepared.source;
+    assert_eq!(scan.white_balance(), [2., 1., 3., 1.]);
     assert_eq!(
         second
             .development()
@@ -229,20 +229,20 @@ fn acquisition_shares_lazy_wb_and_persists_it_without_dirtying_or_redefaulting()
             .unwrap()
             .decode
             .white_balance,
-        scan.white_balance
+        scan.white_balance()
     );
     let proxy =
         pollster::block_on(second.proxy(provider.as_ref(), source_loading::Priority::Visible))
             .unwrap();
-    assert_eq!(proxy.matrix, scan.camera_to_ap1);
+    assert_eq!(proxy.matrix, scan.camera_to_ap1());
     assert_eq!(
         starts.load(Ordering::SeqCst),
         1,
         "the live source lease must satisfy proxy demand"
     );
     let point = [
-        scan.area.x + scan.area.width / 2,
-        scan.area.y + scan.area.height / 2,
+        scan.area().x + scan.area().width / 2,
+        scan.area().y + scan.area().height / 2,
     ];
     let pixel = scan.pixel(point[0], point[1]).unwrap();
     assert!(pixel.min_element() > 0.);
@@ -272,7 +272,7 @@ fn acquisition_shares_lazy_wb_and_persists_it_without_dirtying_or_redefaulting()
         [2., 1., 3., 1.]
     );
     std::fs::copy(changed.path(), &path).unwrap();
-    let changed_default = Scan::open(&path, None).unwrap();
+    let changed_default = DevelopedSource::open(&path, None).unwrap();
     assert_ne!(
         changed_default.pixel(point[0], point[1]).unwrap(),
         pixel,
@@ -286,9 +286,9 @@ fn acquisition_shares_lazy_wb_and_persists_it_without_dirtying_or_redefaulting()
         source_loading::Priority::Foreground,
     ))
     .unwrap();
-    assert_eq!(acquired.prepared.scan().white_balance, [2., 1., 3., 1.]);
+    assert_eq!(acquired.prepared.source.white_balance(), [2., 1., 3., 1.]);
     assert_eq!(
-        acquired.prepared.scan().pixel(point[0], point[1]).unwrap(),
+        acquired.prepared.source.pixel(point[0], point[1]).unwrap(),
         pixel
     );
     cold.close_and_wait().unwrap();

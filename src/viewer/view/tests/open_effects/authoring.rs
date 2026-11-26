@@ -18,8 +18,8 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
         ..Default::default()
     }
     .write();
-    let scan = crate::scan::Scan::open(file.path(), None).unwrap();
-    let area = scan.area;
+    let scan = crate::scan::DevelopedSource::open(file.path(), None).unwrap();
+    let area = scan.area();
     let pipeline = {
         let curve = SignedCurve::new(1.2, 0.15).unwrap();
         let convolution = TentConvolution::new(0.8).unwrap();
@@ -32,7 +32,7 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
             Ok(image)
         })
     };
-    let source = crate::scan::ImageSource::new(&scan, InputSettings::Digital).unwrap();
+    let source = crate::scan::ImageSource::new(&scan, InputSettings::Digital, None, None).unwrap();
     let scalar = crate::adjustment_layers::GradingPipeline::new(
         Default::default(),
         AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -91,7 +91,9 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
     let processing = input(
         &device,
         area,
-        scan.positive_matrix(&InputSettings::Digital).unwrap(),
+        InputSettings::Digital
+            .positive_matrix(scan.camera_to_ap1(), None)
+            .unwrap(),
     )
     .with_definition(pipeline.clone());
     let frame =
@@ -109,7 +111,9 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
             SourceRequest::new(
                 frame,
                 InputSettings::Digital,
-                scan.positive_matrix(&InputSettings::Digital).unwrap(),
+                InputSettings::Digital
+                    .positive_matrix(scan.camera_to_ap1(), None)
+                    .unwrap(),
                 None,
             )
             .unwrap()
@@ -133,7 +137,7 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
             &renderer,
             &device,
             &queue,
-            (&scan, None),
+            (&scan, None, None),
             processing.clone(),
             target,
             (&std::sync::atomic::AtomicU64::new(1), 1),
@@ -158,7 +162,9 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
             renderer.drt(target),
             [area.width, area.height],
             &camera,
-            scan.positive_matrix(&InputSettings::Digital).unwrap(),
+            InputSettings::Digital
+                .positive_matrix(scan.camera_to_ap1(), None)
+                .unwrap(),
             Some(
                 SourceGeometry::new(
                     [area.x, area.y, area.width, area.height],

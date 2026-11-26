@@ -1,7 +1,8 @@
 //! Original, uncorrected camera-code windows. This path never requests crop predictions.
 use super::*;
 use crate::{
-    project::SourceDevelopment, raw::RawFile, rendering::OutputTarget, scan::Scan, source::FileKey,
+    project::SourceDevelopment, raw::RawFile, rendering::OutputTarget, scan::DevelopedSource,
+    source::FileKey,
 };
 use image::{Rgb, RgbImage};
 
@@ -31,15 +32,15 @@ impl Original {
     }
 }
 
-fn verify_development(expected: &SourceDevelopment, scan: &Scan) -> Result<()> {
+fn verify_development(expected: &SourceDevelopment, scan: &DevelopedSource) -> Result<()> {
     let (width, height) = scan.dimensions()?;
-    let area = scan.area;
+    let area = scan.area();
     let actual = SourceDevelopment {
-        decode: scan.source().metadata().development(scan.white_balance),
+        decode: scan.metadata().development(scan.white_balance()),
         dimensions: [width, height],
         active_area: [area.x, area.y, area.width, area.height],
-        camera_model: scan.camera_model.clone(),
-        camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
+        camera_model: scan.camera_model().to_owned(),
+        camera_to_ap1: scan.camera_to_ap1().to_cols_array_2d(),
     };
     if !expected.same_processing(&actual) {
         return Err("original development differs from the recorded source".into());
@@ -47,8 +48,8 @@ fn verify_development(expected: &SourceDevelopment, scan: &Scan) -> Result<()> {
     Ok(())
 }
 
-fn write_window(scan: &Scan, region: SourceRegion, prefix: &Path) -> Result<()> {
-    let image = scan.source().camera_image()?;
+fn write_window(scan: &DevelopedSource, region: SourceRegion, prefix: &Path) -> Result<()> {
+    let image = scan.camera_image()?;
     let mut bytes = Vec::with_capacity(region.width as usize * region.height as usize * 6);
     let mut display = RgbImage::new(region.width * 4, region.height * 4);
     for y in 0..region.height {
@@ -115,11 +116,11 @@ fn capture(
             let raw =
                 RawFile::open_with_wb(&original.revision.path, wb).map_err(|e| e.to_string())?;
             crate::cache_observation::source_bound(&raw.metadata)?;
-            Scan::from_raw(raw, wb).map_err(|e| e.to_string())
+            DevelopedSource::from_raw(raw, wb).map_err(|e| e.to_string())
         })?;
         checkpoint()?;
         verify_development(&case.project.source(case.spec.source)?.development, &scan)?;
-        let wb = scan.white_balance;
+        let wb = scan.white_balance();
         let mut windows = vec![];
         for (index, &window) in case.spec.windows.iter().enumerate() {
             let region: SourceRegion = window.into();

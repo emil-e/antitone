@@ -156,7 +156,7 @@ fn replacing_a_working_request_does_not_wait_for_the_retired_corrections_prepara
 fn gamma_edits_reuse_budgeted_source_values_and_pressure_preserves_completed_frames() {
     use crate::{acquisition::camera::camera_source, evaluation::ImageLayout};
     let (editor, input, frame_spec, scheduler) = fixture();
-    let scan = input.scan().unwrap();
+    let scan = input.source.clone();
     let calibration = (crate::processing::Calibration {
         dmin: glam::DVec3::splat(0.8),
         dmax: glam::DVec3::splat(0.2),
@@ -168,7 +168,7 @@ fn gamma_edits_reuse_budgeted_source_values_and_pressure_preserves_completed_fra
         if let crate::processing::InputSettings::Negative { gamma, .. } = &mut settings {
             *gamma = value;
         }
-        SourceRequest::new(frame_spec.frame(), settings, scan.camera_to_ap1, None).unwrap()
+        SourceRequest::new(frame_spec.frame(), settings, scan.camera_to_ap1(), None).unwrap()
     };
     let services = editor.source_services.as_ref().unwrap().clone();
     services.evaluation.set_retention_limit(8 << 20);
@@ -272,7 +272,7 @@ fn inspection_and_positive_views_share_budgeted_inputs_but_not_view_results() {
     use crate::{acquisition::camera::camera_source, evaluation::ImageLayout};
     let (editor, pixels, inspection, scheduler) = fixture();
     let positive = positive_spec(inspection.frame(), &pixels, 0.25);
-    let source = camera_source(&pixels.scan().unwrap()).unwrap();
+    let source = camera_source(&pixels.source).unwrap();
     let services = editor.source_services.as_ref().unwrap().clone();
     services.evaluation.set_retention_limit(8 << 20);
     let renderer = services.render_fixture().unwrap();

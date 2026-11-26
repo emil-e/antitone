@@ -13,7 +13,7 @@ use antitone::{
     photographic::stages::grading::Grading,
     processing::{InputSettings, RollSettings},
     rendering::OutputTarget,
-    scan::{ImageSource, Scan},
+    scan::{DevelopedSource, ImageSource},
 };
 use std::{path::Path, sync::Arc};
 
@@ -37,7 +37,8 @@ impl Format {
 pub type Calculation = dyn Fn(Value) -> Result<Value, Error> + Send + Sync;
 
 pub struct Request<'a> {
-    pub scan: &'a Scan,
+    pub source: &'a Arc<DevelopedSource>,
+    pub reference_ev: Option<f64>,
     pub field: Option<Arc<GpuFlatField>>,
     pub input: InputSettings,
     pub roll: RollSettings,
@@ -54,17 +55,17 @@ impl Request<'_> {
         renderer: &crate::render_fixture::RenderFixture,
         device: &wgpu::Device,
     ) -> Result<antitone::gpu_export::Request, Error> {
-        if self.scan.area != self.composition.area()
-            || self.scan.flat_field() != self.field.as_ref().map(|field| field.field())
-        {
+        if self.source.area() != self.composition.area() {
             return Err(Error::Gpu("authored source/geometry mismatch".into()));
         }
+        let program =
+            ImageSource::new(self.source, self.input, self.reference_ev, None)?.gpu_program()?;
         let photograph = original_image(
             &device.limits(),
-            camera_source(self.scan)?,
+            camera_source(self.source)?,
             self.field,
-            ImageSource::new(self.scan, self.input)?.gpu_program()?,
-            Grading::new(&device.limits(), self.roll, self.grade, self.scan.area)?,
+            program,
+            Grading::new(&device.limits(), self.roll, self.grade, self.source.area())?,
             self.repairs,
         )?;
         let photograph = match self.calculation {

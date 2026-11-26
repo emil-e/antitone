@@ -18,8 +18,8 @@ fn acquisition_execution_resources() {
             ..Default::default()
         }
         .write();
-        let scan = Scan::open(file.path(), None).map_err(|e| e.to_string())?;
-        let area = scan.area;
+        let scan = DevelopedSource::open(file.path(), None).map_err(|e| e.to_string())?;
+        let area = scan.area();
         let composition = Composition::new(area, Default::default(), Default::default()).unwrap();
         let frame = FrameRaster::new(
             composition,
@@ -28,7 +28,7 @@ fn acquisition_execution_resources() {
             [640, 480],
         )
         .unwrap();
-        let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
+        let matrix = InputSettings::Digital.positive_matrix(scan.camera_to_ap1(), None).unwrap();
         let settings = crate::photographic::stages::grain::GrainPreset::ThirtyFiveMm.settings();
         let gate = queue.clone();
         let peak = Arc::new(AtomicU64::new(0));
@@ -170,7 +170,7 @@ fn acquisition_execution_resources() {
                 &renderer,
                 device,
                 queue,
-                (&scan, None),
+                (&scan, None, None),
                 input.clone(),
                 OutputTarget::Srgb,
                 (&AtomicU64::new(1), 1),
@@ -223,14 +223,14 @@ fn acquisition_execution_resources() {
 fn neutral_image_retention_resources() {
     crate::cache_observation::with_monitor(|monitor,device,queue|{
         let file=crate::dng_fixture::Fixture{side:1536,bits:16,ramp:true,..Default::default()}.write();
-        let scan=Scan::open(file.path(),None).map_err(|e|e.to_string())?;
-        let composition=Composition::new(scan.area,Default::default(),Default::default()).unwrap();
+        let scan=DevelopedSource::open(file.path(),None).map_err(|e|e.to_string())?;
+        let composition=Composition::new(scan.area(),Default::default(),Default::default()).unwrap();
         let frame=FrameRaster::new(composition,FramePoint([256.,256.]),FramePoint([1216.,976.]),[640,480]).unwrap();
         let policy=crate::evaluation::CachePolicy{generated_bytes:std::env::var("ANTITONE_GENERATED_CACHE_BYTES").ok().map(|v|v.parse::<u64>().unwrap()).unwrap_or(crate::evaluation::CachePolicy::default().generated_bytes)};
         let renderer=pollster::block_on(crate::render_fixture::RenderFixture::new_with_cache_policy(device,queue,policy)).unwrap();
         let kernels=pollster::block_on(ViewKernels::new(device)).unwrap();
         let cache=renderer.evaluation().test_materializations(true);
-        let spec=SourceRequest::new(frame,InputSettings::Digital,scan.positive_matrix(&InputSettings::Digital).unwrap(),None).unwrap().with_identity(crate::acquisition::camera::identity::Identity::camera(scan.source().identity()));
+        let spec=SourceRequest::new(frame,InputSettings::Digital,InputSettings::Digital.positive_matrix(scan.camera_to_ap1(), None).unwrap(),None).unwrap().with_identity(crate::acquisition::camera::identity::Identity::camera(scan.identity()));
         let gate=queue.clone();
         let peak=Arc::new(AtomicU64::new(0));let observed=peak.clone();let observed_device=device.clone();
         gate.observe_encoded_resources(Arc::new(move||{observed.fetch_max(crate::sys::allocated_resource_bytes(&observed_device).unwrap() as u64,Ordering::Relaxed);}));

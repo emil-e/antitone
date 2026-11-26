@@ -8,6 +8,8 @@ pub const FIT_RESIDUAL_TOLERANCE: f64 = 1e-9;
 const DERIVATIVE_STEP: f64 = 1e-5;
 const MIN_JACOBIAN_DETERMINANT: f64 = 1e-9;
 
+#[cfg(feature = "raw")]
+pub mod camera;
 #[cfg(test)]
 mod model_tests;
 

@@ -2,7 +2,7 @@
 use antitone::{
     geometry::SourceRaster,
     raw::{DevelopmentPriority, RawFile, Rect},
-    scan::Scan,
+    scan::DevelopedSource,
 };
 use glam::{DMat3, DVec3};
 use std::{fs, path::PathBuf};
@@ -116,10 +116,10 @@ fn authored_dng_automatic_wb_uses_nonunity_as_shot_gains_without_rewriting_metad
     assert_eq!(raw.metadata.as_shot_wb(), as_shot);
     raw.develop_camera(as_shot).unwrap();
     assert_eq!(raw.metadata.cam_mul, [2., 1., 1., 0.]);
-    let automatic = Scan::open(&path, None).unwrap();
-    let explicit = Scan::open(&path, Some(as_shot)).unwrap();
-    let unity = Scan::open(&path, Some(WB)).unwrap();
-    assert_eq!(automatic.white_balance, as_shot);
+    let automatic = DevelopedSource::open(&path, None).unwrap();
+    let explicit = DevelopedSource::open(&path, Some(as_shot)).unwrap();
+    let unity = DevelopedSource::open(&path, Some(WB)).unwrap();
+    assert_eq!(automatic.white_balance(), as_shot);
     let automatic_pixels = automatic.preview_source(1024).unwrap();
     assert_eq!(automatic_pixels, explicit.preview_source(1024).unwrap());
     assert_ne!(automatic_pixels, unity.preview_source(1024).unwrap());
@@ -136,9 +136,9 @@ fn authored_dng_explicit_wb_overrides_as_shot_with_the_backend_sample_scale() {
     } else {
         ([2., 1., 1.5, 0.75], 2.)
     };
-    let automatic = Scan::open(&path, None).unwrap();
-    let custom_scan = Scan::open(&path, Some(custom)).unwrap();
-    assert_eq!(custom_scan.white_balance, custom);
+    let automatic = DevelopedSource::open(&path, None).unwrap();
+    let custom_scan = DevelopedSource::open(&path, Some(custom)).unwrap();
+    assert_eq!(custom_scan.white_balance(), custom);
     let direct = raw.develop_camera(custom).unwrap();
     for [x, y] in [[32, 32], [224, 32], [32, 96], [96, 96]] {
         assert_eq!(
@@ -179,15 +179,15 @@ fn authored_dng_invalid_explicit_wb_rejects_without_replacing_the_last_developed
             );
         }
     }
-    assert!(Scan::open(&path, Some([1., 1., 1., 0.])).is_err());
+    assert!(DevelopedSource::open(&path, Some([1., 1., 1., 0.])).is_err());
 }
 
 #[test]
 fn authored_dng_scan_keeps_crop_proxy_centres_and_original_reference_values() {
-    let mut scan = Scan::open(&fixture(), Some(WB)).unwrap();
+    let scan = DevelopedSource::open(&fixture(), Some(WB)).unwrap();
     assert_eq!(scan.dimensions().unwrap(), (256, 192));
     assert_eq!(
-        scan.area,
+        scan.area(),
         Rect {
             x: 8,
             y: 8,
@@ -198,7 +198,7 @@ fn authored_dng_scan_keeps_crop_proxy_centres_and_original_reference_values() {
     let (w, h, codes) = scan.preview_source(60).unwrap();
     assert_eq!((w, h), (60, 44));
     assert_eq!(scan.preview_source(60).unwrap(), (w, h, codes.clone()));
-    let raster = SourceRaster::new(scan.area, [w, h]).unwrap();
+    let raster = SourceRaster::new(scan.area(), [w, h]).unwrap();
     for y in 0..h {
         for x in 0..w {
             let [sx, sy] = raster.source_pixel([x, y]).unwrap();
@@ -217,43 +217,59 @@ fn authored_dng_scan_keeps_crop_proxy_centres_and_original_reference_values() {
         width: 32,
         height: 32,
     };
-    let mean = scan.reference(patch).unwrap();
+    let mean = antitone::sampling::camera::reference(&scan, None, patch).unwrap();
     assert!((mean - DVec3::splat(3000. / 4031.)).abs().max_element() <= 2. / 65535.);
-    assert_eq!(scan.reference(patch).unwrap(), mean);
+    assert_eq!(
+        antitone::sampling::camera::reference(&scan, None, patch).unwrap(),
+        mean
+    );
     assert!(
-        scan.reference(Rect {
-            x: 256,
-            y: 0,
-            width: 32,
-            height: 32
-        })
+        antitone::sampling::camera::reference(
+            &scan,
+            None,
+            Rect {
+                x: 256,
+                y: 0,
+                width: 32,
+                height: 32
+            }
+        )
         .is_err()
     );
-    assert_eq!(scan.reference(patch).unwrap(), mean);
+    assert_eq!(
+        antitone::sampling::camera::reference(&scan, None, patch).unwrap(),
+        mean
+    );
     assert_eq!(scan.preview_source(60).unwrap(), (w, h, codes));
 }
 
 #[test]
 fn authored_raw_keeps_the_measured_anchors_and_libraw_matrix_agreement() {
     use antitone::processing::{Calibration, Inversion, NegativeInput, Response};
-    let mut scan = Scan::open(&fixture(), None).unwrap();
+    let scan = DevelopedSource::open(&fixture(), None).unwrap();
     let calibration = Calibration {
-        dmin: scan
-            .reference(Rect {
+        dmin: antitone::sampling::camera::reference(
+            &scan,
+            None,
+            Rect {
                 x: 16,
                 y: 16,
                 width: 32,
                 height: 32,
-            })
-            .unwrap(),
-        dmax: scan
-            .reference(Rect {
+            },
+        )
+        .unwrap(),
+        dmax: antitone::sampling::camera::reference(
+            &scan,
+            None,
+            Rect {
                 x: 80,
                 y: 16,
                 width: 32,
                 height: 32,
-            })
-            .unwrap(),
+            },
+        )
+        .unwrap(),
     }
     .validate()
     .unwrap();
@@ -334,13 +350,16 @@ fn authored_measurements_accept_sensor_white_but_reject_unusable_black_without_m
         }
         let path = directory.path().join(format!("{code}.dng"));
         fs::write(&path, &bytes).unwrap();
-        let mut scan = Scan::open(&path, None).unwrap();
+        let scan = DevelopedSource::open(&path, None).unwrap();
         let before = scan.preview_source(60).unwrap();
         let inner = Rect::from([24, 24, 16, 16]);
-        let measured = scan.reference(inner);
+        let measured = antitone::sampling::camera::reference(&scan, None, inner);
         if code == 4095 {
             assert!((measured.unwrap() - DVec3::ONE).abs().max_element() <= 2. / 65535.);
-            let samples = scan.analysis_samples(inner, 1, || false).unwrap().unwrap();
+            let samples =
+                antitone::roll_analysis::scalar::samples(&scan, None, inner, 1, |_| true, || false)
+                    .unwrap()
+                    .unwrap();
             assert_eq!(samples.attempted, 1);
             assert_eq!(samples.pixels.len(), 1);
             assert!((samples.pixels[0] - DVec3::ONE).abs().max_element() <= 2. / 65535.);
@@ -359,39 +378,45 @@ fn authored_export_image() -> (antitone::export::ImageSize, Vec<DVec3>) {
         export::ImageSize,
         processing::{Calibration, InputSettings, Pipeline},
     };
-    let mut scan = Scan::open(&fixture(), Some(WB)).unwrap();
+    let scan = DevelopedSource::open(&fixture(), Some(WB)).unwrap();
     let calibration = Calibration {
-        dmin: scan
-            .reference(Rect {
+        dmin: antitone::sampling::camera::reference(
+            &scan,
+            None,
+            Rect {
                 x: 16,
                 y: 16,
                 width: 32,
                 height: 32,
-            })
-            .unwrap(),
-        dmax: scan
-            .reference(Rect {
+            },
+        )
+        .unwrap(),
+        dmax: antitone::sampling::camera::reference(
+            &scan,
+            None,
+            Rect {
                 x: 80,
                 y: 16,
                 width: 32,
                 height: 32,
-            })
-            .unwrap(),
+            },
+        )
+        .unwrap(),
     };
     let roll = antitone::processing::RollSettings::default();
     let input = InputSettings::negative(calibration);
-    let pipeline = Pipeline::new(input, roll, scan.camera_to_ap1).unwrap();
+    let pipeline = Pipeline::new(input, roll, scan.camera_to_ap1()).unwrap();
     let mut working = Vec::new();
-    for y in scan.area.y..scan.area.y + scan.area.height {
-        for x in scan.area.x..scan.area.x + scan.area.width {
+    for y in scan.area().y..scan.area().y + scan.area().height {
+        for x in scan.area().x..scan.area().x + scan.area().width {
             working.push(pipeline.apply(scan.pixel(x, y).unwrap()).unwrap().rgb);
         }
     }
     assert!(working.iter().any(|v| v.max_element() > 1.));
     assert!(working.iter().any(|v| v.min_element() < 0.));
     let size = ImageSize {
-        width: scan.area.width,
-        height: scan.area.height,
+        width: scan.area().width,
+        height: scan.area().height,
     };
     (size, working)
 }

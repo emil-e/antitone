@@ -9,7 +9,7 @@ use crate::evaluation::Tiling;
 use crate::evaluation::Value;
 use crate::photographic::graph::camera_light;
 use crate::photographic::stages::flat_field::GpuFlatField;
-use crate::scan::Scan;
+use crate::scan::DevelopedSource;
 use glam::DVec3;
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ mod tests;
 pub(in crate::editor) struct Samples<'a> {
     context: &'a evaluation::Context,
     queue: &'a crate::gpu::submission::Queue,
-    scan: &'a Scan,
+    developed: &'a DevelopedSource,
     pub(in crate::editor) source: Value,
     field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
@@ -30,7 +30,7 @@ pub(in crate::editor) struct Samples<'a> {
 impl<'a> Samples<'a> {
     pub(in crate::editor) fn new(
         (context, queue): super::Gpu<'a>,
-        scan: &'a mut Scan,
+        developed: &'a Arc<DevelopedSource>,
         field: Option<Arc<GpuFlatField>>,
         coverage: Coverage,
         cancelled: &dyn Fn() -> bool,
@@ -39,14 +39,14 @@ impl<'a> Samples<'a> {
             return Err(Error::Cancelled);
         }
 
-        coverage.bounds(scan.area)?;
+        coverage.bounds(developed.area())?;
 
-        let source = crate::acquisition::camera::camera_source(scan)?;
+        let source = crate::acquisition::camera::camera_source(developed)?;
 
         Ok(Self {
             context,
             queue,
-            scan,
+            developed,
             source,
             field,
             coverage,
@@ -62,7 +62,7 @@ impl<'a> Samples<'a> {
         let evaluation = self.context.request(
             image,
             Region {
-                bounds: self.coverage.bounds(self.scan.area)?.try_into()?,
+                bounds: self.coverage.bounds(self.developed.area())?.try_into()?,
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
             },
             Tiling { tile: [512, 128] },
@@ -97,7 +97,7 @@ impl<'a> Samples<'a> {
         &self,
         recipe: &crate::image_recipe::ImageRecipe,
     ) -> Result<Value, Error> {
-        recipe.neutral.require_scan(self.scan)?;
+        recipe.neutral.require_source(self.developed)?;
         crate::photographic::graph::composition::measured_roll(
             self.source.clone(),
             self.field.clone(),
@@ -110,7 +110,7 @@ impl<'a> Samples<'a> {
         limits: &wgpu::Limits,
         recipe: &crate::image_recipe::ImageRecipe,
     ) -> Result<Value, Error> {
-        recipe.neutral.require_scan(self.scan)?;
+        recipe.neutral.require_source(self.developed)?;
         crate::photographic::graph::composition::measured_grade(
             limits,
             self.source.clone(),

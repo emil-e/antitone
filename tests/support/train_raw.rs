@@ -1,40 +1,46 @@
-use super::api::{processing::Calibration, raw::Rect, scan::Scan};
-use std::path::PathBuf;
+use super::api::{processing::Calibration, raw::Rect, scan::DevelopedSource};
+use std::{path::PathBuf, sync::Arc};
 
-pub fn load() -> (Scan, Calibration) {
+pub fn load() -> (Arc<DevelopedSource>, Calibration) {
     let root = std::env::var_os("ANTITONE_RAW_SAMPLES")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("samples"));
     // Calibration and scan samples use the Negative stage's unity-WB development basis.
-    let mut dmax = Scan::open(&root.join("DSC04378.ARW"), Some([1.; 4])).unwrap();
-    let wb = dmax.white_balance;
-    let matrix = dmax.camera_to_ap1;
-    let model = dmax.camera_model.clone();
-    let white = dmax
-        .reference(Rect {
+    let dmax = DevelopedSource::open(&root.join("DSC04378.ARW"), Some([1.; 4])).unwrap();
+    let wb = dmax.white_balance();
+    let matrix = dmax.camera_to_ap1();
+    let model = dmax.camera_model().to_owned();
+    let white = super::api::sampling::camera::reference(
+        &dmax,
+        None,
+        Rect {
             x: 4000,
             y: 2600,
             width: 128,
             height: 128,
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     drop(dmax);
-    let mut dmin = Scan::open(&root.join("DSC04397.ARW"), Some(wb)).unwrap();
-    assert_eq!(dmin.camera_to_ap1, matrix);
-    assert_eq!(dmin.camera_model, model);
-    let base = dmin
-        .reference(Rect {
+    let dmin = DevelopedSource::open(&root.join("DSC04397.ARW"), Some(wb)).unwrap();
+    assert_eq!(dmin.camera_to_ap1(), matrix);
+    assert_eq!(dmin.camera_model(), model);
+    let base = super::api::sampling::camera::reference(
+        &dmin,
+        None,
+        Rect {
             x: 4000,
             y: 5644,
             width: 128,
             height: 32,
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     drop(dmin);
-    let train = Scan::open(&root.join("DSC04524.ARW"), Some(wb)).unwrap();
-    assert_eq!(train.camera_to_ap1, matrix);
-    assert_eq!(train.camera_model, model);
-    assert_eq!(train.white_balance, wb);
+    let train = DevelopedSource::open(&root.join("DSC04524.ARW"), Some(wb)).unwrap();
+    assert_eq!(train.camera_to_ap1(), matrix);
+    assert_eq!(train.camera_model(), model);
+    assert_eq!(train.white_balance(), wb);
     let calibration = Calibration {
         dmin: base,
         dmax: white,

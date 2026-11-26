@@ -292,22 +292,21 @@ fn acquisition_validates_physical_inputs_without_editor_and_keeps_the_parent_cac
     let accepted = document.project.clone();
     let source = document.project.order[0];
     let path = document.source_path(source).unwrap();
-    let scan = crate::scan::Scan::open(&path, document.project.acquisition_wb()).unwrap();
+    let scan =
+        crate::scan::DevelopedSource::open(&path, document.project.acquisition_wb()).unwrap();
     let key = crate::source::SourceKey::capture(
         &path,
         &document.project.source(source).unwrap().development,
     )
     .unwrap();
-    parent
-        .publish_source(key.clone(), scan.source().clone())
-        .unwrap();
+    parent.publish_source(key.clone(), scan.clone()).unwrap();
     let loader = crate::source::SourceLoader::new();
     let provider = loader.provider(Some(parent.clone()));
     let input = document.source_input(source, &Default::default()).unwrap();
     let acquired =
         pollster::block_on(input.source(provider.as_ref(), crate::source::Priority::Foreground))
             .unwrap();
-    assert!(Arc::ptr_eq(&acquired.prepared.source, scan.source()));
+    assert!(Arc::ptr_eq(&acquired.prepared.source, &scan));
     let mut candidate = document.clone();
     candidate.project.source_mut(source).unwrap().path = "missing-source.dng".into();
     let input = candidate.source_input(source, &Default::default()).unwrap();
@@ -316,6 +315,6 @@ fn acquisition_validates_physical_inputs_without_editor_and_keeps_the_parent_cac
             .is_err()
     );
     assert_eq!(document.project, accepted);
-    assert!(Arc::ptr_eq(&parent.get(&key).unwrap(), scan.source()));
+    assert!(Arc::ptr_eq(&parent.get(&key).unwrap(), &scan));
     loader.close_and_wait().unwrap();
 }

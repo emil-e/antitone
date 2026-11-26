@@ -8,7 +8,7 @@ use crate::{
     geometry::SourceRegion,
     photographic::stages::flat_field::GpuFlatField,
     processing::NegativeInput,
-    scan::Scan,
+    scan::DevelopedSource,
 };
 use glam::{DMat3, DVec2, DVec3};
 use std::{collections::BTreeMap, sync::Arc};
@@ -106,7 +106,7 @@ type Sample = ([f32; 4], f64);
 
 fn camera_samples(
     gpu: super::super::measurement::Gpu<'_>,
-    scan: &Scan,
+    developed: &DevelopedSource,
     field: Option<Arc<GpuFlatField>>,
     coverage: Coverage,
     cancelled: &dyn Fn() -> bool,
@@ -114,12 +114,12 @@ fn camera_samples(
     if cancelled() {
         return Err(Error::Cancelled);
     }
-    let selected = plan(coverage, scan.area)?;
+    let selected = plan(coverage, developed.area())?;
     if selected.is_empty() {
         return Err(Error::UnusableSample("invalid gamma pivot coverage"));
     }
     let positions: Vec<_> = selected.iter().map(|(point, _)| *point).collect();
-    let source = scan.source().camera_image()?;
+    let source = developed.camera_image()?;
     let codes = positions
         .iter()
         .map(|point| source.pixel_samples(point[0], point[1]))
@@ -183,20 +183,20 @@ impl Evidence {
 
     pub(super) fn capture_midtones(
         gpu: super::super::measurement::Gpu<'_>,
-        scan: &Scan,
+        developed: &DevelopedSource,
         field: Option<Arc<GpuFlatField>>,
         coverage: Coverage,
         negative: NegativeInput,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, Error> {
-        let samples = camera_samples(gpu, scan, field, coverage, cancelled)?;
+        let samples = camera_samples(gpu, developed, field, coverage, cancelled)?;
         let pixels = samples.iter().map(|(pixel, _)| *pixel).collect();
         let camera = evaluation::source(Arc::new(Pixels { pixels }));
         let positives = positive_samples(gpu, camera, negative, cancelled)?;
         Ok(Self::from_samples(midtones(
             samples,
             positives,
-            scan.camera_to_ap1,
+            developed.camera_to_ap1(),
         )?))
     }
 

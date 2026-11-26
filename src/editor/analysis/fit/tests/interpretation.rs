@@ -236,12 +236,12 @@ fn fitting_uses_each_acquired_camera_mapping_across_development_modes_and_correc
                 acquired.record.development.decode.white_balance,
                 crate::project::UNITY_WB
             );
-            let scan = acquired.prepared.scan();
+            let scan = acquired.prepared.source;
             assert_eq!(
-                scan.camera_to_ap1,
+                scan.camera_to_ap1(),
                 glam::DMat3::from_cols_array_2d(&acquired.record.development.camera_to_ap1),
             );
-            acquired_matrices.push(scan.camera_to_ap1);
+            acquired_matrices.push(scan.camera_to_ap1());
             let input = Arc::new(
                 crate::scan::AnalysisInput::capture(&scan, || false)
                     .unwrap()

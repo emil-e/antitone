@@ -384,24 +384,32 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             });
             assert!(app.read(|e| e.document.visit.canvas.ready.is_some()));
             let selected = app.read(|e| e.document.visit.current_source);
-            let mut scan = Scan::open(&root.join("illuminated-patches.dng"), None).unwrap();
+            let scan = DevelopedSource::open(&root.join("illuminated-patches.dng"), None).unwrap();
             let (rgb, original, selected_layer) = app.update(|e| {
                 e.set_dmin(Some(
-                    scan.reference(Rect {
-                        x: 16,
-                        y: 16,
-                        width: 32,
-                        height: 32,
-                    })
+                    crate::sampling::camera::reference(
+                        &scan,
+                        None,
+                        Rect {
+                            x: 16,
+                            y: 16,
+                            width: 32,
+                            height: 32,
+                        },
+                    )
                     .unwrap(),
                 ));
                 e.set_dmax(Some(
-                    scan.reference(Rect {
-                        x: 80,
-                        y: 16,
-                        width: 32,
-                        height: 32,
-                    })
+                    crate::sampling::camera::reference(
+                        &scan,
+                        None,
+                        Rect {
+                            x: 80,
+                            y: 16,
+                            width: 32,
+                            height: 32,
+                        },
+                    )
                     .unwrap(),
                 ));
                 let mut layers =

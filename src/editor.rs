@@ -23,7 +23,8 @@ use crate::processing::RollSettings;
 use crate::raw::Rect;
 use crate::refinement::ViewRequest;
 use crate::rendering::OutputTarget;
-use crate::scan::Scan;
+#[cfg(test)]
+use crate::scan::DevelopedSource;
 use crate::viewer::GpuImage;
 use crate::viewer::{ImagePaint, Presentation};
 use crate::viewport::PickDrag;
@@ -163,7 +164,7 @@ fn prepare_source(
     wb: Option<[f64; 4]>,
     expected: Option<&Source>,
     correction: Option<&Arc<Correction>>,
-) -> Result<(Ready, Scan), Error> {
+) -> Result<(Ready, Arc<DevelopedSource>), Error> {
     prepare_source_cached(
         renderers, device, queue, path, wb, expected, correction, None,
     )
@@ -180,7 +181,7 @@ fn prepare_source_cached(
     expected: Option<&Source>,
     correction: Option<&Arc<Correction>>,
     cache: Option<(&Arc<crate::source::SourceCache>, thumbnails::FileKey)>,
-) -> Result<(Ready, Scan), Error> {
+) -> Result<(Ready, Arc<DevelopedSource>), Error> {
     prepare_source_scheduled(
         renderers,
         device,
@@ -208,7 +209,7 @@ fn prepare_source_scheduled(
     cache: Option<(&Arc<crate::source::SourceCache>, thumbnails::FileKey)>,
     developments: &source_loading::SourceLoader,
     cancelled: &dyn Fn() -> bool,
-) -> Result<(Ready, Scan), Error> {
+) -> Result<(Ready, Arc<DevelopedSource>), Error> {
     let file = cache
         .as_ref()
         .map_or_else(|| thumbnails::FileKey::new(&path), |(_, file)| file.clone());
@@ -239,7 +240,6 @@ fn prepare_source_scheduled(
         sources: Some(developments.provider(cache.map(|(cache, _)| cache.clone()))),
     }
     .load(developments, cancelled)?;
-    let scan = developed.context.scan()?;
     renderers.evaluation().require_device(device)?;
     let ready = developed.prepare_gpu(
         renderers.evaluation().clone(),
@@ -247,7 +247,8 @@ fn prepare_source_scheduled(
         &renderers.warmup(queue),
         cancelled,
     )?;
-    Ok((ready, scan))
+    let source = ready.developed.clone();
+    Ok((ready, source))
 }
 
 pub struct Editor {

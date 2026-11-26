@@ -10,9 +10,9 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
     let mut tags = profile_tags(order);
     tags.push((0x7032, 8, order.signed(&[2, 16384, 16384])));
     let file = source(order, tags, false, false);
-    let mut scan = Scan::open(file.path(), Some([1.; 4])).unwrap();
-    assert!(scan.source().camera_image().unwrap().is_continuous());
-    let a = scan.area;
+    let scan = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
+    assert!(scan.camera_image().unwrap().is_continuous());
+    let a = scan.area();
     let codes = scan.tile_region(a, 0, 0, a.width, a.height).unwrap();
     assert!(
         codes.iter().any(|p| p[..3].iter().any(|&v| v > 65535.)),
@@ -35,9 +35,9 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
         )
         .unwrap(),
     );
-    scan.set_flat_field(Some(field.clone()));
+    let scan_field = Some(field.clone());
     let (device, queue, renderer) = super::super::super::tests::context();
-    let gpu_field = Arc::new(GpuFlatField::new(&device, field).unwrap());
+    let gpu_field = Arc::new(GpuFlatField::new(&device, field.clone()).unwrap());
     let (mut project, id) = fixture(&scan);
     // The shaded source exceeds nominal white; keep the response off the black plateau.
     project.set_dmin(Some([4.; 3]));
@@ -51,13 +51,37 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
         angle: 0.13,
     });
     let mut recipe = project.image_recipe(id).unwrap();
-    recipe.neutral.correction = scan.flat_field().cloned();
+    recipe.neutral.correction = Some(field);
     let input = recipe.neutral.input;
-    let scalar =
-        AdjustmentLayerPipeline::new(input, recipe.roll, recipe.grade.clone(), scan.camera_to_ap1)
-            .unwrap();
+    let scalar = AdjustmentLayerPipeline::new(
+        input,
+        recipe.roll,
+        recipe.grade.clone(),
+        scan.camera_to_ap1(),
+    )
+    .unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("captured.tif");
+    let error = write(
+        renderer.evaluation(),
+        &queue,
+        Job {
+            source: &scan,
+            field: None,
+            recipe: &recipe,
+            render: fixture_render(Format::Tiff(OutputTarget::Srgb), &renderer),
+        },
+        (&path, Overwrite::Refuse),
+        &mut Execution::default(),
+        || Ok(()),
+    )
+    .unwrap_err();
+    assert!(matches!(error, Error::Gpu(message) if message.contains("flat-field")));
+    assert!(
+        !path.exists(),
+        "a missing correction must not publish an export"
+    );
+
     let read = |path: &Path| {
         let mut decoder = Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
         let DecodingResult::U16(pixels) = decoder.read_image().unwrap() else {
@@ -71,7 +95,7 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
                 renderer.evaluation(),
                 &queue,
                 Job {
-                    scan: &scan,
+                    source: &scan,
                     field: Some(gpu_field.clone()),
                     recipe: &recipe,
                     render: fixture_render(Format::Tiff(target), &renderer),
@@ -96,7 +120,11 @@ fn common_worker_preserves_fractional_above_white_sony_sources_with_residual_cor
                 target,
                 Overwrite::Refuse,
                 |x, y| {
-                    let pixel = scan.pixel(x, y)?;
+                    let pixel = crate::flat_field::sample_camera_light(
+                        &scan,
+                        scan_field.as_deref(),
+                        [x, y],
+                    )?;
                     scalar
                         .apply(if clip { pixel.min(DVec3::ONE) } else { pixel }, [x, y])
                         .map(|p| p.rgb)

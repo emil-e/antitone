@@ -79,7 +79,7 @@ fn export_and_source_acquisition_await_the_captured_correction_without_live_ui()
             context.correction.prepared().unwrap(),
             &correction
         ));
-        assert_eq!(context.scan().unwrap().flat_field(), Some(&settings.map));
+        assert_eq!(context.correction.map(), Some(&settings.map));
     });
     for name in ["roll-0.exr", "roll-1.exr"] {
         let image =
@@ -176,7 +176,7 @@ fn undo_restores_values_while_an_independent_reader_keeps_departed_preparation()
             &prepared
         ));
         assert_eq!(
-            context.scan().unwrap().flat_field(),
+            context.correction.map(),
             before.active_flat_field().map(|settings| &settings.map)
         );
         app.read(|editor| assert_eq!(editor.document.project, before));

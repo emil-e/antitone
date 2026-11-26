@@ -13,23 +13,24 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
             ([2949, 11796, 5898], -14.),
         ] {
             let file = crate::raw::fixture::bayer_dng_with_rgb(rgb);
-            let mut scan = Scan::from_raw(
-                crate::raw::RawFile::open_uncorrected(file.path()).unwrap(),
-                Some([4., 1., 2., 1.]),
-            )
-            .unwrap();
-            if ev != 0. {
-                scan.reference_exposure =
-                    Some(crate::exposure_reference::ReferenceExposure::Matched(
-                        crate::exposure_reference::StartingExposure {
-                            ev,
-                            samples: 1024,
-                            spread: 0.,
-                        },
-                    ));
-            }
+            let scan = std::sync::Arc::new(
+                DevelopedSource::from_raw(
+                    crate::raw::RawFile::open_uncorrected(file.path()).unwrap(),
+                    Some([4., 1., 2., 1.]),
+                )
+                .unwrap(),
+            );
+            let scan_reference = (ev != 0.).then_some({
+                crate::exposure_reference::ReferenceExposure::Matched(
+                    crate::exposure_reference::StartingExposure {
+                        ev,
+                        samples: 1024,
+                        spread: 0.,
+                    },
+                )
+            });
             let gain = ev.exp2();
-            let expected = scan.camera_to_ap1
+            let expected = scan.camera_to_ap1()
                 * gain
                 * DVec3::new(
                     4. * f64::from(rgb[0]),
@@ -48,8 +49,13 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
                     ..Default::default()
                 },
                 crate::adjustment_layers::AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
-                scan.positive_matrix(&InputSettings::Digital).unwrap(),
-                scan.area,
+                InputSettings::Digital
+                    .positive_matrix(
+                        scan.camera_to_ap1(),
+                        scan_reference.as_ref().map(|reference| reference.ev()),
+                    )
+                    .unwrap(),
+                scan.area(),
             )
             .unwrap();
             let capture = crate::photographic::graph::request::PhotographRequest::Fixture(input);
@@ -57,17 +63,23 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
                 .original_neutral(
                     crate::acquisition::camera::camera_source(&scan).unwrap(),
                     None,
-                    scan.camera_to_ap1,
+                    scan.camera_to_ap1(),
                 )
                 .unwrap();
-            let proxy = crate::scan::CameraProxy::from_scan(&scan).unwrap();
+            let proxy =
+                crate::scan::CameraProxy::from_source(&scan, scan_reference.clone()).unwrap();
             let camera = crate::acquisition::camera::ProcessingSource::new_continuous(
                 &device,
                 &proxy.pixels,
                 proxy.matrix,
                 Some(
                     crate::acquisition::camera::SourceGeometry::new(
-                        [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+                        [
+                            scan.area().x,
+                            scan.area().y,
+                            scan.area().width,
+                            scan.area().height,
+                        ],
                         proxy.dimensions(),
                     )
                     .unwrap(),
@@ -82,7 +94,7 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
             )
             .unwrap()
             .with_sampling(crate::acquisition::Sampling::CameraCells {
-                region: scan.area,
+                region: scan.area(),
                 size: proxy.dimensions(),
             })
             .unwrap();

@@ -702,7 +702,7 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             .unwrap()
             .unwrap();
         assert!(Arc::ptr_eq(
-            &expected.input.source,
+            &expected.source,
             &editor
                 .document
                 .visit

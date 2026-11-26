@@ -30,7 +30,7 @@ Sony embedded shading/geometric development and DNG SDK opcodes run before measu
 
 ## Correction and measurements
 
-Amplification increases quantization error along with the signal. Measurement uses the source precision estimate and largest map gain to avoid poorly resolved evidence. Calibration remains the measured Dmin/Dmax RGB values; correction does not rewrite them or set the inversion's numerical domain. After changing correction, re-picking the anchors may be appropriate.
+Changing correction changes the camera light measured by the pickers, but does not rewrite accepted Dmin and Dmax. Re-pick the anchors if the new correction changes the light at their reference locations.
 
 ## Save the accepted result
 
@@ -42,6 +42,6 @@ Importing or removing the reference as a photo is independent of correction. Inp
 
 ## Working on this area
 
-[Scan](../src/scan.rs) gathers reference statistics. The [flat-field model](../src/flat_field.rs) owns estimation, scalar interpolation and precision; the [correction stage](../src/photographic/stages/flat_field.rs) owns the prepared gain map and its application to camera light. Correction and grading share [source-coordinate mapping](../src/acquisition/camera/coordinates.rs). [Editor correction](../src/editor/flat.rs) connects reference interaction to document acceptance; [project correction](../src/project/flat.rs) owns saved-map validation.
+[Reference measurement](../src/flat_field/reference.rs) reads uncorrected developed pixels for support and gain estimation. The [flat-field model](../src/flat_field.rs) fits and interpolates the gain map; the [correction stage](../src/photographic/stages/flat_field.rs) owns the prepared gain map and its application to camera light. Correction and grading share [source-coordinate mapping](../src/acquisition/camera/coordinates.rs). [Editor correction](../src/editor/flat.rs) connects reference interaction to document acceptance; [project correction](../src/project/flat.rs) owns saved-map validation.
 
 Start with [project tests](../tests/flat_field_project.rs), [export tests](../tests/flat_field_export.rs) and [editor tests](../src/editor/flat/tests.rs). [Diagnostics](diagnostics.md#flat-field-correction) provides sample-dependent exercises.

@@ -323,15 +323,18 @@ fn requested_source_becomes_ready_without_painting_and_preserves_authored_pixels
             assert!(!e.document.visit.source.pending());
             assert!(e.activities.view().is_none());
             assert_eq!(e.document.cache.charges().retained, 0);
-            let mut scan = crate::scan::Scan::from_source(ready.developed.clone());
-            let value = scan
-                .reference(crate::raw::Rect {
+            let scan = ready.developed.clone();
+            let value = crate::sampling::camera::reference(
+                &scan,
+                None,
+                crate::raw::Rect {
                     x: 24,
                     y: 24,
                     width: 16,
                     height: 16,
-                })
-                .unwrap();
+                },
+            )
+            .unwrap();
             assert!(
                 (value - glam::DVec3::splat(3000. / 4031.))
                     .abs()

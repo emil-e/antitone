@@ -51,25 +51,24 @@ fn render_roll(editor: &Editor, output: &Path) -> Result<Vec<Value>, Box<dyn std
     for id in &project.order {
         let record = project.source(*id)?;
         let path = editor.document.source_path(*id)?;
-        let mut scan = Scan::open(&path, wb)?;
-        document::verify_scan(record, &scan)?;
-        if let Some(field) = project.active_flat_field() {
-            scan.set_flat_field(Some(field.map.clone()));
-        }
+        let source = crate::scan::DevelopedSource::open(&path, wb)?;
+        document::verify_development(record, &source)?;
+        let correction = project.active_flat_field().map(|field| field.map.as_ref());
         let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
             project.input.with_calibration((calibration).validate()?),
             project.roll,
             record.grade_snapshot()?,
-            scan.camera_to_ap1,
+            source.camera_to_ap1(),
         )?;
-        let (w, h) = scan.preview_dimensions(384)?;
-        let grid = crate::geometry::SourceRaster::new(scan.area, [w, h])?;
+        let (w, h) = source.preview_dimensions(384)?;
+        let grid = crate::geometry::SourceRaster::new(source.area(), [w, h])?;
         let mut working = Vec::with_capacity((w * h) as usize);
         let mut luminances = Vec::new();
         for y in 0..h {
             for x in 0..w {
-                let [sx, sy] = grid.source_pixel([x, y])?;
-                let rgb = pipeline.apply(scan.pixel(sx, sy)?, [sx, sy])?.rgb;
+                let point @ [sx, sy] = grid.source_pixel([x, y])?;
+                let camera = crate::flat_field::sample_camera_light(&source, correction, point)?;
+                let rgb = pipeline.apply(camera, point)?.rgb;
                 if sx >= picture.x
                     && sx < picture.x + picture.width
                     && sy >= picture.y
@@ -87,9 +86,15 @@ fn render_roll(editor: &Editor, output: &Path) -> Result<Vec<Value>, Box<dyn std
             .ok_or("missing source filename")?
             .to_string_lossy();
         write_preview(&output.join(format!("{name}.tif")), [w, h], &encoded)?;
-        let eligibility = scan
-            .analysis_samples(picture, MAX_SAMPLES_PER_FRAME, || false)?
-            .ok_or("uncancellable sampling cancelled")?;
+        let eligibility = roll_analysis::scalar::samples(
+            &source,
+            correction,
+            picture,
+            MAX_SAMPLES_PER_FRAME,
+            |_| true,
+            || false,
+        )?
+        .ok_or("uncancellable sampling cancelled")?;
         luminances.sort_unstable_by(f64::total_cmp);
         let lower_tail: [f64; 3] = std::array::from_fn(|channel| {
             let mut values: Vec<_> = eligibility.pixels.iter().map(|p| p[channel]).collect();
@@ -107,7 +112,7 @@ fn render_roll(editor: &Editor, output: &Path) -> Result<Vec<Value>, Box<dyn std
         });
         frames.push(json!({
             "file": path.file_name().unwrap().to_string_lossy(),
-            "local_support": scan.propose_flat_field_area()?.map(array),
+            "local_support": crate::flat_field::reference::suggest_region(&source)?.map(array),
             "picture_attempted": eligibility.attempted,
             "picture_accepted": eligibility.pixels.len(),
             "preview_picture_ap1_luminance_median": luminances.get(luminances.len()/2),

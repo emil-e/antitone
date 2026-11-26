@@ -128,10 +128,10 @@ fn field(area: SourceRegion) -> Arc<crate::flat_field::FlatField> {
 fn physical_view_original_footprints_match_scalar_correction_and_signed_hdr() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
-        let mut scan = scan();
-        let area = scan.area;
+        let scan = scan();
+        let area = scan.area();
         let correction = field(area);
-        scan.set_flat_field(Some(correction.clone()));
+        let scan_field = Some(correction.clone());
         let mut anchors = calibration();
         // A narrow density span makes the fixture's dark patches HDR, without clipping.
         anchors.dmax = anchors.dmin * 0.8;
@@ -150,8 +150,8 @@ fn physical_view_original_footprints_match_scalar_correction_and_signed_hdr() {
             height: area.height * 3 / 4,
         };
         let frame = cropped(area, region, [13, 9], 0.23);
-        let spec =
-            SourceRequest::new(frame, input, scan.camera_to_ap1, Some(correction.clone())).unwrap();
+        let spec = SourceRequest::new(frame, input, scan.camera_to_ap1(), Some(correction.clone()))
+            .unwrap();
         let source = ViewImage::prefix(
             &device,
             &queue,
@@ -171,7 +171,7 @@ fn physical_view_original_footprints_match_scalar_correction_and_signed_hdr() {
                 AdjustmentLayerSettings::default(),
             )])
             .unwrap(),
-            scan.camera_to_ap1,
+            scan.camera_to_ap1(),
         )
         .unwrap();
         let actual = read(&device, &queue, &source.pixels);
@@ -180,7 +180,17 @@ fn physical_view_original_footprints_match_scalar_correction_and_signed_hdr() {
             let mut expected = DVec3::ZERO;
             let mut flags = 0;
             for (p, w) in footprint.pixels(area).unwrap() {
-                let value = scalar.apply(scan.pixel(p[0], p[1]).unwrap(), p).unwrap();
+                let value = scalar
+                    .apply(
+                        crate::flat_field::sample_camera_light(
+                            &scan,
+                            scan_field.as_deref(),
+                            [p[0], p[1]],
+                        )
+                        .unwrap(),
+                        p,
+                    )
+                    .unwrap();
                 expected += value.rgb * w;
                 flags |= 8;
             }

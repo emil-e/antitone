@@ -183,28 +183,26 @@ impl Assembly {
 #[cfg(all(feature = "raw", feature = "render", feature = "editor"))]
 pub(crate) fn original_chain(
     limits: &wgpu::Limits,
-    scan: &crate::scan::Scan,
+    developed: &Arc<crate::scan::DevelopedSource>,
+    reference_ev: Option<f64>,
     field: Option<Arc<GpuFlatField>>,
     input: &crate::photographic::test_inputs::AuthoredPhotograph,
-    stages: &Assembly,
     looks: &crate::photographic::stages::look::Looks,
     target: &crate::photographic::stages::display_rendering::Target,
 ) -> Result<Value, Error> {
-    if scan.flat_field() != field.as_ref().map(|f| f.field()) {
-        return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
-    }
     let matrix = if let Some(program) = input.source_transform() {
-        if !program.matches_native(scan)? {
+        if !program.matches_developed(developed, reference_ev)? {
             return Err(Error::Gpu(
                 "original input differs from captured camera source".into(),
             ));
         }
         program.matrix()
     } else {
-        scan.camera_to_ap1
+        developed.camera_to_ap1()
     };
-    let node = crate::acquisition::camera::camera_source(scan)?;
-    let photograph = PhotographTaps::authored(limits, node, field, input, matrix, stages)?;
+    let node = crate::acquisition::camera::camera_source(developed)?;
+    let photograph =
+        PhotographTaps::authored(limits, node, field, input, matrix, &input.definition())?;
     display_output(photograph.processed, input.luts(), looks, target)
 }
 

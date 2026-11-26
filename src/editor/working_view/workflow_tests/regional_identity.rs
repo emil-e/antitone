@@ -67,7 +67,7 @@ fn repaired_previews_keep_the_neutral_dependency_when_pans_exclude_other_repairs
             .materializations()
             .set_test_pressure(pressure);
         let pixels = editor.source_context().unwrap();
-        let scan = pixels.scan().unwrap();
+        let scan = pixels.source.clone();
         let (_, plan) = crate::photographic::graph::composition::preview(
             &device.limits(),
             &scan,

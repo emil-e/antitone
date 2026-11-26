@@ -30,8 +30,8 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
     }
     let path = fixture_directory.path().join("marked.dng");
     std::fs::write(&path, bytes).unwrap();
-    let scan = Scan::open(&path, None).unwrap();
-    let a = scan.area;
+    let scan = DevelopedSource::open(&path, None).unwrap();
+    let a = scan.area();
     let composition = Composition::with_crop(
         a,
         Default::default(),
@@ -78,7 +78,8 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
     ])
     .unwrap();
     let pipeline =
-        AdjustmentLayerPipeline::new(calibration, roll, grade.clone(), scan.camera_to_ap1).unwrap();
+        AdjustmentLayerPipeline::new(calibration, roll, grade.clone(), scan.camera_to_ap1())
+            .unwrap();
     let centre = [160, 96];
     let repair = Repair {
         id: RepairId(1),
@@ -91,7 +92,7 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
     // The scalar input is independent of GPU interpretation; healer fitting is shared.
     let evaluated = Arc::new(
         crate::repair_source::evaluate(
-            &crate::scan::ImageSource::new(&scan, calibration).unwrap(),
+            &crate::scan::ImageSource::new(&scan, calibration, None, None).unwrap(),
             &repair,
         )
         .unwrap(),
@@ -144,7 +145,8 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
         for look in [None, Some(asset.clone())] {
             let request = Request {
                 calculation: None,
-                scan: &scan,
+                source: &scan,
+                reference_ev: None,
                 field: None,
                 input: calibration.into(),
                 roll,

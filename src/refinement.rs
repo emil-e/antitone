@@ -6,7 +6,7 @@ use crate::photographic::stages::flat_field::GpuFlatField;
 use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::rendering::OutputTarget;
 #[cfg(test)]
-use crate::scan::Scan;
+use crate::scan::DevelopedSource;
 use crate::viewer::GpuImage;
 pub use regional::Demand as ViewRequest;
 use std::sync::Arc;
@@ -19,7 +19,11 @@ pub fn refine(
     renderer: &Arc<crate::render_fixture::RenderFixture>,
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
-    (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
+    (source, field, reference_ev): (
+        &Arc<DevelopedSource>,
+        Option<Arc<GpuFlatField>>,
+        Option<f64>,
+    ),
     parameters: impl Into<AuthoredPhotograph>,
     target: OutputTarget,
     (generation, expected): (&AtomicU64, u64),
@@ -29,7 +33,7 @@ pub fn refine(
         renderer,
         device,
         queue,
-        (scan, field),
+        (source, field, reference_ev),
         parameters,
         (target, view),
         || generation.load(Ordering::Relaxed) != expected,
@@ -41,7 +45,11 @@ pub(crate) fn refine_cancellable(
     renderer: &Arc<crate::render_fixture::RenderFixture>,
     device: &wgpu::Device,
     queue: &crate::gpu::submission::Queue,
-    (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
+    (source, field, reference_ev): (
+        &Arc<DevelopedSource>,
+        Option<Arc<GpuFlatField>>,
+        Option<f64>,
+    ),
     parameters: impl Into<AuthoredPhotograph>,
     (target, view): (OutputTarget, ViewRequest),
     cancelled: impl Fn() -> bool,
@@ -50,13 +58,13 @@ pub(crate) fn refine_cancellable(
     if cancelled() {
         return Ok(None);
     }
-    scan.validate_area(view.area)?;
+    source.validate_area(view.area)?;
     let root = crate::photographic::graph::authoring::original_chain(
         &device.limits(),
-        scan,
+        source,
+        reference_ev,
         field,
         &input,
-        &input.definition(),
         renderer.looks(),
         renderer.drt(target),
     )?;

@@ -8,7 +8,7 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
         let (device, queue) = gpu().await;
         let renderers = Arc::new(crate::editor::display::DisplayFixture::for_device(&device));
         let (_, reference) = prepare(&document, &document.cache, &device, &queue, &renderers);
-        let expected = reference.propose_flat_field_area().unwrap();
+        let expected = crate::flat_field::reference::suggest_region(&reference).unwrap();
         let before = codes(&reference);
         let scheduler = source_loading::SourceLoader::new();
         let services = source::Services::fixture(scheduler.clone(), &device, &queue, &renderers);
@@ -25,15 +25,12 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
             .await
             .unwrap();
         assert_eq!(ready.analysis_support, None);
-        let input = source::Context {
-            reference: None,
-            source: ready.developed,
-            correction: Default::default(),
-        };
-        let support = crate::background::run(move |_| input.scan()?.propose_flat_field_area())
-            .await
-            .unwrap()
-            .unwrap();
+        let support = crate::background::run(move |_| {
+            crate::flat_field::reference::suggest_region(&ready.developed)
+        })
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(
             support, expected,
             "service extraction must preserve the existing exact estimator result"

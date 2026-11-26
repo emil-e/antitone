@@ -17,6 +17,8 @@ mod gi;
 pub(crate) mod gpu;
 mod grayness;
 mod model;
+#[cfg(feature = "raw")]
+pub mod scalar;
 
 #[cfg(any(feature = "editor", test))]
 mod anchor_spans;
@@ -37,6 +39,15 @@ use model::SampleBatch;
 
 pub const MAX_SAMPLES_PER_FRAME: usize = 8192;
 const BALANCE_SAMPLES_PER_FRAME: usize = 2048;
+
+#[cfg(feature = "raw")]
+#[derive(Debug, Default)]
+pub struct AnalysisSamples {
+    pub pixels: Vec<DVec3>,
+    #[cfg(feature = "editor")]
+    pub(crate) positions: Vec<[u32; 2]>,
+    pub attempted: usize,
+}
 
 /// Original, eligible camera pixels with their photograph's camera mapping.
 /// Film may be empty for an individual frame; picture statistics may not.

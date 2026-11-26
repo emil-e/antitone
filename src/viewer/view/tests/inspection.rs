@@ -15,8 +15,8 @@ fn sony_corrected_source_inspection_preserves_headroom_flat_field_and_rendered_p
         let mut tags = sony::profile_tags(order);
         tags.push((0x7032, 8, order.signed(&[2, 8192, 8192])));
         let file = sony::source(order, tags, false, false);
-        let mut scan = Scan::open(file.path(), Some([1.; 4])).unwrap();
-        let codes = scan.tile_region(scan.area, 0, 0, 64, 64).unwrap();
+        let scan = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
+        let codes = scan.tile_region(scan.area(), 0, 0, 64, 64).unwrap();
         assert!(codes.iter().any(|p| p[..3].iter().any(|v| *v > 65535.)));
         let (device, queue, renderer, kernels) = context().await;
         let ctx = egui::Context::default();
@@ -38,13 +38,15 @@ fn sony_corrected_source_inspection_preserves_headroom_flat_field_and_rendered_p
                     .unwrap(),
                 )
             });
-            scan.set_flat_field(field.clone());
             let gpu_field = field
                 .as_ref()
                 .map(|f| Arc::new(GpuFlatField::new(&device, f.clone()).unwrap()));
-            let spec =
-                SourceRequest::inspection_fixture(frame(&scan), scan.camera_to_ap1, field.clone())
-                    .unwrap();
+            let spec = SourceRequest::inspection_fixture(
+                frame(&scan),
+                scan.camera_to_ap1(),
+                field.clone(),
+            )
+            .unwrap();
             let source = ViewImage::prefix(
                 &device,
                 &queue,
@@ -65,7 +67,7 @@ fn sony_corrected_source_inspection_preserves_headroom_flat_field_and_rendered_p
                         f.gain([(i % 64) as f64 + 0.5, (i / 64) as f64 + 0.5])
                             .unwrap()
                     });
-                    scan.camera_to_ap1
+                    scan.camera_to_ap1()
                         * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535. * gain)
                 })
                 .collect();
@@ -88,7 +90,7 @@ fn sony_corrected_source_inspection_preserves_headroom_flat_field_and_rendered_p
                 }
             }
         }
-        assert_eq!(scan.tile_region(scan.area, 0, 0, 64, 64).unwrap(), codes);
+        assert_eq!(scan.tile_region(scan.area(), 0, 0, 64, 64).unwrap(), codes);
     });
 }
 
@@ -97,28 +99,32 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
         let context = egui::Context::default();
-        let mut scan = scan();
+        let scan = scan();
         let frame = frame(&scan);
-        let identity =
-            crate::acquisition::camera::identity::Identity::camera(scan.source().identity());
-        let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, None)
+        let identity = crate::acquisition::camera::identity::Identity::camera(scan.identity());
+        let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1(), None)
             .unwrap()
             .with_identity(identity.clone());
-        let positive = SourceRequest::new(frame, calibration(), scan.camera_to_ap1, None)
+        let positive = SourceRequest::new(frame, calibration(), scan.camera_to_ap1(), None)
             .unwrap()
             .with_identity(identity);
         assert!(spec.same_source(&positive));
         let codes = scan
-            .tile_region(scan.area, 0, 0, scan.area.width, scan.area.height)
+            .tile_region(scan.area(), 0, 0, scan.area().width, scan.area().height)
             .unwrap();
         let mut previous: Option<Arc<RenderedView>> = None;
         let mut uncorrected = None;
         let mut worst_linear = 0f32;
         for corrected in [false, true] {
-            if corrected {
-                scan.set_flat_field(Some(Arc::new(
+            let field = corrected.then(|| {
+                Arc::new(
                     crate::flat_field::FlatField::from_nodes(
-                        [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+                        [
+                            scan.area().x,
+                            scan.area().y,
+                            scan.area().width,
+                            scan.area().height,
+                        ],
                         [2, 2],
                         vec![
                             DVec3::splat(0.8),
@@ -128,13 +134,14 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                         ],
                     )
                     .unwrap(),
-                )));
-            }
-            let field = scan.flat_field().cloned();
+                )
+            });
             let gpu_field = field
                 .as_ref()
                 .map(|f| Arc::new(GpuFlatField::new(&device, f.clone()).unwrap()));
-            let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, field).unwrap();
+            let spec =
+                SourceRequest::inspection_fixture(frame, scan.camera_to_ap1(), field.clone())
+                    .unwrap();
             let source = ViewImage::prefix(
                 &device,
                 &queue,
@@ -158,13 +165,13 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
             }
             for (i, (pixel, code)) in neutral.iter().zip(&codes).enumerate() {
                 let point = [
-                    f64::from(scan.area.x + (i as u32 % scan.area.width)) + 0.5,
-                    f64::from(scan.area.y + (i as u32 / scan.area.width)) + 0.5,
+                    f64::from(scan.area().x + (i as u32 % scan.area().width)) + 0.5,
+                    f64::from(scan.area().y + (i as u32 / scan.area().width)) + 0.5,
                 ];
-                let gain = scan
-                    .flat_field()
+                let gain = field
+                    .as_deref()
                     .map_or(DVec3::ONE, |f| f.gain(point).unwrap());
-                let expected = scan.camera_to_ap1
+                let expected = scan.camera_to_ap1()
                     * (DVec3::new(f64::from(code[0]), f64::from(code[1]), f64::from(code[2]))
                         / 65535.
                         * gain);
@@ -221,12 +228,12 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                         &renderer,
                         &device,
                         &queue,
-                        (&scan, gpu_field.clone()),
+                        (&scan, gpu_field.clone(), None),
                         input.clone(),
                         target,
                         (&generation, 9),
                         crate::refinement::ViewRequest {
-                            area: scan.area,
+                            area: scan.area(),
                             output: frame.output,
                             frame: Some(frame),
                         },
@@ -281,7 +288,7 @@ fn source_view_applies_camera_white_balance_after_acquisition_without_changing_s
         let ctx = egui::Context::default();
         let scan = scan();
         let spec =
-            SourceRequest::inspection_fixture(frame(&scan), scan.camera_to_ap1, None).unwrap();
+            SourceRequest::inspection_fixture(frame(&scan), scan.camera_to_ap1(), None).unwrap();
         let source = ViewImage::prefix(
             &device,
             &queue,
@@ -297,7 +304,7 @@ fn source_view_applies_camera_white_balance_after_acquisition_without_changing_s
         let neutral = read(&device, &queue, &source.pixels);
         let gains = DVec3::new(2., 1., 0.5);
         let transform =
-            scan.camera_to_ap1 * DMat3::from_diagonal(gains) * scan.camera_to_ap1.inverse();
+            scan.camera_to_ap1() * DMat3::from_diagonal(gains) * scan.camera_to_ap1().inverse();
         let ev = 0.37_f64;
         let input = AuthoredPhotograph::from(
             ProcessingParameters::source_preview_with_transform(Some([1.; 4]), ev, transform)
@@ -310,8 +317,8 @@ fn source_view_applies_camera_white_balance_after_acquisition_without_changing_s
             let actual = read(&device, &queue, &view.product.as_ref().unwrap().pixels);
             for (actual, neutral) in actual.iter().zip(&neutral) {
                 let working = DVec3::new(neutral[0] as f64, neutral[1] as f64, neutral[2] as f64);
-                let camera = scan.camera_to_ap1.inverse() * working;
-                let expected = scan.camera_to_ap1 * (camera * gains) * 2. * ev.exp2();
+                let camera = scan.camera_to_ap1().inverse() * working;
+                let expected = scan.camera_to_ap1() * (camera * gains) * 2. * ev.exp2();
                 for c in 0..3 {
                     assert!(
                         (f64::from(actual[c]) - expected[c]).abs()
@@ -339,7 +346,7 @@ fn physical_view_source_inspection_composite_covers_missing_regional_support() {
             [full.output[0] / 2, full.output[1]],
         )
         .unwrap();
-        let spec = SourceRequest::inspection_fixture(regional, scan.camera_to_ap1, None).unwrap();
+        let spec = SourceRequest::inspection_fixture(regional, scan.camera_to_ap1(), None).unwrap();
         let mut coarse = spec.underlay().unwrap();
         let resized_frame = FrameRaster {
             output: [31, 23],
@@ -362,7 +369,7 @@ fn physical_view_source_inspection_composite_covers_missing_regional_support() {
         let detail = sources.pop().unwrap();
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
             let input = AuthoredPhotograph::from(
-                ProcessingParameters::source_preview(Some(scan.white_balance), 0.37).unwrap(),
+                ProcessingParameters::source_preview(Some(scan.white_balance()), 0.37).unwrap(),
             );
             let a =
                 RenderedView::inspection(&device, detail.clone(), &input, target, None).unwrap();

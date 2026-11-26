@@ -30,8 +30,8 @@ use crate::{
 };
 use std::{cell::Cell, path::Path};
 
-fn scan() -> Scan {
-    Scan::open(
+fn scan() -> Arc<DevelopedSource> {
+    DevelopedSource::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
@@ -65,10 +65,15 @@ fn look() -> Arc<LookAsset> {
     )
 }
 
-fn request(scan: &Scan, output: OutputReference, encoding: SampleEncoding) -> Request<'_> {
-    let area = scan.area;
+fn request(
+    scan: &Arc<DevelopedSource>,
+    output: OutputReference,
+    encoding: SampleEncoding,
+) -> Request<'_> {
+    let area = scan.area();
     Request {
-        scan,
+        source: scan,
+        reference_ev: None,
         field: None,
         input: InputSettings::Digital,
         roll: Default::default(),
@@ -138,7 +143,7 @@ fn scene_and_display_float_results_match_scalar_and_ocio_before_reconstruction()
         OutputReference::DisplayReferred(OutputTarget::DisplayP3),
     ] {
         let request = request(&scan, reference, SampleEncoding::LinearFloat);
-        let source = ImageSource::new(&scan, request.input).unwrap();
+        let source = ImageSource::new(&scan, request.input, None, None).unwrap();
         let grading = GradingPipeline::new(request.roll, request.grade.clone()).unwrap();
         let raster = FrameRaster::full(request.composition).unwrap();
         let look = request.luts.lut.clone().unwrap();
@@ -155,7 +160,7 @@ fn scene_and_display_float_results_match_scalar_and_ocio_before_reconstruction()
                 let cells: Vec<_> = raster
                     .footprint([x, y])
                     .unwrap()
-                    .pixels(scan.area)
+                    .pixels(scan.area())
                     .unwrap()
                     .collect();
                 let working: Vec<_> = cells
@@ -356,7 +361,7 @@ fn oversized_destination_blocks_are_rejected_without_submission_and_do_not_poiso
         SampleEncoding::LinearFloat,
     );
     request.composition =
-        Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+        Composition::new(scan.area(), Default::default(), Default::default()).unwrap();
     assert!(request.composition.size()[0] > TILE[0]);
     let result = execute(
         &renderer,

@@ -53,18 +53,17 @@ fn exercise(
         let raw = crate::raw::RawFile::open(&root.join(name)).map_err(|e| e.to_string())?;
         observation::source_bound(&raw.metadata)?;
     }
-    let (mut scan, calibration) = monitor.phase("load-read-only-native-source", || {
+    let (scan, calibration) = monitor.phase("load-read-only-native-source", || {
         Ok::<_, Error>(crate::raw_test_support::train_raw::load())
     })?;
     let native = scan
-        .source()
         .retained_bytes()
         .ok_or("native accounting unavailable")?;
     println!(
         "export_resources original={}x{} native_source_bytes={native} source_leases={}",
-        scan.area.width,
-        scan.area.height,
-        Arc::strong_count(scan.source())
+        scan.area().width,
+        scan.area().height,
+        Arc::strong_count(&scan)
     );
     let renderer = monitor.phase("renderer-infrastructure", || {
         pollster::block_on(RenderFixture::new(device, queue))
@@ -103,7 +102,7 @@ fn exercise(
         _ => return Err("unknown export resource format".into()),
     };
     for (corrected, rotated) in cases {
-        let area = scan.area;
+        let area = scan.area();
         let field = corrected.then(|| {
             Arc::new(
                 crate::flat_field::FlatField::from_nodes(
@@ -119,7 +118,7 @@ fn exercise(
                 .unwrap(),
             )
         });
-        scan.set_flat_field(field.clone());
+
         let gpu_field = field
             .as_ref()
             .map(|f| GpuFlatField::new(device, f.clone()).map(Arc::new))
@@ -150,7 +149,7 @@ fn exercise(
                 adjusted,
                 roll,
                 snapshot.clone(),
-                scan.camera_to_ap1,
+                scan.camera_to_ap1(),
                 area,
             )
             .map_err(|e| e.to_string())?,
@@ -182,7 +181,7 @@ fn exercise(
         frame.output = frame
             .output
             .map(|n| (n as f64 * 3072. / max_side).ceil() as u32);
-        let spec = SourceRequest::new(frame, adjusted, scan.camera_to_ap1, field)
+        let spec = SourceRequest::new(frame, adjusted, scan.camera_to_ap1(), field)
             .map_err(|e| e.to_string())?;
         let underlay_spec = spec.underlay().map_err(|e| e.to_string())?;
         let underlay_size = underlay_spec.frame().output;
@@ -247,14 +246,15 @@ fn exercise(
                         } else {
                             12
                         },
-                    Arc::strong_count(scan.source())
+                    Arc::strong_count(&scan)
                 );
                 let label = format!("export-{backend:?}-corrected-{corrected}-{format:?}");
                 monitor.phase(&label, || {
                     let request = Request {
                         calculation: None,
                         luts: (None).into(),
-                        scan: &scan,
+                        source: &scan,
+                        reference_ev: None,
                         field: gpu_field.clone(),
                         input: calibration.into(),
                         roll,
@@ -395,7 +395,7 @@ fn exercise(
                             adjusted,
                             roll,
                             edited.clone(),
-                            scan.camera_to_ap1,
+                            scan.camera_to_ap1(),
                             area,
                         )?)
                         .into();
@@ -475,7 +475,7 @@ pub(super) fn resource_locals(
 #[cfg(feature = "ocio-reference")]
 #[test]
 fn reference_benchmark_counts_samples_and_preserves_bounded_stop_checks() {
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
@@ -484,11 +484,13 @@ fn reference_benchmark_counts_samples_and_preserves_bounded_stop_checks() {
         dmin: DVec3::splat(3000. / 4031.),
         dmax: DVec3::splat(128. / 4031.),
     };
-    let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+    let composition =
+        Composition::new(scan.area(), Default::default(), Default::default()).unwrap();
     let request = || Request {
         calculation: None,
         luts: (None).into(),
-        scan: &scan,
+        source: &scan,
+        reference_ev: None,
         field: None,
         input: calibration.into(),
         roll: RollSettings::default(),
@@ -505,7 +507,7 @@ fn reference_benchmark_counts_samples_and_preserves_bounded_stop_checks() {
     let samples = write_reference(request(), &path, || Ok(())).unwrap();
     assert_eq!(
         samples,
-        u64::from(scan.area.width) * u64::from(scan.area.height)
+        u64::from(scan.area().width) * u64::from(scan.area().height)
     );
     assert!(std::fs::metadata(&path).unwrap().len() > 0);
     std::fs::remove_file(&path).unwrap();
@@ -530,7 +532,9 @@ fn write_reference(
     mut check: impl FnMut() -> Result<(), Error>,
 ) -> Result<u64, Error> {
     let Request {
-        scan,
+        source,
+        reference_ev,
+        field,
         input,
         roll,
         grade,
@@ -540,23 +544,18 @@ fn write_reference(
         luts,
         ..
     } = request;
-    let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
-        input,
-        roll,
-        grade,
-        scan.camera_to_ap1,
-    )?;
-    let neutral = crate::processing::InputPipeline::new(input, scan.camera_to_ap1)?;
+    let matrix = input.positive_matrix(source.camera_to_ap1(), reference_ev)?;
+    let correction = field.as_ref().map(|field| field.field().as_ref());
+    let camera = |point| crate::flat_field::sample_camera_light(source, correction, point);
+    let pipeline =
+        crate::adjustment_layers::AdjustmentLayerPipeline::new(input, roll, grade, matrix)?;
+    let neutral = crate::processing::InputPipeline::new(input, matrix)?;
     let repairs = repairs
         .iter()
         .filter(|repair| repair.enabled)
         .map(|repair| {
-            crate::dust_repair::evaluate(repair, scan.area, |p| {
-                Ok(neutral
-                    .apply(scan.pixel(p[0], p[1])?)?
-                    .rgb
-                    .as_vec3()
-                    .to_array())
+            crate::dust_repair::evaluate(repair, source.area(), |p| {
+                Ok(neutral.apply(camera(p)?)?.rgb.as_vec3().to_array())
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -567,13 +566,12 @@ fn write_reference(
             check()?;
         }
         samples += 1;
-        let sample = scan.pixel(x, y)?;
+        let sample = camera([x, y])?;
         let value = if let Some(repair) = repairs
             .iter()
             .find(|repair| repair.support().contains([x, y]))
         {
-            let mut pixel =
-                crate::processing::InputPipeline::new(input, scan.camera_to_ap1)?.apply(sample)?;
+            let mut pixel = crate::processing::InputPipeline::new(input, matrix)?.apply(sample)?;
             pixel.rgb = glam::DVec3::from_array(repair.pixel([x, y], [0.; 3]).map(f64::from));
             pipeline.grade_neutral(pixel, [x, y])?.rgb
         } else {

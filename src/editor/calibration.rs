@@ -71,7 +71,7 @@ pub(super) fn reference_control(
 pub(super) async fn pick_dmin(cx: UiContext<'_, Editor>) {
     let Some((region, captured)) = picking::pick_with(&cx, DMIN, |editor| {
         Ok::<_, String>((
-            measurement::capture_input(editor)?,
+            editor.capture_source_context()?,
             measurement::capture_gpu(editor),
         ))
     })
@@ -79,7 +79,7 @@ pub(super) async fn pick_dmin(cx: UiContext<'_, Editor>) {
     else {
         return;
     };
-    let (image, gpu) = match captured {
+    let (source, gpu) = match captured {
         Ok(input) => input,
         Err(error) => {
             cx.update(|editor| editor.status = error);
@@ -88,10 +88,16 @@ pub(super) async fn pick_dmin(cx: UiContext<'_, Editor>) {
     };
     let worker_cx = cx.clone();
     let Some(value) = measurement::run(&cx, DMIN.label, async move {
-        let (mut image, field) = image.await?;
+        let context = source.await?;
+        let field = context
+            .correction
+            .gpu()
+            .map_err(|error| error.to_string())?;
         measurement::query(&worker_cx, move |cancelled| {
             let gpu = measurement::query_gpu(gpu.as_ref())?;
-            query::reference(gpu, &mut image, field, region, &|| cancelled.is_cancelled())
+            query::reference(gpu, &context.source, field, region, &|| {
+                cancelled.is_cancelled()
+            })
         })
         .await
     })
@@ -109,7 +115,7 @@ pub(super) async fn pick_dmin(cx: UiContext<'_, Editor>) {
 pub(super) async fn pick_dmax(cx: UiContext<'_, Editor>) {
     let Some((region, captured)) = picking::pick_with(&cx, DMAX, |editor| {
         Ok::<_, String>((
-            measurement::capture_input(editor)?,
+            editor.capture_source_context()?,
             measurement::capture_gpu(editor),
         ))
     })
@@ -117,7 +123,7 @@ pub(super) async fn pick_dmax(cx: UiContext<'_, Editor>) {
     else {
         return;
     };
-    let (image, gpu) = match captured {
+    let (source, gpu) = match captured {
         Ok(input) => input,
         Err(error) => {
             cx.update(|editor| editor.status = error);
@@ -126,10 +132,16 @@ pub(super) async fn pick_dmax(cx: UiContext<'_, Editor>) {
     };
     let worker_cx = cx.clone();
     let Some(value) = measurement::run(&cx, DMAX.label, async move {
-        let (mut image, field) = image.await?;
+        let context = source.await?;
+        let field = context
+            .correction
+            .gpu()
+            .map_err(|error| error.to_string())?;
         measurement::query(&worker_cx, move |cancelled| {
             let gpu = measurement::query_gpu(gpu.as_ref())?;
-            query::reference(gpu, &mut image, field, region, &|| cancelled.is_cancelled())
+            query::reference(gpu, &context.source, field, region, &|| {
+                cancelled.is_cancelled()
+            })
         })
         .await
     })
@@ -150,7 +162,7 @@ pub(super) async fn pick_gamma(cx: UiContext<'_, Editor>) {
             return Err("Measure Dmin and Dmax before balancing the roll".into());
         }
         Ok::<_, String>((
-            measurement::capture_input(editor)?,
+            editor.capture_source_context()?,
             measurement::capture_gpu(editor),
             white_balance::roll_input(editor)?,
         ))
@@ -159,7 +171,7 @@ pub(super) async fn pick_gamma(cx: UiContext<'_, Editor>) {
     else {
         return;
     };
-    let (image, gpu, input) = match captured {
+    let (source, gpu, input) = match captured {
         Ok(input) => input,
         Err(error) => {
             cx.update(|editor| editor.status = error);
@@ -168,10 +180,14 @@ pub(super) async fn pick_gamma(cx: UiContext<'_, Editor>) {
     };
     let worker_cx = cx.clone();
     let Some(fit) = measurement::run(&cx, GAMMA.label, async move {
-        let (image, field) = image.await?;
+        let context = source.await?;
+        let field = context
+            .correction
+            .gpu()
+            .map_err(|error| error.to_string())?;
         measurement::query(&worker_cx, move |cancelled| {
             let gpu = measurement::query_gpu(gpu.as_ref())?;
-            query::roll_balance(gpu, &image, field, region, input, &|| {
+            query::roll_balance(gpu, &context.source, field, region, input, &|| {
                 cancelled.is_cancelled()
             })
         })

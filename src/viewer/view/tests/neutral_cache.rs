@@ -7,7 +7,7 @@ fn neutral_definitions_and_live_values_do_not_change_with_processing_padding() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
-        let area = scan.area;
+        let area = scan.area();
         let composition = Composition::with_crop(
             area,
             Default::default(),
@@ -23,7 +23,7 @@ fn neutral_definitions_and_live_values_do_not_change_with_processing_padding() {
         )
         .unwrap();
         let frame = FrameRaster::full(composition).unwrap();
-        let spec = SourceRequest::new(frame, calibration(), scan.camera_to_ap1, None).unwrap();
+        let spec = SourceRequest::new(frame, calibration(), scan.camera_to_ap1(), None).unwrap();
         let padded = |radius| {
             spec.clone()
                 .with_definition({
@@ -104,7 +104,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
         let frame = frame(&scan);
-        let spec = SourceRequest::new(frame, calibration(), scan.camera_to_ap1, None).unwrap();
+        let spec = SourceRequest::new(frame, calibration(), scan.camera_to_ap1(), None).unwrap();
         let cache = renderer.evaluation().test_materializations(true);
         let source = ViewImage::original_prefixes(
             &device,

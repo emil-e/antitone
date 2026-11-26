@@ -73,7 +73,7 @@ fn film_mtf_with_a_failed_repair_outside_the_crop_exports_unrepaired_pixels() {
         angle: 0.,
     });
     let clean = editor.document.state.project.image_recipe(id).unwrap();
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &editor.document.source_path(id).unwrap(),
         editor.document.project.acquisition_wb(),
     )
@@ -244,7 +244,7 @@ fn cold_reopened_exports_apply_successful_heals_and_leave_failed_targets_unchang
         let id = editor.document.visit.current_source.unwrap();
         let dirty = editor.document.dirty();
         let recipe = editor.document.state.project.image_recipe(id).unwrap();
-        let scan = Scan::open(
+        let scan = DevelopedSource::open(
             &editor.document.source_path(id).unwrap(),
             editor.document.project.acquisition_wb(),
         )
@@ -253,7 +253,7 @@ fn cold_reopened_exports_apply_successful_heals_and_leave_failed_targets_unchang
             recipe.neutral.input,
             recipe.roll,
             recipe.grade.clone(),
-            scan.camera_to_ap1,
+            scan.camera_to_ap1(),
         )
         .unwrap();
         assert_eq!(recipe.repairs.len(), 1);
@@ -349,7 +349,7 @@ fn cold_reopened_exports_apply_successful_heals_and_leave_failed_targets_unchang
             angle: 0.2,
         });
         let recipe = editor.document.state.project.image_recipe(id).unwrap();
-        let scan = Scan::open(
+        let scan = DevelopedSource::open(
             &editor.document.source_path(id).unwrap(),
             editor.document.project.acquisition_wb(),
         )

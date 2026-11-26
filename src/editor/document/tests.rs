@@ -2,18 +2,18 @@ use super::*;
 use crate::project::Development;
 use crate::{adjustment_layers::AdjustmentLayerSettings, color::Balance};
 
-use crate::{project::SourceDevelopment, scan::Scan};
+use crate::{project::SourceDevelopment, scan::DevelopedSource};
 
 mod admission;
 mod dust;
 
-fn acquired_scan(document: &Document, id: SourceId) -> Scan {
+fn acquired_source(document: &Document, id: SourceId) -> Arc<crate::scan::DevelopedSource> {
     let loader = crate::source::SourceLoader::new();
     let physical = document.source_input(id, &Default::default()).unwrap();
     let scan = pollster::block_on(physical.source(&loader, crate::source::Priority::Foreground))
         .unwrap()
         .prepared
-        .scan();
+        .source;
     loader.close_and_wait().unwrap();
     scan
 }
@@ -176,7 +176,7 @@ fn stage_wb_policy_selects_unity_for_negative_and_as_shot_for_digital() {
         };
         document.import(std::slice::from_ref(&path)).unwrap();
         assert_eq!(
-            acquired_scan(&document, document.project.order[0]).white_balance,
+            acquired_source(&document, document.project.order[0]).white_balance(),
             expected
         );
     }
@@ -230,10 +230,10 @@ fn source_viewing_metadata_is_rebuilt_lazily_after_open_and_save_as() {
                 .transform(SourceWhiteBalance::AsShot),
             glam::DMat3::IDENTITY
         );
-        let scan = acquired_scan(&document, id);
+        let scan = acquired_source(&document, id);
         document.source_previews.insert(
             document.source_key(id).unwrap(),
-            scan.source().metadata().source_preview(scan.white_balance),
+            scan.metadata().source_preview(scan.white_balance()),
         );
         let actual = document.source_preview(document.project.source(id).unwrap());
         for white in [SourceWhiteBalance::Daylight, SourceWhiteBalance::AsShot] {
@@ -259,7 +259,7 @@ fn mixed_as_shot_wb_preserves_negative_and_unity_development() {
     assert!(document.project.input.is_negative());
     assert_eq!(document.project.sources.len(), 2);
     assert!(document.project.sources.iter().all(|source| {
-        acquired_scan(&document, source.id).white_balance == crate::project::UNITY_WB
+        acquired_source(&document, source.id).white_balance() == crate::project::UNITY_WB
     }));
 }
 
@@ -304,8 +304,8 @@ fn stage_redevelopment_redevelops_ordered_sources_and_reimport_registers_new_rec
     });
     let active = document.project.order[0];
     assert_eq!(
-        acquired_scan(&document, active).white_balance,
-        Scan::open(&first, None).unwrap().white_balance
+        acquired_source(&document, active).white_balance(),
+        DevelopedSource::open(&first, None).unwrap().white_balance()
     );
 
     document.import(std::slice::from_ref(&removed)).unwrap();
@@ -410,8 +410,8 @@ fn save_open_restores_accepted_development_wb_without_capture_metadata() {
         let opened = Document::open(&path).unwrap();
         assert_eq!(opened.project, saved.project);
         assert_eq!(opened.project.input, input);
-        let scan = acquired_scan(&opened, opened.project.order[0]);
-        assert_eq!(scan.white_balance, expected);
+        let scan = acquired_source(&opened, opened.project.order[0]);
+        assert_eq!(scan.white_balance(), expected);
         // Observations are accepted as metadata; source compatibility is checked on acquisition.
         let mut bad = opened;
         bad.project.sources[0].development.dimensions[0] += 1;
@@ -793,8 +793,13 @@ fn mixed_import_preserves_negative_and_unity_developments_independently_of_batch
             .copy_from_slice(b"Modified Bayer patches");
     }
     std::fs::write(&other_camera, different_camera).unwrap();
-    let expected_wb = Scan::open(&second, None).unwrap().white_balance;
-    assert_ne!(expected_wb, Scan::open(&first, None).unwrap().white_balance);
+    let expected_wb = DevelopedSource::open(&second, None)
+        .unwrap()
+        .white_balance();
+    assert_ne!(
+        expected_wb,
+        DevelopedSource::open(&first, None).unwrap().white_balance()
+    );
     assert_ne!(
         read_source(&first, None).unwrap().development.camera_model,
         read_source(&other_camera, None)
@@ -813,7 +818,7 @@ fn mixed_import_preserves_negative_and_unity_developments_independently_of_batch
         assert_eq!(document.project.order.len(), 3);
         let second_id = document.find_source(&second).unwrap();
         assert_eq!(
-            acquired_scan(&document, second_id).white_balance,
+            acquired_source(&document, second_id).white_balance(),
             crate::project::UNITY_WB
         );
     }
@@ -822,7 +827,7 @@ fn mixed_import_preserves_negative_and_unity_developments_independently_of_batch
     existing.import(std::slice::from_ref(&first)).unwrap();
     assert!(existing.project.input.is_negative());
     assert_eq!(
-        acquired_scan(&existing, existing.project.order[0]).white_balance,
+        acquired_source(&existing, existing.project.order[0]).white_balance(),
         crate::project::UNITY_WB
     );
     existing

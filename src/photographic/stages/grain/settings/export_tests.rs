@@ -9,7 +9,7 @@ use crate::{
     },
     processing::InputSettings,
     rendering::OutputTarget,
-    scan::Scan,
+    scan::DevelopedSource,
 };
 #[cfg(feature = "editor")]
 use crate::{frame_raster::FrameRaster, photographic::test_inputs::AuthoredPhotograph};
@@ -19,12 +19,13 @@ use std::{path::Path, sync::Arc};
 fn exported_files_include_seeded_film_before_tiff_look_and_keep_it_in_both_scene_linear_exr_precisions()
  {
     let (device, queue, renderer) = context();
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
     .unwrap();
-    let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+    let composition =
+        Composition::new(scan.area(), Default::default(), Default::default()).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let film = GrainPreset::ThirtyFiveMm.settings();
     let seed = (1 << 60) + 17;
@@ -39,7 +40,8 @@ fn exported_files_include_seeded_film_before_tiff_look_and_keep_it_in_both_scene
             &device,
             &queue,
             Request {
-                scan: &scan,
+                source: &scan,
+                reference_ev: None,
                 field: None,
                 input: InputSettings::Digital,
                 roll: Default::default(),
@@ -161,7 +163,7 @@ fn exported_files_include_seeded_film_before_tiff_look_and_keep_it_in_both_scene
 fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
     use std::sync::atomic::AtomicU64;
     let (device, queue, renderer) = context();
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
@@ -171,10 +173,10 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
     let stack = AdjustmentLayerSnapshot::new(vec![
         crate::adjustment_layers::AdjustmentLayer {
             mask: crate::adjustment_layers::AdjustmentLayerCoverage::Linear {
-                start: crate::geometry::SourcePoint([scan.area.x as f64, scan.area.y as f64]),
+                start: crate::geometry::SourcePoint([scan.area().x as f64, scan.area().y as f64]),
                 end: crate::geometry::SourcePoint([
-                    (scan.area.x + scan.area.width) as f64,
-                    (scan.area.y + scan.area.height) as f64,
+                    (scan.area().x + scan.area().width) as f64,
+                    (scan.area().y + scan.area().height) as f64,
                 ]),
             },
             photo: crate::adjustment_layers::AdjustmentLayerSettings {
@@ -201,8 +203,8 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
             InputSettings::Digital,
             Default::default(),
             stack.clone(),
-            scan.camera_to_ap1,
-            scan.area,
+            scan.camera_to_ap1(),
+            scan.area(),
         )
         .unwrap(),
     );
@@ -213,15 +215,15 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
         None,
         Some(crate::crop::Crop {
             center: [
-                scan.area.x as f64 + scan.area.width as f64 / 2.,
-                scan.area.y as f64 + scan.area.height as f64 / 2.,
+                scan.area().x as f64 + scan.area().width as f64 / 2.,
+                scan.area().y as f64 + scan.area().height as f64 / 2.,
             ],
-            size: [scan.area.width - 64, scan.area.height - 64],
+            size: [scan.area().width - 64, scan.area().height - 64],
             angle: 0.13,
         }),
     ] {
         let composition =
-            Composition::with_crop(scan.area, Default::default(), Default::default(), crop)
+            Composition::with_crop(scan.area(), Default::default(), Default::default(), crop)
                 .unwrap();
         let frame = FrameRaster::full(composition).unwrap();
         let input = input.clone().with_definition(
@@ -236,7 +238,7 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
             &renderer,
             &device,
             &queue,
-            (&scan, None),
+            (&scan, None, None),
             input.clone(),
             OutputTarget::Srgb,
             (&generation, 1),
@@ -259,7 +261,8 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
             &device,
             &queue,
             Request {
-                scan: &scan,
+                source: &scan,
+                reference_ev: None,
                 field: None,
                 input: InputSettings::Digital,
                 roll: Default::default(),

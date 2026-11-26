@@ -20,17 +20,17 @@ fn native_output_resources() {
         ..Default::default()
     }
     .write();
-    let scan = crate::scan::Scan::open(file.path(), None).unwrap();
+    let scan = crate::scan::DevelopedSource::open(file.path(), None).unwrap();
     let composition = crate::geometry::Composition::with_crop(
-        scan.area,
+        scan.area(),
         Default::default(),
         Default::default(),
         Some(crate::crop::Crop {
             center: [
-                f64::from(scan.area.x) + f64::from(scan.area.width) / 2.,
-                f64::from(scan.area.y) + f64::from(scan.area.height) / 2.,
+                f64::from(scan.area().x) + f64::from(scan.area().width) / 2.,
+                f64::from(scan.area().y) + f64::from(scan.area().height) / 2.,
             ],
-            size: [scan.area.width * 3 / 4, scan.area.height * 3 / 4],
+            size: [scan.area().width * 3 / 4, scan.area().height * 3 / 4],
             angle: 0.17,
         }),
     )
@@ -88,15 +88,16 @@ fn native_output_resources() {
                         &device.limits(),
                         crate::acquisition::camera::camera_source(&scan)?,
                         None,
-                        crate::photographic::stages::interpretation::InputTransform::for_scan(
+                        crate::photographic::stages::interpretation::InputTransform::for_source(
                             &scan,
                             crate::processing::InputSettings::Digital,
+                            None,
                         )?,
                         crate::photographic::stages::grading::Grading::new(
                             &device.limits(),
                             Default::default(),
                             grade.clone(),
-                            scan.area,
+                            scan.area(),
                         )?,
                         Default::default(),
                         &crate::photographic::graph::authoring::Assembly::film(
@@ -137,7 +138,8 @@ fn native_output_resources() {
                 &device,
                 &queue,
                 Request {
-                    scan: &scan,
+                    source: &scan,
+                    reference_ev: None,
                     field: None,
                     input: crate::processing::InputSettings::Digital,
                     roll: Default::default(),

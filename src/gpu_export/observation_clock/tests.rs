@@ -9,7 +9,7 @@ use crate::{
     processing::{Calibration, RollSettings},
     render_fixture::RenderFixture,
     rendering::OutputTarget,
-    scan::Scan,
+    scan::DevelopedSource,
 };
 use glam::DVec3;
 use std::path::Path;
@@ -31,12 +31,12 @@ fn deferred_counters_preserve_common_pixels_and_reject_final_collection_before_p
         let renderer = RenderFixture::new(&device, &queue).await.unwrap();
         (device, queue, renderer)
     });
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
     .unwrap();
-    let a = scan.area;
+    let a = scan.area();
     // One destination unit leaves its only query collection deferred until finalization.
     let composition = Composition::with_crop(
         a,
@@ -54,7 +54,8 @@ fn deferred_counters_preserve_common_pixels_and_reject_final_collection_before_p
     .unwrap();
     let request = || Request {
         calculation: None,
-        scan: &scan,
+        source: &scan,
+        reference_ev: None,
         field: None,
         input: Calibration {
             dmin: DVec3::splat(0.8),

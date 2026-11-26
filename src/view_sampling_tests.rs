@@ -649,8 +649,8 @@ fn raw_view_sampling_quality() {
         ("upper", [0, -1400]),
     ] {
         let area = SourceRegion {
-            x: (scan.area.x as i32 + scan.area.width as i32 / 2 + offset[0]) as u32,
-            y: (scan.area.y as i32 + scan.area.height as i32 / 2 + offset[1]) as u32,
+            x: (scan.area().x as i32 + scan.area().width as i32 / 2 + offset[0]) as u32,
+            y: (scan.area().y as i32 + scan.area().height as i32 / 2 + offset[1]) as u32,
             width: 64,
             height: 48,
         };
@@ -666,7 +666,7 @@ fn raw_view_sampling_quality() {
                 area,
                 camera,
                 calibration,
-                matrix: scan.camera_to_ap1,
+                matrix: scan.camera_to_ap1(),
             };
             let source = if corrected {
                 source.corrected()

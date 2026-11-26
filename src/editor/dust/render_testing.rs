@@ -5,12 +5,12 @@ use crate::dust_repair::BaseImage;
 use crate::evaluation::Value;
 
 pub(super) fn pixels(
-    scan: &Scan,
+    source: &Arc<crate::scan::DevelopedSource>,
     recipe: &crate::image_recipe::ImageRecipe,
     repair: &Repair,
     services: &source::Services,
 ) -> Vec<([u32; 2], [f32; 3])> {
-    let field = scan.flat_field().cloned().map(|map| {
+    let field = recipe.neutral.correction.clone().map(|map| {
         Arc::new(
             crate::photographic::stages::flat_field::GpuFlatField::new(&services.device, map)
                 .unwrap(),
@@ -20,7 +20,7 @@ pub(super) fn pixels(
         field,
         &services.evaluation,
         &services.queue,
-        scan,
+        source,
         recipe,
     )
     .unwrap();
@@ -141,10 +141,15 @@ impl Editor {
         if repairs.is_empty() {
             return Vec::new();
         }
-        let scan = self.source_context().unwrap().scan().unwrap();
-        let (scan, capture) = crate::photo_preparation::native_image(&scan, &capture).unwrap();
+        let context = self.source_context().unwrap();
+        let capture = crate::photo_preparation::native_recipe(
+            &context.source,
+            context.reference.as_ref(),
+            &capture,
+        )
+        .unwrap();
         let base = crate::photographic::graph::composition::original_unrepaired(
-            crate::acquisition::camera::camera_source(&scan).unwrap(),
+            crate::acquisition::camera::camera_source(&context.source).unwrap(),
             self.correction()
                 .prepared()
                 .map(|correction| correction.gpu.clone()),

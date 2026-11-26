@@ -1,30 +1,19 @@
 use super::*;
+use crate::scan::DevelopedSource;
 mod recovery;
 use crate::processing::InputSettings;
 use glam::{DMat3, DVec3};
 
-fn prepared_field(device: &wgpu::Device, scan: &Scan) -> Option<Arc<GpuFlatField>> {
-    scan.flat_field()
-        .cloned()
-        .map(|map| Arc::new(GpuFlatField::new(device, map).unwrap()))
-}
-
-fn recipe(scan: &Scan, input: InputSettings) -> crate::image_recipe::ImageRecipe {
-    let source = crate::source::source_metadata(
-        scan.source().path(),
-        &scan.source().metadata(),
-        scan.source().white_balance(),
-    )
-    .unwrap();
+fn recipe(scan: &DevelopedSource, input: InputSettings) -> crate::image_recipe::ImageRecipe {
+    let source =
+        crate::source::source_metadata(scan.path(), &scan.metadata(), scan.white_balance())
+            .unwrap();
     let mut project = crate::project::Project {
         input,
         ..Default::default()
     };
     let id = project.add_source(source).unwrap();
-    let mut recipe = project.image_recipe(id).unwrap();
-    recipe.neutral.correction = scan.flat_field().cloned();
-    recipe.neutral.reference = scan.reference_exposure.clone();
-    recipe
+    project.image_recipe(id).unwrap()
 }
 
 #[test]
@@ -36,8 +25,8 @@ fn repair_inputs_share_corrected_signed_hdr_and_negative_values_across_blocks_an
         [260, 1000, 600],
         glam::DMat3::IDENTITY.to_cols_array(),
     );
-    let mut scan = Scan::open(file.path(), None).unwrap();
-    let area = scan.area;
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    let area = scan.area();
     let field = Arc::new(
         crate::flat_field::FlatField::from_nodes(
             [area.x, area.y, area.width, area.height],
@@ -51,7 +40,7 @@ fn repair_inputs_share_corrected_signed_hdr_and_negative_values_across_blocks_an
         )
         .unwrap(),
     );
-    scan.set_flat_field(Some(field));
+    let scan_field = Some(field);
     let region = SourceRegion::from([area.x + 11, area.y + 13, 17, 9]);
     let needed: Vec<_> = (0..region.width * region.height)
         .map(|index| index % 3 != 0)
@@ -69,27 +58,29 @@ fn repair_inputs_share_corrected_signed_hdr_and_negative_values_across_blocks_an
             0.,
         ),
     ] {
-        scan.reference_exposure = Some(crate::exposure_reference::ReferenceExposure::Matched(
+        let scan_reference = Some(crate::exposure_reference::ReferenceExposure::Matched(
             crate::exposure_reference::StartingExposure {
                 ev,
                 samples: 1024,
                 spread: 0.,
             },
         ));
-        let reference = crate::scan::ImageSource::new(&scan, input).unwrap();
-        let mut uncorrected_scan =
-            Scan::with_reference(scan.source().clone(), scan.reference_exposure.clone());
-        uncorrected_scan.set_flat_field(None);
-        let uncorrected = crate::scan::ImageSource::new(&uncorrected_scan, input).unwrap();
-        let recipe = recipe(&scan, input);
-        let mut source = Source::from_recipe(
-            prepared_field(&device, &scan),
-            renderer.evaluation(),
-            &queue,
+        let reference = crate::scan::ImageSource::new(
             &scan,
-            &recipe,
+            input,
+            scan_reference.as_ref().map(|reference| reference.ev()),
+            scan_field.clone(),
         )
         .unwrap();
+        let uncorrected = crate::scan::ImageSource::new(&scan, input, Some(ev), None).unwrap();
+        let mut recipe = recipe(&scan, input);
+        recipe.neutral.correction = scan_field.clone();
+        recipe.neutral.reference = scan_reference;
+        let gpu_field = scan_field
+            .clone()
+            .map(|map| Arc::new(GpuFlatField::new(&device, map).unwrap()));
+        let mut source =
+            Source::from_recipe(gpu_field, renderer.evaluation(), &queue, &scan, &recipe).unwrap();
         source.budget.tile = [3, 2];
         let pixels = source
             .read(region, Some(&needed), &|| false)
@@ -171,7 +162,7 @@ fn repair_inputs_share_corrected_signed_hdr_and_negative_values_across_blocks_an
 fn repair_inputs_keep_masked_values_zero_and_saturate_extreme_required_values() {
     let (device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([0; 3]);
-    let scan = Scan::open(file.path(), None).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
     let mut input = InputSettings::negative(crate::processing::Calibration {
         dmin: DVec3::splat(0.7),
         dmax: DVec3::splat(0.14),
@@ -179,7 +170,7 @@ fn repair_inputs_keep_masked_values_zero_and_saturate_extreme_required_values() 
     if let InputSettings::Negative { gamma, .. } = &mut input {
         *gamma = 0.1;
     }
-    let region = SourceRegion::from([scan.area.x + 16, scan.area.y + 16, 2, 2]);
+    let region = SourceRegion::from([scan.area().x + 16, scan.area().y + 16, 2, 2]);
     // Model 6 is finite at zero light. This declared camera conversion makes the
     // complete neutral calculation exceed f32 while its shader remains bounded.
     let matrix = DMat3::from_diagonal(DVec3::splat(1e33));
@@ -194,7 +185,7 @@ fn repair_inputs_keep_masked_values_zero_and_saturate_extreme_required_values() 
             &device.limits(),
             Default::default(),
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-            scan.area,
+            scan.area(),
         )
         .unwrap(),
         vec![],
@@ -229,15 +220,15 @@ fn repair_inputs_keep_masked_values_zero_and_saturate_extreme_required_values() 
 
 #[test]
 fn masked_nonfinite_authored_values_are_unused_but_required_values_reject() {
-    let (device, queue, renderer) = crate::photographic::test_support::render_context();
+    let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([0; 3]);
-    let scan = Scan::open(file.path(), None).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
     let input = InputSettings::negative(crate::processing::Calibration {
         dmin: DVec3::splat(0.7),
         dmax: DVec3::splat(0.14),
     });
     let mut source = Source::from_recipe(
-        prepared_field(&device, &scan),
+        None,
         renderer.evaluation(),
         &queue,
         &scan,
@@ -251,7 +242,7 @@ fn masked_nonfinite_authored_values_are_unused_but_required_values_reject() {
             "overflow",
         ),
     );
-    let region = SourceRegion::from([scan.area.x + 16, scan.area.y + 16, 2, 2]);
+    let region = SourceRegion::from([scan.area().x + 16, scan.area().y + 16, 2, 2]);
     assert_eq!(
         source
             .read(region, Some(&[false; 4]), &|| false)
@@ -274,22 +265,16 @@ fn masked_nonfinite_authored_values_are_unused_but_required_values_reject() {
 
 #[test]
 fn repair_inputs_accept_developed_zero_and_native_white() {
-    let (device, queue, renderer) = crate::photographic::test_support::render_context();
+    let (_device, queue, renderer) = crate::photographic::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([0, 65535, 600]);
-    let scan = Scan::open(file.path(), None).unwrap();
-    let region = SourceRegion::from([scan.area.x + 16, scan.area.y + 16, 8, 8]);
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
+    let region = SourceRegion::from([scan.area().x + 16, scan.area().y + 16, 8, 8]);
     let camera = scan.pixel(region.x, region.y).unwrap();
     assert_eq!(camera.x, 0.);
     assert_eq!(camera.y, 1.);
     let recipe = recipe(&scan, InputSettings::Digital);
-    let mut source = Source::from_recipe(
-        prepared_field(&device, &scan),
-        renderer.evaluation(),
-        &queue,
-        &scan,
-        &recipe,
-    )
-    .unwrap();
+    let mut source =
+        Source::from_recipe(None, renderer.evaluation(), &queue, &scan, &recipe).unwrap();
     let pixels = source.read(region, None, &|| false).unwrap().unwrap();
     assert_eq!(pixels.len(), 64);
     assert!(pixels.iter().flatten().all(|value| value.is_finite()));
@@ -307,7 +292,7 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
         ..Default::default()
     }
     .write();
-    let scan = Scan::open(file.path(), None).unwrap();
+    let scan = DevelopedSource::open(file.path(), None).unwrap();
     let mut recipe = recipe(&scan, InputSettings::Digital);
     recipe.neutral.reference = Some(crate::exposure_reference::ReferenceExposure::Matched(
         crate::exposure_reference::StartingExposure {
@@ -327,7 +312,9 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
         support: SupportMask::new([66, 86], [9, 9], vec![true; 81]).unwrap(),
         offset: [40, 0],
     }];
-    let (scan, mut recipe) = crate::photo_preparation::native_image(&scan, &recipe).unwrap();
+    let recipe_reference = recipe.neutral.reference.clone();
+    let mut recipe = crate::photo_preparation::native_recipe(&scan, None, &recipe).unwrap();
+    assert_eq!(recipe.neutral.reference, recipe_reference);
     let region = SourceRegion::from([66, 86, 9, 9]);
     use crate::photographic::graph::composition::{
         original_neutral, original_unrepaired, processed_originals,
@@ -342,14 +329,8 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
             .unwrap()
             .unwrap()
     };
-    let mut search = Source::from_recipe(
-        prepared_field(&device, &scan),
-        renderer.evaluation(),
-        &queue,
-        &scan,
-        &recipe,
-    )
-    .unwrap();
+    let mut search =
+        Source::from_recipe(None, renderer.evaluation(), &queue, &scan, &recipe).unwrap();
     assert_eq!(
         search.image().domain().grid,
         evaluation::Grid::axis_aligned([0.; 2], [1.; 2])
@@ -375,20 +356,14 @@ fn dust_search_reads_original_unrepaired_neutral_not_repaired_or_graded_output()
 
     // A previously accepted but unsolvable repair cannot prevent searching its unrepaired input.
     recipe.repairs[0].support =
-        SupportMask::new([scan.area.x, scan.area.y], [3, 3], vec![true; 9]).unwrap();
+        SupportMask::new([scan.area().x, scan.area().y], [3, 3], vec![true; 9]).unwrap();
     recipe.repairs[0].offset = [30, 0];
-    let edge = SourceRegion::from([scan.area.x, scan.area.y, 3, 3]);
-    let values = Source::from_recipe(
-        prepared_field(&device, &scan),
-        renderer.evaluation(),
-        &queue,
-        &scan,
-        &recipe,
-    )
-    .unwrap()
-    .read(edge, None, &|| false)
-    .unwrap()
-    .unwrap();
+    let edge = SourceRegion::from([scan.area().x, scan.area().y, 3, 3]);
+    let values = Source::from_recipe(None, renderer.evaluation(), &queue, &scan, &recipe)
+        .unwrap()
+        .read(edge, None, &|| false)
+        .unwrap()
+        .unwrap();
     assert_eq!(values.len(), 9);
     assert!(values.iter().flatten().all(|value| value.is_finite()));
     let repaired = original_neutral(codes, None, &recipe).unwrap();

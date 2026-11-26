@@ -21,7 +21,7 @@ fn requested_image(
 ) -> Result<crate::evaluation::Value, Error> {
     crate::viewer::view::rendering::photograph(
         &source.context.device().limits(),
-        &demand.pixels.scan()?,
+        &demand.pixels.source,
         demand.pixels.correction.gpu()?,
         &demand.capture,
         source.spec.clone(),
@@ -75,12 +75,13 @@ fn fixture() -> (
             .await
             .unwrap()
     });
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
     .unwrap();
-    let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+    let composition =
+        Composition::new(scan.area(), Default::default(), Default::default()).unwrap();
     let size = composition.size();
     let frame = FrameRaster::new(
         composition,
@@ -89,14 +90,14 @@ fn fixture() -> (
         [64, 48],
     )
     .unwrap();
-    let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, None)
+    let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1(), None)
         .unwrap()
         .with_identity(crate::acquisition::camera::identity::Identity::camera(
-            scan.source().identity(),
+            scan.identity(),
         ));
     let input = source::Context {
         reference: None,
-        source: scan.source().clone(),
+        source: scan.clone(),
         correction: Default::default(),
     };
     let scheduler = source_loading::SourceLoader::new();
@@ -129,11 +130,15 @@ fn complete_frame(frame: &Arc<Frame>, services: &source::Services) {
 }
 
 fn positive_spec(frame: FrameRaster, input: &source::Context, sigma: f64) -> SourceRequest {
-    let scan = input.scan().unwrap();
+    let scan = input.source.clone();
     SourceRequest::new(
         frame,
         crate::processing::InputSettings::Digital,
-        scan.positive_matrix(&crate::processing::InputSettings::Digital)
+        crate::processing::InputSettings::Digital
+            .positive_matrix(
+                scan.camera_to_ap1(),
+                input.reference.as_ref().map(|reference| reference.ev()),
+            )
             .unwrap(),
         None,
     )
@@ -294,8 +299,9 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
         ..Default::default()
     }
     .write();
-    let scan = Scan::open(fixture.path(), None).unwrap();
-    let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+    let scan = DevelopedSource::open(fixture.path(), None).unwrap();
+    let composition =
+        Composition::new(scan.area(), Default::default(), Default::default()).unwrap();
     let frame = FrameRaster::new(
         composition,
         FramePoint([200., 220.]),
@@ -305,7 +311,7 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
     .unwrap();
     let input = source::Context {
         reference: None,
-        source: scan.source().clone(),
+        source: scan.clone(),
         correction: Default::default(),
     };
     let small = positive_spec(frame, &input, 0.25);
@@ -917,14 +923,14 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
 fn retiring_running_support_keeps_its_native_lease_through_submission() {
     let (e, input, mut spec, scheduler) = fixture();
     let source = Arc::downgrade(&input.source);
-    let scan = Scan::open(
+    let scan = DevelopedSource::open(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
     )
     .unwrap();
     let next = source::Context {
         reference: None,
-        source: scan.source().clone(),
+        source: scan.clone(),
         correction: Default::default(),
     };
     let (started, starts) = std::sync::mpsc::channel();
@@ -1024,8 +1030,9 @@ fn ordinary_canvas_during_save_keeps_acquisition_and_tracks_current_demand() {
     let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     editor.document.source = true;
     let input = editor.source_context().unwrap();
-    let scan = input.scan().unwrap();
-    let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+    let scan = input.source.clone();
+    let composition =
+        Composition::new(scan.area(), Default::default(), Default::default()).unwrap();
     let size = composition.size();
     let frame = FrameRaster::new(
         composition,
@@ -1034,7 +1041,7 @@ fn ordinary_canvas_during_save_keeps_acquisition_and_tracks_current_demand() {
         [64, 48],
     )
     .unwrap();
-    let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, None)
+    let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1(), None)
         .unwrap()
         .with_identity(crate::acquisition::camera::identity::Identity::camera(
             input.source.identity(),

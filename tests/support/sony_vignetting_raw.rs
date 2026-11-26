@@ -76,14 +76,14 @@ fn shading_curve_provenance_differs_even_with_equal_geometry() {
         false,
         false,
     );
-    let a = antitone::scan::Scan::open(a.path(), Some([1.; 4])).unwrap();
-    let b = antitone::scan::Scan::open(b.path(), Some([1.; 4])).unwrap();
+    let a = antitone::scan::DevelopedSource::open(a.path(), Some([1.; 4])).unwrap();
+    let b = antitone::scan::DevelopedSource::open(b.path(), Some([1.; 4])).unwrap();
     let first = development(&a);
     let second = development(&b);
     assert_eq!(first.dimensions, second.dimensions);
     assert_ne!(
-        a.source().metadata().lens_identity().unwrap(),
-        b.source().metadata().lens_identity().unwrap()
+        a.metadata().lens_identity().unwrap(),
+        b.metadata().lens_identity().unwrap()
     );
     assert_ne!(a.pixel(32, 32).unwrap(), b.pixel(32, 32).unwrap());
 }
@@ -166,24 +166,31 @@ fn headroom_measurements_compose_with_residual_flat_field() {
         false,
         false,
     );
-    let mut scan = antitone::scan::Scan::open(file.path(), Some([1.; 4])).unwrap();
+    let scan = antitone::scan::DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
     let base = Calibration {
         dmin: DVec3::splat(0.7),
         dmax: DVec3::splat(0.01),
     };
     let region = antitone::raw::Rect::from([56, 56, 8, 8]);
     assert!(scan.pixel(60, 60).unwrap().max_element() > 1.);
-    assert!(scan.reference(region).unwrap().max_element() > 1.);
-    let samples = scan.analysis_samples(region, 1, || false).unwrap().unwrap();
+    assert!(
+        antitone::sampling::camera::reference(&scan, None, region)
+            .unwrap()
+            .max_element()
+            > 1.
+    );
+    let samples =
+        antitone::roll_analysis::scalar::samples(&scan, None, region, 1, |_| true, || false)
+            .unwrap()
+            .unwrap();
     assert_eq!(samples.pixels.len(), 1);
-    let estimated = scan.estimate_flat_field(scan.area).unwrap();
+    let estimated = antitone::flat_field::reference::estimate(&scan, scan.area()).unwrap();
     let center_camera = scan
-        .source()
         .camera_image()
         .unwrap()
-        .sample_mean(scan.area, glam::DMat3::IDENTITY)
+        .sample_mean(scan.area(), glam::DMat3::IDENTITY)
         .unwrap();
-    let neutral = scan.camera_to_ap1 * (center_camera * estimated.gain([32., 32.]).unwrap());
+    let neutral = scan.camera_to_ap1() * (center_camera * estimated.gain([32., 32.]).unwrap());
     assert!((neutral - DVec3::splat(neutral.y)).abs().max_element() < 1e-12);
     let mut project = Project {
         input: InputSettings::Negative {
@@ -223,27 +230,22 @@ fn headroom_measurements_compose_with_residual_flat_field() {
     );
     let field =
         Arc::new(FlatField::from_nodes([0, 0, 64, 64], [2, 2], vec![DVec3::splat(3.); 4]).unwrap());
-    scan.set_flat_field(Some(field.clone()));
     project.set_flat_field(Some(FlatFieldSettings::new(
         project.source(id).unwrap().path.clone(),
-        field,
+        field.clone(),
     )));
     let recipe = project.image_recipe(id).unwrap();
     assert_eq!(
         (base).validate().unwrap(),
         recipe.neutral.input.calibration().unwrap()
     );
-    recipe.neutral.require_scan(&scan).unwrap();
+    recipe.neutral.require_source(&scan).unwrap();
+    assert_eq!(recipe.neutral.correction.as_ref(), Some(&field));
     let directory = tempfile::tempdir().unwrap();
     let saved = directory.path().join("shaded.antitone");
     project.save(&saved, Save::New).unwrap();
     let reopened = Project::load(&saved).unwrap();
-    reopened
-        .image_recipe(id)
-        .unwrap()
-        .neutral
-        .require_scan(&scan)
-        .unwrap();
+    assert_eq!(reopened.image_recipe(id).unwrap(), recipe);
     let mut changed = reopened.clone();
     changed.set_flat_field(None);
     assert!(
@@ -251,9 +253,10 @@ fn headroom_measurements_compose_with_residual_flat_field() {
             .image_recipe(id)
             .unwrap()
             .neutral
-            .require_scan(&scan)
-            .is_err()
+            .correction
+            .is_none()
     );
+    assert_eq!(recipe.neutral.correction.as_ref(), Some(&field));
     let mut low_light = reopened;
     if let InputSettings::Negative { dmax, .. } = &mut low_light.input {
         *dmax = Some(DVec3::splat(1. / 65535.));
