@@ -12,7 +12,9 @@ mod tests;
 pub(super) const DMIN: Display = Display::sample("Dmin");
 pub(super) const DMAX: Display = Display::sample("Dmax");
 pub(super) const GAMMA: Display = Display {
-    help: Some("Pick one neutral patch to set both gamma balance and Roll WB."),
+    help: Some(
+        "Click a neutral patch, or drag a rectangle and choose Apply, to set gamma balance and Roll WB.",
+    ),
     ..Display::sample("Roll balance")
 };
 pub(super) const GAMMA_PICK_LABEL: &str = "Balance roll from neutral patch";

@@ -877,7 +877,7 @@ fn editor_harness_with_gpu<R>(
 }
 
 #[test]
-fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
+fn dmin_picker_cancels_or_measures_on_click_release_and_paints_source() {
     editor_harness(|mut harness, capture| {
         let fixture =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
@@ -925,19 +925,13 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
                 .0
                 .screen_point(egui::pos2(32., 32.))
         });
-        harness.hover_at(point);
-        for pressed in [true, false] {
-            harness.event(egui::Event::PointerButton {
-                pos: point,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            });
-        }
-        harness.step();
-        assert!(harness.read(|editor| editor.test_pick_region().is_some()));
-        harness.get_by_label("Apply").click();
-        harness.step();
+        masks::pointer(&mut harness, point, true);
+        harness.read(|editor| {
+            assert!(editor.picking());
+            assert!(editor.test_pick_region().is_none());
+            assert!(editor.dmin().is_none() && !editor.measurement_pending());
+        });
+        masks::pointer(&mut harness, point, false);
         assert!(harness.read(|editor| !editor.has_hosted_tool()));
         // This fixture delivers completion without another UI pass.
         harness.run_until(Duration::from_secs(5), |editor| editor.dmin().is_some());
@@ -963,6 +957,8 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         ));
         harness
             .update(|editor| editor.document.visit.canvas.selection_timing = Some(timing.clone()));
+        // Kittest paints its cursor over the swatch we are about to read back.
+        harness.event(egui::Event::PointerGone);
         harness.step();
         let png = harness.render().unwrap();
         assert!(

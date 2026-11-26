@@ -152,17 +152,8 @@ fn measurement_modes_own_apply_readiness_and_leave_normal_view_preferences_intac
                 h.get_by_label(&format!("Active tool: {}", kind.display().label));
                 let point =
                     h.read(|editor| editor.active_canvas().last_layout.unwrap().0.image.center());
-                h.hover_at(point);
-                for pressed in [true, false] {
-                    h.event(egui::Event::PointerButton {
-                        pos: point,
-                        button: egui::PointerButton::Primary,
-                        pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    });
-                    h.step();
-                }
-                h.step();
+                let half_side = egui::vec2(10., 10.);
+                drag(&mut h, point - half_side, point + half_side);
                 assert!(
                     !h.get_by_role_and_label(egui::accesskit::Role::Button, "Apply")
                         .accesskit_node()
@@ -224,16 +215,8 @@ fn apply_keeps_the_current_view_and_measurement_uses_only_cancellable_activity()
             open(&mut h, PickerCase::Dmin);
             let point =
                 h.read(|editor| editor.active_canvas().last_layout.unwrap().0.image.center());
-            h.hover_at(point);
-            for pressed in [true, false] {
-                h.event(egui::Event::PointerButton {
-                    pos: point,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                });
-                h.step();
-            }
+            let half_side = egui::vec2(10., 10.);
+            drag(&mut h, point - half_side, point + half_side);
             h.get_by_role_and_label(egui::accesskit::Role::Button, "Apply")
                 .click();
             h.step();

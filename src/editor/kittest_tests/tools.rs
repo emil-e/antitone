@@ -34,35 +34,15 @@ pub(super) fn calibrated_harness_with_thumbnails<R>(
     })
 }
 
-fn click_patch(harness: &mut Harness<'_, Editor>, point: egui::Pos2) {
+fn drag_patch(harness: &mut Harness<'_, Editor>, point: egui::Pos2) {
     harness.get_by_label("Fit").click();
     harness.step();
-    let at = harness.read(|editor| {
-        editor
-            .document
-            .visit
-            .canvas
-            .last_layout
-            .unwrap()
-            .0
-            .screen_point(point)
-    });
-    harness.read(|editor| {
-        let layout = editor.document.visit.canvas.last_layout.unwrap().0;
-        assert!(layout.canvas.contains(at) && layout.image.contains(at),
-            "sample {point:?} maps to {at:?} outside visible image {:?} / canvas {:?}; picker={:?}, crop={:?}",
-            layout.image, layout.canvas, editor.test_pick(), editor.photo_crop());
-    });
-    harness.hover_at(at);
-    for pressed in [true, false] {
-        harness.event(egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        });
-    }
-    harness.step();
+    let layout = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
+    let center = layout.screen_point(point);
+    let half_side = egui::Vec2::splat(16. * layout.scale);
+    let patch = egui::Rect::from_center_size(center, half_side * 2.);
+    assert!(layout.canvas.contains_rect(patch) && layout.image.contains_rect(patch));
+    drag(harness, patch.min, patch.max);
     harness.read(|editor| assert!(editor.test_pick_region().is_some()));
 }
 
@@ -348,7 +328,7 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 harness.step();
                 harness.read(|editor| assert!(!editor.interaction_blocked()));
                 harness.read(|editor| assert_eq!(editor.document.state.project, before));
-                click_patch(&mut harness, egui::pos2(160., 160.));
+                drag_patch(&mut harness, egui::pos2(160., 160.));
                 capture_tool(&mut harness, &format!("{name}-{layout}-offscreen"), size);
                 harness.get_by_label("Cancel").click();
                 harness.step();
@@ -357,7 +337,7 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 harness.get_by_label(label).click();
                 harness.step();
                 wait_for(&mut harness, |editor| editor.test_pick().is_some());
-                click_patch(
+                drag_patch(
                     &mut harness,
                     if kind == PickerCase::Dmin {
                         egui::pos2(32., 32.)
@@ -484,6 +464,9 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
                     modifiers: egui::Modifiers::NONE,
                 });
                 harness.step();
+                harness.read(|editor| {
+                    assert_eq!(editor.test_pick_region(), initial.map(Coverage::rectangle));
+                });
                 // No intermediate motion: the first recognized drag is already far from the press.
                 harness.hover_at(end);
                 harness.step();

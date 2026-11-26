@@ -38,7 +38,8 @@ The names come from film density, but what you pick are measurements in the imag
 - **Dmax** — a genuinely dense part of the negative (deep shadow on the positive side of
   the film). It becomes the dark end.
 
-Use **Pick Dmin (film base)** and **Pick Dmax**, then click a suitable area in the image.
+Choose **Pick Dmin (film base)** or **Pick Dmax**, then click the patch to measure.
+To choose a specific area, drag a rectangle and click **Apply**.
 Pickers keep your current view; use **View source** if you want to inspect the negative.
 The values come from original samples per colour channel, and the two picks need not be
 the same kind of material.
@@ -56,10 +57,10 @@ start at 0.60, a sensible prior for most stocks; adjust to taste.
 response of the three colour channels across tones, so it can fix a colour cast that
 differs between shadows and highlights — a negative that goes warm in the highlights and
 cool in the shadows, for example. With Dmin and Dmax measured, use the eyedropper in
-this section to select an area that should be neutral and click **Apply**. It sets both
-Gamma Balance and Roll white balance in one undoable edit, or changes neither if the
-fit fails. Check other tones across the roll: one patch cannot tell whether they are
-balanced.
+this section, then click a patch that should be neutral or drag a rectangle and click
+**Apply**. This sets both Gamma Balance and Roll white balance in one undoable edit,
+or changes neither if the fit fails. Check other tones across the roll: one patch cannot
+tell whether they are balanced.
 
 With **Hold midtone colour** on, editing Gamma or Balance also adjusts Roll white
 balance to hold the current photo's midtone colour. This is on by default. Browsing
