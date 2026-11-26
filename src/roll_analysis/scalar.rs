@@ -1,6 +1,6 @@
 //! Original-pixel camera statistics for the scalar diagnostics and comparisons.
 
-use super::{AnalysisSamples, MAX_SAMPLES_PER_FRAME};
+use super::AnalysisSamples;
 use crate::{Error, flat_field, geometry::SourceRaster, raw::Rect, scan::DevelopedSource};
 
 #[derive(Clone, Copy)]
@@ -10,7 +10,7 @@ struct Footprint {
 }
 
 fn footprints(area: Rect, budget: usize) -> Result<Vec<Footprint>, Error> {
-    if budget == 0 || budget > MAX_SAMPLES_PER_FRAME {
+    if budget == 0 {
         return Err(Error::InvalidParameter("invalid analysis sampling budget"));
     }
     if area.width < 8 || area.height < 8 {
@@ -90,4 +90,20 @@ pub fn samples(
         output.pixels.push(pixel);
     }
     Ok((!cancelled()).then_some(output))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn footprint_capacity_follows_the_source_and_requested_count() {
+        let area = Rect::from([0, 0, 1024, 1024]);
+        let budget = 16_384;
+        let grid = footprints(area, budget).unwrap();
+
+        assert_eq!(grid.len(), budget);
+        assert!(grid.iter().all(|site| area.contains_region(site.region)));
+        assert!(footprints(area, 0).is_err());
+    }
 }

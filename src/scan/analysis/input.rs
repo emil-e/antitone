@@ -99,10 +99,7 @@ impl AnalysisInput {
         mut inside: impl FnMut(Rect) -> bool,
         cancelled: &mut impl FnMut() -> bool,
     ) -> Result<Option<Vec<usize>>> {
-        if !self.area().contains_region(area)
-            || budget == 0
-            || budget > crate::roll_analysis::MAX_SAMPLES_PER_FRAME
-        {
+        if !self.area().contains_region(area) || budget == 0 {
             return Err(Error::InvalidParameter("invalid camera sampling request"));
         }
         // Statistical populations mask one source-wide grid rather than rephasing
