@@ -34,7 +34,7 @@ fn frame(
     events: Vec<egui::Event>,
     modifiers: egui::Modifiers,
 ) -> (Response, Response, Response) {
-    frame_at(context, value, row, width, enabled, events, modifiers, None)
+    frame_at(context, value, row, width, enabled, events, modifiers, None).0
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -47,9 +47,17 @@ fn frame_at(
     mut events: Vec<egui::Event>,
     modifiers: egui::Modifiers,
     time: Option<f64>,
-) -> (Response, Response, Response) {
+) -> ((Response, Response, Response), egui::FullOutput) {
     crate::editor::ui::configure_fonts(context);
     let mut responses = None;
+    let focused = events
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            egui::Event::WindowFocused(focused) => Some(*focused),
+            _ => None,
+        })
+        .unwrap_or_else(|| context.input(|input| input.raw.focused));
     events.insert(0, egui::Event::ModifiersChanged(modifiers));
     let mut output = context.run_ui(
         egui::RawInput {
@@ -59,6 +67,7 @@ fn frame_at(
             )),
             events,
             time,
+            focused,
             ..Default::default()
         },
         |ui| {
@@ -71,7 +80,7 @@ fn frame_at(
         },
     );
     output.textures_delta.clear();
-    responses.unwrap()
+    (responses.unwrap(), output)
 }
 
 fn configured_rows_frame(
@@ -756,6 +765,137 @@ fn shift_drag_on_the_track_moves_ten_times_finer() {
             && fine_travel.abs() < plain_travel.abs() / 5.
             && fine_travel.abs() > plain_travel.abs() / 20.,
         "fine {fine_travel} vs ordinary {plain_travel}"
+    );
+}
+
+#[test]
+fn precision_drag_paints_the_value_instead_of_the_pointer_position() {
+    let draw = |context, value: &mut f64, events, modifiers, enabled| {
+        let ((slider, _, _), output) = frame_at(
+            context,
+            value,
+            &wide_row(),
+            315.,
+            enabled,
+            events,
+            modifiers,
+            None,
+        );
+        let thumb = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Circle(circle) if slider.rect.contains(circle.center) => {
+                    Some(circle.center.x)
+                }
+                _ => None,
+            })
+            .expect("the track paints a thumb");
+        (slider.rect, thumb, output.platform_output.cursor_icon)
+    };
+    let ctx = &egui::Context::default();
+    // Distinguish the thumb from the rail without relying on fill or size.
+    ctx.all_styles_mut(|style| style.visuals.handle_shape = egui::style::HandleShape::Circle);
+    let mut value = 0.;
+    let (track, initial_thumb, _) = draw(ctx, &mut value, vec![], egui::Modifiers::SHIFT, true);
+    let press = track.left_center() + egui::vec2(15., 0.);
+    let (_, pressed_thumb, cursor) = draw(
+        ctx,
+        &mut value,
+        pointer(press, true),
+        egui::Modifiers::SHIFT,
+        true,
+    );
+    assert_eq!(
+        pressed_thumb, initial_thumb,
+        "an off-thumb press must not move the thumb"
+    );
+    assert_eq!(cursor, egui::CursorIcon::None);
+
+    let moved = press + egui::vec2(50., 0.);
+    let (_, dragged_thumb, cursor) = draw(
+        ctx,
+        &mut value,
+        vec![egui::Event::PointerMoved(moved)],
+        egui::Modifiers::NONE,
+        true,
+    );
+    assert_eq!(
+        cursor,
+        egui::CursorIcon::None,
+        "releasing Shift does not end the drag"
+    );
+    let adjusted = value;
+    assert!(adjusted > 0. && dragged_thumb > initial_thumb);
+    let (_, released_thumb, cursor) = draw(
+        ctx,
+        &mut value,
+        pointer(moved, false),
+        egui::Modifiers::NONE,
+        true,
+    );
+    assert_ne!(cursor, egui::CursorIcon::None);
+    assert_eq!(
+        value, adjusted,
+        "release must not apply the absolute pointer position"
+    );
+    assert_eq!(
+        dragged_thumb, released_thumb,
+        "the thumb must already show the adjusted value during the drag"
+    );
+
+    let (_, _, cursor) = draw(
+        ctx,
+        &mut value,
+        pointer(press, true),
+        egui::Modifiers::SHIFT,
+        true,
+    );
+    assert_eq!(cursor, egui::CursorIcon::None);
+    let (_, _, cursor) = draw(ctx, &mut value, vec![], egui::Modifiers::SHIFT, false);
+    assert_ne!(
+        cursor,
+        egui::CursorIcon::None,
+        "disabling the row ends cursor hiding"
+    );
+}
+
+#[test]
+fn a_precision_drag_interrupted_by_focus_loss_ignores_the_rest_of_the_press() {
+    let ctx = &egui::Context::default();
+    let mut value = 0.;
+    let draw = |value: &mut f64, events, modifiers| {
+        frame_at(ctx, value, &wide_row(), 315., true, events, modifiers, None)
+    };
+    let ((slider, _, _), _) = draw(&mut value, vec![], egui::Modifiers::NONE);
+    let press = slider.rect.left_center() + egui::vec2(25., 0.);
+    let moved = press + egui::vec2(10., 0.);
+    draw(&mut value, pointer(press, true), egui::Modifiers::SHIFT);
+    draw(
+        &mut value,
+        vec![egui::Event::PointerMoved(moved)],
+        egui::Modifiers::SHIFT,
+    );
+    let adjusted = value;
+    assert!(adjusted > 0.);
+
+    for events in [
+        vec![egui::Event::WindowFocused(false)],
+        vec![],
+        vec![
+            egui::Event::WindowFocused(true),
+            egui::Event::PointerMoved(press),
+        ],
+        pointer(press, false),
+    ] {
+        let (_, output) = draw(&mut value, events, egui::Modifiers::NONE);
+        assert_ne!(output.platform_output.cursor_icon, egui::CursorIcon::None);
+        assert_eq!(value, adjusted);
+    }
+    draw(&mut value, pointer(press, true), egui::Modifiers::NONE);
+    assert!(
+        value < 0.,
+        "a fresh ordinary press resumes absolute tracking"
     );
 }
 
