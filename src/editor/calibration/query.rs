@@ -20,12 +20,11 @@ pub(super) fn reference(
     coverage: Coverage,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<DVec3, Error> {
-    let floor = f64::from(scan.effective_floor() as f32);
     let samples = Samples::new(gpu, scan, field, coverage, cancelled)?;
     let mean = samples.mean(samples.camera_light()?, cancelled)?;
-    if mean.min_element() <= floor {
+    if mean.min_element() <= 0. {
         return Err(Error::UnusableSample(
-            "reference mean is at/below the scan precision floor",
+            "reference mean must be positive in every channel",
         ));
     }
 
@@ -59,7 +58,6 @@ pub(super) fn roll_balance(
         .validate()?;
     let (mut scan, mut recipe) = crate::photo_preparation::native_image(scan, &input)?;
     let samples = Samples::new(gpu, &mut scan, field, coverage, cancelled)?;
-    samples.require_precision(cancelled)?;
 
     let patch = samples.mean(samples.camera_light()?, cancelled)?;
     let gamma = span_balance(calibration.dmin, patch)?;

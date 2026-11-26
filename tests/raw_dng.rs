@@ -234,7 +234,7 @@ fn authored_dng_scan_keeps_crop_proxy_centres_and_original_reference_values() {
 }
 
 #[test]
-fn authored_raw_keeps_the_measured_anchor_flooring_and_libraw_matrix_gates() {
+fn authored_raw_keeps_the_measured_anchors_and_libraw_matrix_agreement() {
     use antitone::processing::{Calibration, Inversion, NegativeInput, Response};
     let mut scan = Scan::open(&fixture(), None).unwrap();
     let calibration = Calibration {
@@ -285,21 +285,15 @@ fn authored_raw_keeps_the_measured_anchor_flooring_and_libraw_matrix_gates() {
     let matrix = raw.metadata.camera_to_srgb();
     let area = raw.metadata.image_area().unwrap();
     let image = raw.develop_camera(WB).unwrap();
-    let mut below_floor = [0u64; 3];
     let mut points = Vec::new();
     for y in area.y..area.y + area.height {
         for x in area.x..area.x + area.width {
-            let camera = image.pixel(x, y).unwrap();
-            for c in 0..3 {
-                below_floor[c] += u64::from(camera[c] < scan.precision_floor);
-            }
             if (x - area.x).is_multiple_of(32) && (y - area.y).is_multiple_of(32) {
+                let camera = image.pixel(x, y).unwrap();
                 points.push((x, y, matrix * camera));
             }
         }
     }
-    let count = u64::from(area.width) * u64::from(area.height);
-    assert!(below_floor.into_iter().all(|v| v <= count / 100));
     let reference = raw.develop_srgb_reference(WB).unwrap();
     let mut compared = 0;
     for (x, y, expected) in points {

@@ -91,7 +91,7 @@ fn processed_pixels(
 }
 
 #[test]
-fn native_floor_flags_and_zero_amount_retain_the_independent_source_gaussian_mtf() {
+fn native_metadata_and_zero_amount_retain_the_independent_source_gaussian_mtf() {
     let (device, queue, _) = crate::photographic::test_support::render_context();
     let bounds: SourceRegion = [1048, 980, 64, 64].into();
     let settings = GrainSettings {

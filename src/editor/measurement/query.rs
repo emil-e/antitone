@@ -93,26 +93,6 @@ impl<'a> Samples<'a> {
         camera_light(self.source.clone(), self.field.clone())
     }
 
-    pub(in crate::editor) fn require_precision(
-        &self,
-        cancelled: &dyn Fn() -> bool,
-    ) -> Result<(), Error> {
-        // Match the precision bound packed into the photographic program. Comparing readback
-        // pixels with an unrounded f64 floor can reject the representable boundary itself.
-        let floor = self.scan.effective_floor() as f32;
-        self.read(self.camera_light()?, cancelled, |_, pixel, _| {
-            if pixel[..3]
-                .iter()
-                .any(|value| !value.is_finite() || *value < floor)
-            {
-                return Err(Error::UnusableSample(
-                    "patch contains nonfinite or floored scan inputs",
-                ));
-            }
-            Ok(())
-        })
-    }
-
     pub(in crate::editor) fn roll(
         &self,
         recipe: &crate::image_recipe::ImageRecipe,
@@ -155,12 +135,6 @@ impl<'a> Samples<'a> {
             );
             if !rgb.is_finite() || !pixel[3].is_finite() || pixel[3] < 0. {
                 return Err(Error::NumericalOverflow);
-            }
-
-            if pixel[3] as u32 & 7 != 0 {
-                return Err(Error::UnusableSample(
-                    "measurement patch contains inputs below the calibration floor",
-                ));
             }
 
             sum += rgb * area;

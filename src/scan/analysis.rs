@@ -1,4 +1,4 @@
-//! Canonical footprint selection and numerical eligibility before camera-light evaluation.
+//! Canonical footprint selection for scalar camera-light measurements.
 
 use super::*;
 #[cfg(feature = "editor")]
@@ -78,7 +78,6 @@ impl Scan {
         }
         self.validate_area(area)?;
         let grid = footprints(area, budget)?;
-        let image = self.source.camera_image()?;
         let mut plan = AnalysisPlan::new(grid.len());
         for footprint in grid {
             if cancelled() {
@@ -88,23 +87,7 @@ impl Scan {
                 continue;
             }
             plan.samples.attempted += 1;
-            let mut floor = false;
-            for y in footprint.region.y..footprint.region.y + 8 {
-                for x in footprint.region.x..footprint.region.x + 8 {
-                    let raw = image.pixel(x, y)?;
-                    if !raw.is_finite() {
-                        return Err(Error::NumericalOverflow);
-                    }
-                    floor |= raw.min_element() <= self.source.precision_floor;
-                }
-            }
-            if floor {
-                // Residual correction cannot rescue a sample already at the native floor:
-                // its local positive gain is no larger than the gain used by the bound.
-                plan.samples.rejected_floor += 1;
-            } else {
-                plan.footprints.push(footprint);
-            }
+            plan.footprints.push(footprint);
         }
         Ok((!cancelled()).then_some(plan))
     }

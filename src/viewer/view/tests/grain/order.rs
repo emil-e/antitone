@@ -71,7 +71,6 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
                 .apply(
                     InvertedPixel {
                         rgb: DVec3::from_array(rgb.map(f64::from)),
-                        floored: [false; 3],
                     },
                     crate::geometry::SourcePoint([1000.5; 2]),
                 )

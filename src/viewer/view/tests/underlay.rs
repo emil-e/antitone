@@ -68,7 +68,7 @@ fn mapped(map: TextureMapping, uv: [f64; 2]) -> [f64; 2] {
 }
 
 #[test]
-fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_floor_flags() {
+fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_coverage() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
         for corrected in [false, true] {
@@ -200,7 +200,7 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                 else if i % 7 == 0 {
                     [2., 0.2, 0.1, 0.]
                 }
-                // Coverage is independent of colour/floor flags.
+                // Coverage is independent of colour and other metadata.
                 else {
                     [-0.01, 0.04 + (i % 8) as f32 * 0.12, 1.5, 13.]
                 }

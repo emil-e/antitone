@@ -218,7 +218,6 @@ fn compare_tiff(repaired: bool, asset: Arc<LookAsset>) {
                                 rgb: DVec3::from_array(
                                     repair.pixel([x, y], [0.; 3]).map(f64::from),
                                 ),
-                                floored: [false; 3],
                             },
                             [x, y],
                         )?

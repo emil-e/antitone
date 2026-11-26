@@ -10,7 +10,6 @@ fn captured(
     area: crate::geometry::SourceRegion,
     size: [u32; 2],
     pixels: Vec<[f32; 3]>,
-    scale: f64,
 ) -> CapturedSource {
     let input = crate::spatial_metadata::Input {
         source: SourceId(id),
@@ -30,7 +29,6 @@ fn captured(
     let camera = Arc::new(AnalysisInput::authored(
         SourceRaster::new(area, size).unwrap(),
         pixels,
-        crate::processing::CAMERA_INPUT_FLOOR * scale,
     ));
     let key = crate::source::SourceKey::for_load(
         std::path::Path::new("authored"),
@@ -44,7 +42,7 @@ fn captured(
 #[test]
 fn geometry_preserves_camera_units_fractions_and_hdr_independently_of_peer_precision() {
     let area = [11, 17, 1, 1].into();
-    let first = captured(1, area, [1, 1], vec![[0.25, 8000.125, 65535.]], 1.);
+    let first = captured(1, area, [1, 1], vec![[0.25, 8000.125, 65535.]]);
     let alone = geometry_frames(
         vec![CapturedSource {
             input: first.input.clone(),
@@ -56,7 +54,7 @@ fn geometry_preserves_camera_units_fractions_and_hdr_independently_of_peer_preci
     let frames = geometry_frames(
         vec![
             first,
-            captured(2, area, [1, 1], vec![[262140.5, 131068.25, 0.]], 4.),
+            captured(2, area, [1, 1], vec![[262140.5, 131068.25, 0.]]),
         ],
         &|| Ok(()),
     )
@@ -82,7 +80,7 @@ fn geometry_resampling_preserves_full_source_extent_and_affine_colour() {
             pixels.push([(262140. * u) as f32, (131068. * v) as f32, 65535.]);
         }
     }
-    let camera = captured(1, area, size, pixels, 4.);
+    let camera = captured(1, area, size, pixels);
     let frames = geometry_frames(vec![camera], &|| Ok(())).unwrap();
     let frame = &frames[0];
     assert_eq!(frame.input.development.active_area, [101, 53, 1536, 1024]);
@@ -107,17 +105,13 @@ fn geometry_resampling_preserves_full_source_extent_and_affine_colour() {
 }
 
 #[test]
-fn geometry_keeps_dark_sites_that_are_ineligible_for_numerical_analysis() {
+fn geometry_keeps_dark_sites() {
     let frame = captured(
         1,
         [13, 29, 3, 1].into(),
         [3, 1],
         vec![[0.; 3], [8.; 3], [12.; 3]],
-        16.,
     );
-    for i in 0..3 {
-        assert!(!frame.camera.pixels().above_native_floor(i).unwrap());
-    }
     let frames = geometry_frames(vec![frame], &|| Ok(())).unwrap();
     assert_eq!(frames[0].size, [3, 1]);
     assert_eq!(frames[0].rgb, [[0.; 3], [8.; 3], [12.; 3]]);
@@ -125,6 +119,6 @@ fn geometry_keeps_dark_sites_that_are_ineligible_for_numerical_analysis() {
 
 #[test]
 fn retired_geometry_preparation_stops_before_sampling() {
-    let frame = captured(1, [0, 0, 1, 1].into(), [1, 1], vec![[1000.; 3]], 1.);
+    let frame = captured(1, [0, 0, 1, 1].into(), [1, 1], vec![[1000.; 3]]);
     assert!(geometry_frames(vec![frame], &|| Err("retired".into())).is_err());
 }

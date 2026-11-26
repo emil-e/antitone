@@ -2,17 +2,15 @@ const STAGE_SOURCE: u32 = 0u;
 const STAGE_NEGATIVE: u32 = 1u;
 const STAGE_DIGITAL: u32 = 2u;
 
-fn interpret_positive(scan: vec3f) -> ProcessedPixel {
+fn interpret_positive(scan: vec3f) -> vec4f {
     if parameters.stage == STAGE_DIGITAL {
-        return ProcessedPixel(array<f32, 3>(scan.x, scan.y, scan.z), 0u);
+        return vec4f(scan, 0.0);
     }
-    var rgb: array<f32, 3>;
-    var flags = 0u;
+    var rgb: vec3f;
     for(var c = 0u; c < 3u; c++) {
         if scan[c] == parameters.dmax[c] && scan[c] > 0.0 {
             rgb[c] = photographic_exp(parameters.anchor.w);
         } else if scan[c] <= 0.0 {
-            flags |= 1u << c;
             rgb[c] = parameters.tail[c].y + parameters.tail[c].z;
         } else {
             let ratio = scan[c] / parameters.dmin[c];
@@ -23,13 +21,10 @@ fn interpret_positive(scan: vec3f) -> ProcessedPixel {
                 // The ratio can underflow or overflow while its logarithm is finite.
                 density = log(parameters.dmin[c]) - log(scan[c]);
             }
-            if density > parameters.tail[c].x {
-                flags |= 1u << c;
-            }
             rgb[c] = invert_film(density, c);
         }
     }
-    return ProcessedPixel(rgb, flags);
+    return vec4f(rgb, 0.0);
 }
 
 // Ordinary f32 evaluation, including the continuous continuation beyond film base.

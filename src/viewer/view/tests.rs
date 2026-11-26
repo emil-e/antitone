@@ -379,7 +379,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             assert_eq!(mapping.origin, [0.25; 2]);
             assert_eq!(mapping.x_axis, [0.5, 0.]);
             assert_eq!(mapping.y_axis, [0., 0.5]);
-            // A target raster's coverage is not its inversion-floor flags. In particular, scopes
+            // A target raster's coverage is independent of other metadata. In particular, scopes
             // must neither count an unsupported pixel nor compose the already-rotated raster again.
             let mut partial = original.clone();
             partial.last_mut().unwrap()[3] = 0.;

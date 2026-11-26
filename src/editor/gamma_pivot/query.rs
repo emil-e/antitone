@@ -135,16 +135,6 @@ fn camera_samples(
         .collect())
 }
 
-fn usable_camera(pixel: &[f32; 4], floor: f32) -> bool {
-    pixel[..3]
-        .iter()
-        .all(|value| value.is_finite() && *value >= floor)
-}
-
-fn usable_positive(pixel: &[f32; 4]) -> bool {
-    pixel.iter().all(|value| value.is_finite()) && pixel[3] == 0.
-}
-
 fn rgb(pixel: [f32; 4]) -> DVec3 {
     DVec3::new(pixel[0] as f64, pixel[1] as f64, pixel[2] as f64)
 }
@@ -158,9 +148,6 @@ fn midtones(
     let y_from_camera = (AP1_TO_XYZ * camera_to_ap1).row(1);
     let mut eligible = Vec::new();
     for (sample, positive) in samples.into_iter().zip(positives) {
-        if !usable_positive(&positive) {
-            continue;
-        }
         let rgb = rgb(positive);
         let cones = cone_from_camera * rgb;
         let y = y_from_camera.dot(rgb);
@@ -202,14 +189,7 @@ impl Evidence {
         negative: NegativeInput,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, Error> {
-        let mut samples = camera_samples(gpu, scan, field, coverage, cancelled)?;
-        let floor = scan.effective_floor() as f32;
-        samples.retain(|(pixel, _)| usable_camera(pixel, floor));
-        if samples.is_empty() {
-            return Err(Error::UnusableSample(
-                "no usable camera samples for gamma pivot",
-            ));
-        }
+        let samples = camera_samples(gpu, scan, field, coverage, cancelled)?;
         let pixels = samples.iter().map(|(pixel, _)| *pixel).collect();
         let camera = evaluation::source(Arc::new(Pixels { pixels }));
         let positives = positive_samples(gpu, camera, negative, cancelled)?;
@@ -230,11 +210,6 @@ impl Evidence {
         let mut sum = DVec3::ZERO;
         let mut total = 0.;
         for (pixel, weight) in pixels.into_iter().zip(&self.weights) {
-            if !usable_positive(&pixel) {
-                return Err(Error::UnusableSample(
-                    "gamma pivot reaches the source precision floor",
-                ));
-            }
             sum += rgb(pixel) * *weight;
             total += weight;
         }

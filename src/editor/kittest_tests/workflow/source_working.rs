@@ -97,10 +97,6 @@ fn digital_source_scale_import_save_open_and_inspection_keep_zero_exposure_contr
             let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
             assert_eq!(ready.developed.white_balance(), [4., 1., 2., 1.]);
             assert!(!ready.record.development.decode.uses_sdk());
-            assert_eq!(
-                ready.developed.precision_floor(),
-                4. * crate::processing::CAMERA_INPUT_FLOOR
-            );
             editor.document.state.project.clone()
         });
         h.get_by_label("View source").click();
@@ -522,18 +518,6 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
                 .development
                 .clone()
         });
-        assert!(
-            h.read(|e| e
-                .document
-                .visit
-                .canvas
-                .ready
-                .as_ref()
-                .unwrap()
-                .developed
-                .precision_floor())
-                > crate::processing::CAMERA_INPUT_FLOOR
-        );
         let original = h.read(|editor| {
             editor
                 .document

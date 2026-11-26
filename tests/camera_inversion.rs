@@ -108,7 +108,6 @@ fn camera_matrix_follows_inversion_and_precedes_photographic_wb() {
             * inverted.rgb
             * 0.75_f64.exp2(),
     );
-    assert_eq!(actual.floored, inverted.floored);
     let mixed_calibration = Calibration {
         dmin: matrix() * cal.dmin,
         dmax: matrix() * cal.dmax,
@@ -175,7 +174,7 @@ fn white_balance_is_a_replacement_residual_after_roll_wb_not_a_second_total_corr
 }
 
 #[test]
-fn signed_working_values_do_not_set_camera_input_floor_flags() {
+fn signed_working_values_and_zero_camera_light_stay_finite() {
     let cal = calibration();
     let interpretation = negative(cal, Response::film(), Balance::default());
     let roll = RollSettings::default();
@@ -183,10 +182,12 @@ fn signed_working_values_do_not_set_camera_input_floor_flags() {
     let pipeline = Pipeline::new(input(interpretation), roll, matrix()).unwrap();
     let positive = pipeline.apply(camera).unwrap();
     assert!(positive.rgb.z < 0.);
-    assert_eq!(positive.floored, [false; 3]);
-    assert_eq!(
-        pipeline.apply(DVec3::new(0., 0.05, 0.08)).unwrap().floored,
-        [true, false, false]
+    assert!(
+        pipeline
+            .apply(DVec3::new(0., 0.05, 0.08))
+            .unwrap()
+            .rgb
+            .is_finite()
     );
 }
 

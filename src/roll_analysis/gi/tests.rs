@@ -136,7 +136,6 @@ fn spatial_provider_releases_each_photo_before_requesting_the_next_selection() {
     let mut calls = Vec::new();
     let result = refine_from(
         &frames,
-        crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, images.len()),
         &mut model::ScalarReference,
         &mut || false,
@@ -162,7 +161,6 @@ fn spatial_provider_releases_each_photo_before_requesting_the_next_selection() {
     assert_eq!(result.frames.len(), images.len());
     let error = refine_from(
         &frames,
-        crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, images.len()),
         &mut model::ScalarReference,
         &mut || false,
@@ -251,16 +249,9 @@ fn gamma_selection_uses_defined_colour_evidence_without_dropping_a_coloured_phot
         raster_samples: images[0].camera.len(),
         gamma: Vec::new(),
     };
-    let result = refine(
-        &frames,
-        &refs,
-        crate::processing::CAMERA_INPUT_FLOOR,
-        proposal,
-        &mut model,
-        &mut || false,
-    )
-    .unwrap()
-    .unwrap();
+    let result = refine(&frames, &refs, proposal, &mut model, &mut || false)
+        .unwrap()
+        .unwrap();
     assert_eq!(result.frames.len(), 2);
     assert!(
         result.frames[0]
@@ -309,16 +300,9 @@ fn one_pass_recovers_authored_shared_curves_and_refreshes_only_shared_wb_and_exp
         raster_reads: Vec::new(),
         fail_final: false,
     };
-    let result = refine(
-        &frames,
-        &refs,
-        crate::processing::CAMERA_INPUT_FLOOR,
-        seed(truth, 3),
-        &mut model,
-        &mut || false,
-    )
-    .unwrap()
-    .unwrap();
+    let result = refine(&frames, &refs, seed(truth, 3), &mut model, &mut || false)
+        .unwrap()
+        .unwrap();
     let balance = result.input.negative_input().unwrap().balance;
     assert_eq!(
         model.raster_reads.len(),
@@ -379,7 +363,6 @@ fn one_pass_recovers_authored_shared_curves_and_refreshes_only_shared_wb_and_exp
     let pair = refine(
         &frames[..2],
         &refs[..2],
-        crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, 2),
         &mut model::ScalarReference,
         &mut || false,
@@ -419,7 +402,6 @@ fn invalid_layout_and_unusable_frame_do_not_become_successful_or_silently_droppe
     let error = refine(
         &frames,
         &refs,
-        crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, 3),
         &mut model::ScalarReference,
         &mut || false,
@@ -430,7 +412,6 @@ fn invalid_layout_and_unusable_frame_do_not_become_successful_or_silently_droppe
         refine(
             &frames,
             &refs,
-            crate::processing::CAMERA_INPUT_FLOOR,
             seed(truth, 3),
             &mut model::ScalarReference,
             &mut || true
@@ -460,33 +441,24 @@ fn forward_failures_and_incomplete_reads_propagate_instead_of_becoming_wb_absten
     }
     let (truth, images, _, _) = authored();
     assert!(matches!(
-        images[0].response(
-            truth,
-            crate::processing::CAMERA_INPUT_FLOOR,
-            &mut Broken(true),
-            &mut || false
-        ),
+        images[0].response(truth, &mut Broken(true), &mut || false),
         Err(Error::UnusableSample("authored forward failure"))
     ));
     assert!(matches!(
-        images[0].response(
-            truth,
-            crate::processing::CAMERA_INPUT_FLOOR,
-            &mut Broken(false),
-            &mut || false
-        ),
+        images[0].response(truth, &mut Broken(false), &mut || false),
         Err(Error::InvalidParameter("analysis model omitted samples"))
     ));
 }
 
 #[test]
-fn spatial_estimation_uses_the_common_measurement_floor_without_changing_calibration() {
-    struct FloorGuard {
-        common: f64,
+fn spatial_estimation_keeps_valid_low_light_without_changing_calibration() {
+    struct ObservedLowLight {
+        low_light: DVec3,
+        observed: bool,
         calls: usize,
         spatial_reads: usize,
     }
-    impl ForwardModel for FloorGuard {
+    impl ForwardModel for ObservedLowLight {
         fn read(
             &mut self,
             negative: NegativeInput,
@@ -494,19 +466,14 @@ fn spatial_estimation_uses_the_common_measurement_floor_without_changing_calibra
             cancelled: &mut dyn FnMut() -> bool,
             consume: &mut dyn FnMut(usize, DVec3) -> Result<(), Error>,
         ) -> Result<bool, Error> {
-            assert!(
-                points.iter().all(|p| p.min_element() > self.common),
-                "locally usable but below-common-floor sites must not reach the response model"
-            );
+            self.observed |= points.contains(&self.low_light);
             self.calls += 1;
             self.spatial_reads += usize::from(points.len() >= 128 * 96 - 1);
             model::ScalarReference.read(negative, points, cancelled, consume)
         }
     }
     let (truth, mut images, pictures, _) = authored();
-    let common = 0.005;
-    let locally_usable = DVec3::splat(common / 2.);
-    assert!(locally_usable.min_element() > crate::processing::CAMERA_INPUT_FLOOR);
+    let locally_usable = DVec3::splat(1e-8);
     images[0].camera[48 * 128 + 64] = locally_usable;
     assert!(images[0].valid[48 * 128 + 64]);
     let film = vec![truth.calibration.dmin; 512];
@@ -522,19 +489,18 @@ fn spatial_estimation_uses_the_common_measurement_floor_without_changing_calibra
             spatial,
         })
         .collect();
-    let mut guard = FloorGuard {
-        common,
+    let mut guard = ObservedLowLight {
+        low_light: locally_usable,
+        observed: false,
         calls: 0,
         spatial_reads: 0,
     };
-    let proposal = estimate_spatial_with_model(&frames, common, truth, &mut guard, &mut || false)
+    let proposal = estimate_spatial_with_model(&frames, truth, &mut guard, &mut || false)
         .unwrap()
         .unwrap();
-    assert!(guard.calls > 0 && guard.spatial_reads > 0);
+    assert!(guard.calls > 0 && guard.spatial_reads > 0 && guard.observed);
     let statistics: Vec<_> = frames.iter().map(|f| f.statistics).collect();
-    let seed = estimate(&statistics, common, truth, || false)
-        .unwrap()
-        .unwrap();
+    let seed = estimate(&statistics, truth, || false).unwrap().unwrap();
     assert_eq!(proposal.input.calibration(), seed.input.calibration());
 }
 
@@ -577,14 +543,7 @@ fn final_forward_errors_are_not_misreported_as_ordinary_wb_rejections() {
         fail_final: true,
     };
     assert!(matches!(
-        refine(
-            &frames,
-            &refs,
-            crate::processing::CAMERA_INPUT_FLOOR,
-            seed(truth, 3),
-            &mut model,
-            &mut || false
-        ),
+        refine(&frames, &refs, seed(truth, 3), &mut model, &mut || false),
         Err(Error::UnusableSample("authored final response failure"))
     ));
     assert_eq!(model.raster_reads.len(), 4);
@@ -628,7 +587,6 @@ fn wb_range_abstention_does_not_drop_a_photo_from_gamma_or_install_individual_co
     let proposal = refine(
         &frames,
         &refs,
-        crate::processing::CAMERA_INPUT_FLOOR,
         seed(truth, 4),
         &mut model::ScalarReference,
         &mut || false,
@@ -674,7 +632,6 @@ fn wb_range_abstention_does_not_drop_a_photo_from_gamma_or_install_individual_co
         refine(
             frames,
             refs,
-            crate::processing::CAMERA_INPUT_FLOOR,
             seed(truth, 1),
             &mut model::ScalarReference,
             &mut || false

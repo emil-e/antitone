@@ -61,7 +61,7 @@ fn automatic_reference_retains_only_the_originals_at_usable_midtones() {
         .map(|n| [n as f32, n as f32, n as f32, 0.])
         .collect();
     for (n, invalid) in [
-        (41, [20., 20., 20., 1.]),
+        (41, [0.1, 20., -10., 0.]),
         (42, [-1., -1., -1., 0.]),
         (43, [20., 20., f32::NAN, 0.]),
     ] {
@@ -88,7 +88,11 @@ fn automatic_reference_retains_only_the_originals_at_usable_midtones() {
     weights.sort_by(f64::total_cmp);
     assert_eq!(weights, (1..=32).map(f64::from).collect::<Vec<_>>());
     assert!(matches!(
-        midtones(ties, vec![[1., 1., 1., 1.]; 32], DMat3::IDENTITY),
+        midtones(
+            ties[..31].to_vec(),
+            vec![[1., 1., 1., 0.]; 31],
+            DMat3::IDENTITY
+        ),
         Err(Error::UnusableSample(_))
     ));
 }
@@ -234,18 +238,22 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
     let extreme_mean = extremes.mean(gpu, negative(1.), &|| false).unwrap();
     assert!(extreme_mean.x > 100. && extreme_mean.y < 0.);
 
-    let floored = Evidence {
-        camera: evaluation::source(Arc::new(Pixels {
-            pixels: vec![[0., 0.2, 0.3, 0.]],
-        })),
-        weights: vec![1.],
-    };
-    assert!(matches!(
-        floored.mean(gpu, negative(1.), &|| false),
-        Err(Error::UnusableSample(
-            "gamma pivot reaches the source precision floor"
-        ))
-    ));
+    let dense = Evidence::from_samples([([0.00004, 0.00004, 0.00004, 0.], 1.)]);
+    let before = dense.mean(gpu, negative(1.), &|| false).unwrap();
+    let after = dense.mean(gpu, negative(0.7), &|| false).unwrap();
+    assert!(before.max_element() < 65536. && after.min_element() > 65536.);
+    let held = dense
+        .compensate(
+            gpu,
+            negative(1.),
+            negative(0.7),
+            DMat3::IDENTITY,
+            wb,
+            &|| false,
+        )
+        .unwrap();
+    assert!((held.warmth - wb.warmth).abs() < 1e-12);
+    assert!((held.tint - wb.tint).abs() < 1e-12);
 }
 
 #[test]

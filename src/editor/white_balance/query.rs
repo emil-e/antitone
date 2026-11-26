@@ -25,7 +25,6 @@ pub(super) fn roll(
     }
     let (mut scan, input) = crate::photo_preparation::native_image(scan, &input)?;
     let samples = Samples::new(gpu, &mut scan, field, coverage, cancelled)?;
-    samples.require_precision(cancelled)?;
 
     roll_from_samples(&samples, &input, cancelled)
 }
@@ -53,7 +52,6 @@ pub(super) fn layer(
     }
     let (mut scan, recipe) = crate::photo_preparation::native_image(scan, &input.recipe)?;
     let samples = Samples::new(gpu, &mut scan, field, coverage, cancelled)?;
-    samples.require_precision(cancelled)?;
 
     let layer = recipe.grade.layers()[input.index];
     let weights = Grading::weight_image(samples.source.clone(), layer)?;

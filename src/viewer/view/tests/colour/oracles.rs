@@ -97,7 +97,6 @@ fn physical_view_colour_matches_scalar_continuous_source_masks() {
                 .apply(
                     crate::processing::InvertedPixel {
                         rgb: DVec3::new(input[0] as f64, input[1] as f64, input[2] as f64),
-                        floored: std::array::from_fn(|c| (input[3] as u32 >> c) & 1 != 0),
                     },
                     frame.source_point([(i % 17) as f64 + 0.5, (i / 17) as f64 + 0.5]),
                 )
@@ -126,7 +125,7 @@ fn field(area: SourceRegion) -> Arc<crate::flat_field::FlatField> {
 }
 
 #[test]
-fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floor_provenance() {
+fn physical_view_original_footprints_match_scalar_correction_and_signed_hdr() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
         let mut scan = scan();
@@ -184,9 +183,6 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
                 let value = scalar.apply(scan.pixel(p[0], p[1]).unwrap(), p).unwrap();
                 expected += value.rgb * w;
                 flags |= 8;
-                for c in 0..3 {
-                    flags |= u32::from(value.floored[c]) << c;
-                }
             }
             close(expected / footprint.area(), *result);
             assert_eq!(result[3] as u32, flags);

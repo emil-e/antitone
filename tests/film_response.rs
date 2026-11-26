@@ -89,7 +89,6 @@ fn film_anchors_and_ordinary_forward_inverse_are_preserved() {
             let below = inv.apply(DVec3::splat(-1.)).unwrap();
             assert_eq!(zero.rgb, below.rgb);
             assert!(zero.rgb.is_finite() && zero.rgb.cmpgt(previous).all());
-            assert_eq!(below.floored, [true; 3]);
         }
     }
 }
@@ -111,7 +110,6 @@ fn signed_continuation_has_no_pedestal_or_above_base_clamp() {
         for epsilon in [-1e-7, -1e-12, 0., 1e-12, 1e-7] {
             let scan = cal.dmin * (1. + epsilon);
             let v = inv.apply(scan).unwrap();
-            assert_eq!(v.floored, [false; 3]);
             assert!(v.rgb.is_finite());
             for c in 0..3 {
                 assert_eq!(
@@ -299,6 +297,5 @@ fn neutral_fit_uses_actual_response_and_keeps_unrelated_settings() {
         assert_eq!(initial.response, response);
         assert_eq!(initial.gamma, DEFAULT_GAMMA);
         assert!(roll_neutral(initial, &[cal.dmin], glam::DMat3::IDENTITY).is_err());
-        assert!(roll_neutral(initial, &[DVec3::ZERO], glam::DMat3::IDENTITY).is_err());
     }
 }

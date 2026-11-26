@@ -196,10 +196,7 @@ fn shaped_responses_recover_declared_positives_before_matrix_wb_and_exposure() {
                     let expected = transform * expected * exposure.exp2();
                     signed |= expected.min_element() < 0.;
                     hdr |= expected.max_element() > 1.;
-                    assert_eq!(
-                        actual[i][3], 0.,
-                        "declared positive is above the source floor"
-                    );
+                    assert_eq!(actual[i][3], 0.);
                     let allowed = 2e-5 + 2e-4 * expected.abs().max_element();
                     for c in 0..3 {
                         assert!(
@@ -218,11 +215,11 @@ fn shaped_responses_recover_declared_positives_before_matrix_wb_and_exposure() {
                         "above-base continuation stays signed"
                     );
                 }
-                let floored = actual[positives.len() + 1];
-                assert_eq!(floored[3], 7.);
+                let zero_light = actual[positives.len() + 1];
+                assert_eq!(zero_light[3], 0.);
                 assert!(
-                    floored[..3].iter().all(|v| v.is_finite()),
-                    "admitted floor response remains finite"
+                    zero_light[..3].iter().all(|v| v.is_finite()),
+                    "zero-light response remains finite"
                 );
                 accepted += 1;
             }
@@ -292,7 +289,7 @@ fn very_dense_calibration_keeps_its_anchor_and_zero_light_finite_on_gpu() {
             "the dense packed white anchor must be exact and unflagged"
         );
         let actual = samples[0];
-        assert_eq!(actual[3] as u32, 7);
+        assert_eq!(actual[3], 0.);
         for value in &actual[..3] {
             let expected = Inversion::new(interpretation)
                 .unwrap()
@@ -434,7 +431,7 @@ fn analytic_highlight_tail_and_camera_unit_scaling_reach_the_gpu_unchanged() {
                 } else {
                     (1. / sample - 1.) / 99.
                 };
-                assert_eq!(pixel[3] as u32, if sample < join { 7 } else { 0 });
+                assert_eq!(pixel[3], 0.);
                 for value in &pixel[..3] {
                     assert!(
                         value.is_finite()

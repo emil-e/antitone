@@ -461,7 +461,6 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
         .0;
         assert_eq!(camera, codes.read(region.try_into().unwrap()).unwrap());
         let mut expected = vec![Vec::new(); 4];
-        let mut floor_flags = false;
         let mut signed_hdr = [false; 2];
         let mut repair_effect = 0_f64;
         let mut grade_effect = 0_f64;
@@ -476,12 +475,6 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
             let base = scalar_input
                 .apply(raw * field.gain(position.0).unwrap())
                 .unwrap();
-            let flags = base
-                .floored
-                .iter()
-                .enumerate()
-                .fold(0u32, |v, (i, on)| v | ((*on as u32) << i));
-            floor_flags |= flags != 0;
             correction_effect = correction_effect.max(
                 (base.rgb - scalar_input.apply(raw).unwrap().rgb)
                     .abs()
@@ -499,17 +492,13 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
             let graded = scalar_stack.apply_rgb(roll, position).unwrap();
             grade_effect = grade_effect.max((graded - roll).abs().max_element());
             for (output, rgb) in expected.iter_mut().zip([base.rgb, neutral, roll, graded]) {
-                output.push([rgb.x, rgb.y, rgb.z, flags as f64]);
+                output.push([rgb.x, rgb.y, rgb.z, 0.]);
             }
         }
         assert_eq!(signed_hdr, [true, true]);
         assert!(
             repair_effect > 0.01 && grade_effect > 0.01 && correction_effect > 0.01,
             "fixture must distinguish repairs, grading and correction"
-        );
-        assert_eq!(
-            floor_flags,
-            matches!(settings, InputSettings::Negative { .. })
         );
         let mut work = Vec::new();
         for (root, expected) in [

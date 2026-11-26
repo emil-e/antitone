@@ -6,14 +6,13 @@ use crate::{geometry::SourceRegion, roll_analysis::SpatialSamples, scan::Analysi
 mod tests;
 
 pub(crate) struct CameraWindow {
-    input: Arc<AnalysisInput>,
     view: AnalysisWindow,
     support: Vec<bool>,
 }
 
 impl CameraWindow {
     pub(crate) fn new(
-        input: Arc<AnalysisInput>,
+        input: &AnalysisInput,
         area: SourceRegion,
         mut inside: impl FnMut(SourceRegion) -> bool,
         mut cancelled: impl FnMut() -> bool,
@@ -36,11 +35,7 @@ impl CameraWindow {
                 height: 1,
             }));
         }
-        Ok((!cancelled()).then_some(Self {
-            input,
-            view,
-            support,
-        }))
+        Ok((!cancelled()).then_some(Self { view, support }))
     }
 
     fn read_with(
@@ -55,7 +50,7 @@ impl CameraWindow {
                 return Ok(None);
             }
             let index = self.view.index(i);
-            if inside && self.input.above_native_floor(index)? {
+            if inside {
                 indices.push(index);
                 locations.push(i);
             }
@@ -67,10 +62,8 @@ impl CameraWindow {
                 return Ok(None);
             };
             for (i, rgb) in locations.into_iter().zip(pixels) {
-                if rgb.min_element() > sampler.floor {
-                    camera[i] = rgb;
-                    valid[i] = true;
-                }
+                camera[i] = rgb;
+                valid[i] = true;
             }
         }
         if cancelled() {
@@ -87,7 +80,7 @@ impl CameraSampler<'_> {
         inside: impl FnMut(SourceRegion) -> bool,
         cancelled: impl FnMut() -> bool,
     ) -> Result<Option<CameraWindow>, Error> {
-        CameraWindow::new(self.input.clone(), area, inside, cancelled)
+        CameraWindow::new(&self.input, area, inside, cancelled)
     }
 
     #[cfg(test)]

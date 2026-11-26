@@ -4,9 +4,7 @@ use antitone::{
         AdjustmentLayer, AdjustmentLayerPipeline, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
     },
     color::AP1_TO_XYZ,
-    processing::{
-        CAMERA_INPUT_FLOOR, Calibration, DEFAULT_GAMMA, InputSettings, NegativeInput, Response,
-    },
+    processing::{Calibration, DEFAULT_GAMMA, InputSettings, NegativeInput, Response},
     raw::Rect,
     roll_analysis::{self, FrameSamples, MAX_SAMPLES_PER_FRAME},
     scan::Scan,
@@ -69,7 +67,6 @@ fn authored_roll_keeps_its_known_baseline_with_isolated_sensor_white_in_film_sup
         for (samples, count) in [(&film_samples, 3844), (&picture_samples, 1600)] {
             assert_eq!(samples.attempted, count);
             assert_eq!(samples.pixels.len(), count);
-            assert_eq!(samples.rejected_floor, 0);
         }
         assert!(
             scan.analysis_samples(picture, MAX_SAMPLES_PER_FRAME, || true)
@@ -95,7 +92,7 @@ fn authored_roll_keeps_its_known_baseline_with_isolated_sensor_white_in_film_sup
         gamma: DEFAULT_GAMMA,
         balance: Default::default(),
     };
-    let proposal = roll_analysis::estimate(&frames, CAMERA_INPUT_FLOOR, negative, || false)
+    let proposal = roll_analysis::estimate(&frames, negative, || false)
         .unwrap()
         .unwrap();
     let calibration = proposal.input.calibration().unwrap();
@@ -146,7 +143,7 @@ fn authored_roll_keeps_its_known_baseline_with_isolated_sensor_white_in_film_sup
     // a shared Roll exposure does not normalize away that density difference.
     assert!(luminances[1] > luminances[0]);
     assert!(
-        roll_analysis::estimate(&frames, CAMERA_INPUT_FLOOR, negative, || true)
+        roll_analysis::estimate(&frames, negative, || true)
             .unwrap()
             .is_none()
     );
@@ -156,7 +153,7 @@ fn authored_roll_keeps_its_known_baseline_with_isolated_sensor_white_in_film_sup
 }
 
 #[test]
-fn spatial_support_precedes_numerical_checks_without_rephasing_the_grid() {
+fn spatial_support_selects_original_samples_without_rephasing_the_grid() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
     let original_bytes = fs::read(&fixture).unwrap();
     let mut bytes = original_bytes.clone();
@@ -198,15 +195,9 @@ fn spatial_support_precedes_numerical_checks_without_rephasing_the_grid() {
         .unwrap()
         .unwrap();
     assert_eq!(unrestricted.pixels, original.pixels);
-    assert_eq!(
-        (unrestricted.attempted, unrestricted.rejected_floor),
-        (original.attempted, original.rejected_floor)
-    );
-    assert!(original.rejected_floor > 0);
-    assert_eq!(
-        original.attempted,
-        original.pixels.len() + original.rejected_floor
-    );
+    assert_eq!(unrestricted.attempted, original.attempted);
+    assert_eq!(original.attempted, original.pixels.len());
+    assert!(original.pixels.contains(&DVec3::ZERO));
     assert!(original.pixels.iter().any(|p| p.max_element() >= 1.));
     let mut seen = vec![];
     let excluded = scan
@@ -222,7 +213,7 @@ fn spatial_support_precedes_numerical_checks_without_rephasing_the_grid() {
         .unwrap()
         .unwrap();
     assert_eq!(seen, footprints);
-    assert_eq!((excluded.attempted, excluded.rejected_floor), (0, 0));
+    assert_eq!(excluded.attempted, 0);
     assert!(excluded.pixels.is_empty());
     let mut subset = vec![];
     let half = scan
@@ -245,7 +236,8 @@ fn spatial_support_precedes_numerical_checks_without_rephasing_the_grid() {
             .filter(|r| r.x + r.width <= area.x + area.width / 2)
             .count()
     );
-    assert!(half.rejected_floor > 0);
+    assert_eq!(half.attempted, half.pixels.len());
+    assert!(half.pixels.contains(&DVec3::ZERO));
     assert_eq!(fs::read(path).unwrap(), bytes);
     assert_eq!(fs::read(fixture).unwrap(), original_bytes);
 }

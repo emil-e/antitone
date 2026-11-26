@@ -35,7 +35,6 @@ pub fn load() -> (Scan, Calibration) {
     assert_eq!(train.camera_to_ap1, matrix);
     assert_eq!(train.camera_model, model);
     assert_eq!(train.white_balance, wb);
-    assert_eq!(train.precision_floor, 1. / 65535.);
     let calibration = Calibration {
         dmin: base,
         dmax: white,

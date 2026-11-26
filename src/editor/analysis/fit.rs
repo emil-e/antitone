@@ -354,7 +354,6 @@ impl Fit {
         require_picture(&picture)?;
         self.owned.push(FrameMeasurements {
             camera_to_ap1: self.cameras[index].camera_to_ap1,
-            floor: sampler.effective_floor(),
             film,
             picture,
         });
@@ -362,7 +361,7 @@ impl Fit {
     }
 
     fn finish(
-        mut self,
+        self,
         classifier_drt: &drt::Target,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<Outcome>, Error> {
@@ -371,7 +370,6 @@ impl Fit {
         }
         let request = &self.request;
         let project = &request.document.project;
-        let floor = restrict_to_common_floor(&mut self.owned)?;
         let frames: Vec<_> = self
             .owned
             .iter()
@@ -382,13 +380,10 @@ impl Fit {
             })
             .collect();
         let mut model = ResponseModel::new(&self.evaluation, &self.queue);
-        let Some(mut proposal) = roll_analysis::estimate_anchor_spans(
-            &frames,
-            floor,
-            project.input,
-            &mut model,
-            &mut || cancelled(),
-        )?
+        let Some(mut proposal) =
+            roll_analysis::estimate_anchor_spans(&frames, project.input, &mut model, &mut || {
+                cancelled()
+            })?
         else {
             return Ok(None);
         };

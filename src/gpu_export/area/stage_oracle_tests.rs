@@ -183,7 +183,6 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
                                         rgb: DVec3::from_array(
                                             evaluated.pixel(*p, [0.; 3]).map(f64::from),
                                         ),
-                                        floored: [false; 3],
                                     },
                                     *p,
                                 )

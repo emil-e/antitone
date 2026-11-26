@@ -236,12 +236,7 @@ fn assert_reference(
                 .unwrap_or(DVec3::ONE);
         let inverted = global.apply(scan).unwrap();
         let expected = local_reference(inverted.rgb, snapshot.layers(), point);
-        let flags = inverted
-            .floored
-            .iter()
-            .enumerate()
-            .fold(0, |bits, (c, flag)| bits | (u32::from(*flag) << c));
-        assert_eq!(actual[i][3] as u32, flags);
+        assert_eq!(actual[i][3], 0.);
         signed |= inverted.rgb.min_element() < 0.;
         hdr |= inverted.rgb.max_element() > 1.;
         // Signed matrix products can cancel in one channel; this checks the model at the RGB scale.
@@ -545,7 +540,7 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
 }
 
 #[test]
-fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_flags() {
+fn default_response_ordered_locals_preserve_corrected_noisy_shadows() {
     let (device, queue, kernel) = context();
     let area = SourceRegion::from([120, 80, 32, 8]);
     let raster = SourceRaster::new(area, [32, 8]).unwrap();
@@ -663,12 +658,7 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
                     };
                 let inverted = global.apply(scan).unwrap();
                 let expected = local_reference(inverted.rgb, &layers, point);
-                let flags = inverted
-                    .floored
-                    .iter()
-                    .enumerate()
-                    .fold(0, |bits, (c, flag)| bits | (u32::from(*flag) << c));
-                assert_eq!(actual[i][3] as u32, flags);
+                assert_eq!(actual[i][3], 0.);
                 signed |= expected.min_element() < 0.;
                 hdr |= expected.max_element() > 1.;
                 for c in 0..3 {

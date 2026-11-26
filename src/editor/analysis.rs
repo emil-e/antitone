@@ -58,9 +58,8 @@ const MIN_BALANCE_SAMPLES: usize = 256;
 fn require_picture(samples: &crate::scan::AnalysisSamples) -> Result<(), Error> {
     if samples.pixels.len() < MIN_PICTURE_SAMPLES {
         return Err(Error::Project(format!(
-            "only {} of {} picture samples are eligible; need {MIN_PICTURE_SAMPLES}. Enlarge the picture area or check the capture",
-            samples.pixels.len(),
-            samples.attempted
+            "only {} picture samples; need {MIN_PICTURE_SAMPLES}. Enlarge the picture area or check the capture",
+            samples.pixels.len()
         )));
     }
     Ok(())
@@ -87,30 +86,8 @@ fn require_statistics(
 
 struct FrameMeasurements {
     camera_to_ap1: glam::DMat3,
-    floor: f64,
     film: crate::scan::AnalysisSamples,
     picture: crate::scan::AnalysisSamples,
-}
-
-fn restrict_to_common_floor(frames: &mut [FrameMeasurements]) -> Result<f64, Error> {
-    let floor = frames.iter().map(|frame| frame.floor).fold(0., f64::max);
-    for frame in frames {
-        for samples in [&mut frame.film, &mut frame.picture] {
-            let count = samples.pixels.len();
-            if !samples.positions.is_empty() {
-                let mut i = 0;
-                samples.positions.retain(|_| {
-                    let keep = samples.pixels[i].min_element() > floor;
-                    i += 1;
-                    keep
-                });
-            }
-            samples.pixels.retain(|p| p.min_element() > floor);
-            samples.rejected_floor += count - samples.pixels.len();
-        }
-        require_picture(&frame.picture)?;
-    }
-    Ok(floor)
 }
 
 pub(super) struct Outcome {

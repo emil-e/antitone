@@ -4,7 +4,6 @@ use crate::color::{ap1_to_cones, opponent_coordinates};
 use glam::DVec2;
 
 const WB_SAMPLES_PER_FRAME: usize = 1024;
-const CONE_FLOOR: f64 = 1e-8;
 
 pub(super) fn estimate(
     picture: &SampleBatch,
@@ -21,7 +20,7 @@ pub(super) fn estimate(
         if !cones.is_finite() {
             return Err(Error::NumericalOverflow);
         }
-        if cones.min_element() > CONE_FLOOR {
+        if cones.min_element() > 0. {
             chroma[frame].push(opponent_coordinates(cones.ln() - white));
         }
         Ok(())
@@ -87,7 +86,7 @@ pub(crate) fn semantic_refit(
         if !cones.is_finite() {
             return Err(Error::NumericalOverflow);
         }
-        if cones.min_element() > CONE_FLOOR {
+        if cones.min_element() > 0. {
             chroma[frame].push((index, opponent_coordinates(cones.ln() - white)));
         }
         Ok(())

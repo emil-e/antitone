@@ -63,7 +63,6 @@ fn frozen_pixels_and_metadata_match_unique_development() {
     assert_eq!(source.camera_model(), scan.camera_model);
     assert_eq!(source.camera_to_ap1(), scan.camera_to_ap1);
     assert_eq!(source.area(), scan.area);
-    assert_eq!(source.precision_floor(), scan.precision_floor);
     assert_eq!(codes(source), expected);
     let image = source.camera_image().unwrap();
     assert_eq!(
@@ -101,8 +100,6 @@ fn leases_keep_native_storage_alive_with_independent_correction_contexts() {
     corrected.set_flat_field(Some(field.clone()));
     assert_eq!(corrected.pixel(16, 16).unwrap(), original * 2.0);
     assert_eq!(plain.pixel(16, 16).unwrap(), original);
-    assert_eq!(corrected.effective_floor(), 2.0 * source.precision_floor());
-    assert_eq!(plain.effective_floor(), source.precision_floor());
     let mean = plain.reference(region()).unwrap();
     let corrected_mean = corrected.reference(region()).unwrap();
     // Plain and corrected references group their ordinary sums differently.

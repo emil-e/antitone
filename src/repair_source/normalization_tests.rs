@@ -81,10 +81,7 @@ fn repair_sampling_sees_factory_normalized_ap1_but_negative_and_native_samples_d
         let rgb = DVec3::from_array(pixel.map(f64::from));
         assert_eq!(
             grade
-                .apply_roll(crate::processing::InvertedPixel {
-                    rgb,
-                    floored: [false; 3]
-                })
+                .apply_roll(crate::processing::InvertedPixel { rgb })
                 .unwrap()
                 .rgb,
             rgb

@@ -361,7 +361,6 @@ void admit(const dng_ifd &ifd, dng_negative &negative, const AntitoneDngOptions 
 void admit_opcodes(Host &host, dng_negative &negative, Source &source) {
     std::array<dng_opcode_list *, 3> lists{&negative.OpcodeList1(), &negative.OpcodeList2(),
                                            &negative.OpcodeList3()};
-    double amplification = *std::max_element(source.view.wb, source.view.wb + 3);
     for (uint32 stage = 0; stage < 3; ++stage) {
         auto &list = *lists[stage];
         require(list.Count() <= 64, "Opcode count exceeds prototype bound");
@@ -395,7 +394,6 @@ void admit_opcodes(Host &host, dng_negative &negative, Source &source) {
                     const auto *gain = dynamic_cast<const dng_opcode_GainMap *>(&opcode);
                     require(gain, "Unexpected GainMap implementation");
                     const auto &map = gain->GainMap();
-                    double maximum = 1.0;
                     for (uint32 y = 0; y < uint32(map.Points().v); ++y) {
                         host.SniffForAbort();
                         for (uint32 x = 0; x < uint32(map.Points().h); ++x) {
@@ -403,42 +401,26 @@ void admit_opcodes(Host &host, dng_negative &negative, Source &source) {
                                 const double value = map.Entry(y, x, p);
                                 require(std::isfinite(value) && value > 0,
                                         "Invalid gain map range");
-                                maximum = std::max(maximum, value);
                             }
                         }
                     }
-                    // List 1 rounds back to sensor integers: a one-code input
-                    // change can span ceil(gain) output codes, not merely gain.
-                    amplification *= stage == 0 ? std::ceil(maximum) : maximum;
-                } else {
-                    if (opcode.OpcodeID() == 4) {
-                        // The SDK casts the marker to u16 and masks the phase without
-                        // validating their ranges. Reject truncation/phase reinterpretation.
-                        dng_memory_stream data(host.Allocator());
-                        opcode.PutData(data);
-                        data.Flush();
-                        data.SetReadPosition(0);
-                        require(data.Length() == 12 && data.Get_uint32() == 8,
-                                "Invalid bad-pixel parameters");
-                        const uint32 marker = data.Get_uint32();
-                        const uint32 phase = data.Get_uint32();
-                        require(marker <= 65535 && phase < 4,
-                                "Invalid bad-pixel marker or Bayer phase");
-                    }
-                    if (!opcode.IsNOP()) {
-                        // Warps have cubic absolute-weight norm <=1.890625; bad-pixel repair
-                        // averages original neighbours with <=0.5 sensor-code rounding error.
-                        // A factor of two conservatively covers either operation.
-                        amplification *= 2.0;
-                    }
+                } else if (opcode.OpcodeID() == 4) {
+                    // The SDK casts the marker to u16 and masks the phase without
+                    // validating their ranges. Reject truncation/phase reinterpretation.
+                    dng_memory_stream data(host.Allocator());
+                    opcode.PutData(data);
+                    data.Flush();
+                    data.SetReadPosition(0);
+                    require(data.Length() == 12 && data.Get_uint32() == 8,
+                            "Invalid bad-pixel parameters");
+                    const uint32 marker = data.Get_uint32();
+                    const uint32 phase = data.Get_uint32();
+                    require(marker <= 65535 && phase < 4,
+                            "Invalid bad-pixel marker or Bayer phase");
                 }
             }
         }
     }
-    source.view.precision_floor =
-        std::max(1.0 / 65535.0, amplification / (source.view.white - source.view.black));
-    require(std::isfinite(source.view.precision_floor) && source.view.precision_floor > 0,
-            "Invalid DNG sampling precision");
 }
 
 void color_basis(dng_negative &negative, const dng_vector &as_shot,
