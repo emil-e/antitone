@@ -171,12 +171,6 @@ pub struct GrainResponse {
 }
 
 impl GrainResponse {
-    /// Working-grid pitch for image MTF; grain runs on the presentation grid.
-    #[cfg(feature = "gpu")]
-    pub(crate) fn preferred_view_pitch(self) -> f64 {
-        self.image_mtf_sigma / 0.6
-    }
-
     pub(crate) fn grain(self) -> GrainParameters {
         GrainParameters {
             grain_size: self.grain_size,

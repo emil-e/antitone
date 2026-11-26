@@ -500,11 +500,18 @@ pub(super) fn preferred_view_pitch(
     grain: Option<GrainResponse>,
     halation: Option<HalationParameters>,
 ) -> Option<f64> {
+    // Resolve the narrowest active blur on the working grid. Grain itself runs after reduction.
+    const WORKING_CELLS_PER_SIGMA: f64 = 0.6;
     grain
-        .map(GrainResponse::preferred_view_pitch)
+        .map(|film| film.image_mtf_sigma)
         .into_iter()
-        .chain(halation.and_then(HalationParameters::preferred_view_pitch))
+        .chain(
+            halation
+                .filter(|halo| halo.strength > 0.)
+                .map(|halo| halo.sigma),
+        )
         .reduce(f64::min)
+        .map(|sigma| sigma / WORKING_CELLS_PER_SIGMA)
 }
 
 pub(super) fn film_effects(
