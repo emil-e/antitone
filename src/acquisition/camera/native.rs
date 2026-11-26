@@ -33,15 +33,10 @@ impl Source for Native {
                 "camera storage outside acquired image",
             ));
         }
-        let region = region.source()?;
-        let image = self.scan.source().camera_image()?;
-        let mut pixels = Vec::with_capacity(region.width as usize * region.height as usize);
-        for y in region.y..region.bottom() {
-            for x in region.x..region.right() {
-                pixels.push(image.pixel_codes(x, y)?);
-            }
-        }
-        Ok(pixels)
+        self.scan
+            .source()
+            .camera_image()?
+            .read_codes(region.source()?)
     }
 
     fn identity(&self) -> Option<RetainedKey> {

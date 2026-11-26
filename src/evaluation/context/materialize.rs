@@ -1,6 +1,10 @@
 //! Produce source-bearing image requests independently of their consuming command encoders.
 use super::*;
 use crate::gpu::allocation::DeviceAllocationExt;
+use std::{
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
 #[cfg(all(test, feature = "editor"))]
 mod tests;
@@ -46,6 +50,21 @@ fn read_source(
         ));
     }
     Ok(upload)
+}
+
+fn wait_for_upload(device: &wgpu::Device, done: mpsc::Receiver<()>) -> Result<(), Error> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        // A blocking poll holds a device lock needed by surface presentation.
+        device
+            .poll(wgpu::PollType::Poll)
+            .map_err(|error| Error::Gpu(error.to_string()))?;
+        match done.recv_timeout(Duration::from_millis(1)) {
+            Ok(()) => return Ok(()),
+            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
+            Err(error) => return Err(Error::Gpu(format!("Texture upload completion: {error}"))),
+        }
+    }
 }
 
 impl Context {
@@ -184,7 +203,9 @@ impl Context {
                                     .max(1)
                                     .min(u64::from(layout.region.height))
                                     as u32;
-                                let mut submitted = false;
+                                let started = Instant::now();
+                                let mut read_time = Duration::ZERO;
+                                let mut queue_time = Duration::ZERO;
                                 let mut uploads = std::collections::VecDeque::new();
                                 let transferred = (|| -> Result<(), Error> {
                                     for y in (0..layout.region.height).step_by(rows as usize) {
@@ -196,7 +217,10 @@ impl Context {
                                             height: rows.min(layout.region.height - y),
                                             ..layout.region
                                         };
+                                        let reading = Instant::now();
                                         let upload = read_source(source.as_ref(), region, format)?;
+                                        read_time += reading.elapsed();
+                                        let submitting = Instant::now();
                                         queue.write_texture(
                                             wgpu::TexelCopyTextureInfo {
                                                 texture: &texture,
@@ -216,18 +240,23 @@ impl Context {
                                                 depth_or_array_layers: 1,
                                             },
                                         );
-                                        uploads.push_back(queue.submit(std::iter::empty()));
-                                        submitted = true;
+                                        let (send, done) = mpsc::sync_channel(1);
+                                        queue.submit_with_completion(
+                                            std::iter::empty(),
+                                            move || {
+                                                let _ = send.send(());
+                                            },
+                                        );
+                                        queue_time += submitting.elapsed();
+                                        if y == 0 {
+                                            log::debug!(format:? = format, bytes = layout.bytes(); "texture_source_upload_started");
+                                        }
+                                        uploads.push_back(done);
                                         if uploads.len() == 2 {
-                                            context
-                                                .device
-                                                .poll(wgpu::PollType::Wait {
-                                                    submission_index: uploads.pop_front(),
-                                                    timeout: Some(std::time::Duration::from_secs(
-                                                        10,
-                                                    )),
-                                                })
-                                                .map_err(|error| Error::Gpu(error.to_string()))?;
+                                            wait_for_upload(
+                                                &context.device,
+                                                uploads.pop_front().unwrap(),
+                                            )?;
                                         }
                                         wake.wake();
                                     }
@@ -236,14 +265,19 @@ impl Context {
                                 })();
                                 // Queued uploads own storage until completion, including cancellation
                                 // and a later read failure.
-                                if submitted {
-                                    context.submit(
-                                        &queue,
-                                        context.device.create_command_encoder(&Default::default()),
-                                        || false,
-                                    )?;
+                                for done in uploads {
+                                    wait_for_upload(&context.device, done)?;
                                 }
                                 transferred?;
+                                log::debug!(
+                                    format:? = format,
+                                    bytes = layout.bytes(),
+                                    cancelled = stop.is_cancelled(),
+                                    read_ms = read_time.as_secs_f64() * 1000.,
+                                    submit_ms = queue_time.as_secs_f64() * 1000.,
+                                    total_ms = started.elapsed().as_secs_f64() * 1000.;
+                                    "texture_source_upload"
+                                );
                                 ImageValue::texture(texture)
                             }
                         }
