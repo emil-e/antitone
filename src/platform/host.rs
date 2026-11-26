@@ -382,7 +382,7 @@ impl<
                 Ok(())
             }
             WindowEvent::Focused(focused) => {
-                state.fullscreen.focus_changed(&state.gpu.window, focused);
+                state.fullscreen.focus_changed(focused);
                 Ok(())
             }
             WindowEvent::RedrawRequested => state.draw(&self.context, event_loop),
