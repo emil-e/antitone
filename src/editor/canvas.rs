@@ -521,6 +521,7 @@ impl Editor {
         let capture = match self.canvas_calculation(image) {
             Ok(capture) => capture,
             Err(error) => {
+                self.document.visit.working_view.clear();
                 self.active_canvas_mut().preview.clear();
                 let subject = if inspection {
                     "Source inspection"
