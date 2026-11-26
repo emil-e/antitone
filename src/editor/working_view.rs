@@ -723,6 +723,54 @@ impl Drop for WorkingView {
     }
 }
 
+async fn packed_view_input(
+    demand: &Demand,
+    context: &evaluation::Context,
+    queue: &crate::gpu::submission::Queue,
+) -> Result<Option<evaluation::Image<evaluation::ImageLayout>>, Error> {
+    use evaluation::{ImageBacking, ImageFormat, Region, Tiling};
+
+    let scan = demand.pixels.scan()?;
+    let visible = demand.frame.bounds()?;
+    let cells =
+        |area: crate::geometry::SourceRegion| u64::from(area.width) * u64::from(area.height);
+    let source_cells = cells(scan.area);
+    // Only broad, substantial views benefit from paying for a full original upload.
+    let bytes = source_cells * ImageFormat::Rgba16Uint.pixel_bytes();
+    if !(32 << 20..=512 << 20).contains(&bytes) || cells(visible) * 2 < source_cells {
+        return Ok(None);
+    }
+    let source = crate::acquisition::camera::camera_source(&scan)?;
+    if source
+        .source()
+        .is_none_or(|source| source.storage_format() != ImageFormat::Rgba16Uint)
+    {
+        return Ok(None);
+    }
+    let domain = source.domain();
+    let evaluation = context
+        .request(
+            source,
+            Region {
+                bounds: domain.finite()?,
+                grid: domain.grid,
+            },
+            Tiling { tile: [512, 128] },
+        )?
+        .without_retention();
+    context
+        .materialize(
+            queue,
+            &context.materializations(),
+            evaluation,
+            ImageFormat::Rgba16Uint,
+            ImageBacking::Texture,
+        )?
+        .await
+        .map(Some)
+        .map_err(|error| (*error).clone())
+}
+
 // Physical acquisition follows the latest captured demand while retaining one admission.
 pub(super) async fn acquire_images(
     mailbox: &Arc<Mailbox>,
@@ -795,6 +843,31 @@ pub(super) async fn acquire_images(
                 previous.as_ref(),
             )?;
             trace("graph_described");
+            // Keep the uploaded source live through both consumers without retaining another
+            // full-frame image between visits.
+            let mut packed_input = None;
+            if previous.is_none() && rendering.detail_pending() {
+                let changed = mailbox.1.listen();
+                if cancelled() {
+                    return Ok(None);
+                }
+                let uploaded = futures_lite::future::or(
+                    async { Some(packed_view_input(&demand, context, queue).await) },
+                    async { changed.await; None },
+                ).await;
+                match uploaded {
+                    Some(Ok(Some(input))) => {
+                        packed_input = Some(input);
+                        rendering.replan_pending();
+                        trace("packed_input_ready");
+                    }
+                    Some(Err(error)) => log::debug!(error = error.to_string().as_str(); "working_packed_input_unavailable"),
+                    _ => {}
+                }
+                if cancelled() {
+                    return Ok(None);
+                }
+            }
             let Some(images) = rendering.produce(queue, &cancelled).await? else {
                 return Ok(None);
             };
@@ -847,11 +920,15 @@ pub(super) async fn acquire_images(
                     .as_ref()
                     .is_none_or(|latest| !demand.same_calculation(latest))
             };
-            if !obsolete()
-                && let Err(error) = rendering.produce_underlay(queue, obsolete).await
-            {
-                log::warn!(error = error.to_string().as_str(); "working_underlay_unavailable");
+            if !obsolete() {
+                if packed_input.is_some() {
+                    rendering.replan_underlay();
+                }
+                if let Err(error) = rendering.produce_underlay(queue, obsolete).await {
+                    log::warn!(error = error.to_string().as_str(); "working_underlay_unavailable");
+                }
             }
+            drop(packed_input);
             trace("processed_ready");
             Ok(Some(rendering.ready().map_or(detail, make_frame)))
         }

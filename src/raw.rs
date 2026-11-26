@@ -1115,6 +1115,38 @@ impl Developed<'_> {
         Ok(self.pixels[offset..offset + 4].try_into().unwrap())
     }
 
+    pub(crate) fn read_codes(&self, area: Rect) -> Result<Vec<[u16; 4]>, Error> {
+        if self.is_continuous() {
+            return Err(Error::Raw(
+                "camera samples are continuous, not RGB16 codes".into(),
+            ));
+        }
+        if area.width == 0
+            || area.height == 0
+            || area
+                .x
+                .checked_add(area.width)
+                .is_none_or(|end| end > self.width)
+            || area
+                .y
+                .checked_add(area.height)
+                .is_none_or(|end| end > self.height)
+        {
+            return Err(Error::InvalidParameter(
+                "camera code rectangle outside developed image",
+            ));
+        }
+        let width = area.width as usize;
+        let pitch = self.width as usize;
+        let pixels = self.pixels.as_chunks::<4>().0;
+        let mut codes = Vec::with_capacity(width * area.height as usize);
+        for y in area.y..area.bottom() {
+            let start = y as usize * pitch + area.x as usize;
+            codes.extend_from_slice(&pixels[start..start + width]);
+        }
+        Ok(codes)
+    }
+
     /// Camera values on the shared 65535-unit scale, retaining fractional/above-white light.
     pub fn pixel_samples(&self, x: u32, y: u32) -> Result<[f32; 4], Error> {
         if x >= self.width || y >= self.height {

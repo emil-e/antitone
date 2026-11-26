@@ -37,6 +37,99 @@ fn endpoint(input: e::Value, delta: f32) -> e::Value {
     ).unwrap()
 }
 
+#[test]
+fn pending_view_can_record_from_a_transient_packed_source() {
+    struct Codes;
+    impl e::Source for Codes {
+        fn domain(&self) -> e::Domain {
+            e::Domain {
+                bounds: Some([0, 0, 8, 4].into()),
+                grid: e::Grid::axis_aligned([0.; 2], [1.; 2]),
+            }
+        }
+        fn identity(&self) -> Option<e::RetainedKey> {
+            Some(e::RetainedKey::new("packed view input"))
+        }
+        fn storage_format(&self) -> e::ImageFormat {
+            e::ImageFormat::Rgba16Uint
+        }
+        fn read_codes(&self, region: e::CellRegion) -> Result<Vec<[u16; 4]>, Error> {
+            Ok(vec![
+                [65535, 41, 7, 3];
+                (region.width * region.height) as usize
+            ])
+        }
+        fn read(&self, _: e::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+            panic!("view should sample the packed texture without expanding codes on the host")
+        }
+    }
+    let (device, queue, _) = crate::photographic::test_support::render_context();
+    let context = Context::new(&device, e::CachePolicy { generated_bytes: 0 });
+    let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
+    let input = e::source(Arc::new(Codes));
+    let frame = FrameRaster::full(
+        crate::geometry::Composition::new(
+            [0, 0, 8, 4].into(),
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let request = Request::new(
+        context.clone(),
+        kernels,
+        vec![
+            ImageRequest::new(
+                endpoint(input.clone(), 2.),
+                SourceRequest::for_frame(frame).unwrap(),
+            )
+            .unwrap(),
+        ],
+    )
+    .unwrap();
+    assert!(request.detail_pending());
+    let domain = input.domain();
+    let scope = context.materializations();
+    let acquisition = context
+        .request(
+            input,
+            e::Region {
+                bounds: domain.finite().unwrap(),
+                grid: domain.grid,
+            },
+            e::Tiling { tile: [8, 4] },
+        )
+        .unwrap()
+        .without_retention();
+    let lease = pollster::block_on(
+        context
+            .materialize(
+                &queue,
+                &scope,
+                acquisition,
+                e::ImageFormat::Rgba16Uint,
+                e::ImageBacking::Texture,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    request.replan_pending();
+    assert!(!request.detail_pending());
+    let product = request.ready().unwrap().remove(0);
+    drop(lease);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    product.encode(&device, &mut encoder);
+    queue.submit([encoder.finish()]);
+    product.recording().take().unwrap().submitted();
+    product.pixels.submitted(&scope);
+    assert_eq!(
+        e::read_buffer(&device, &queue, &product.pixels),
+        vec![[65537., 41., 7., 3.]; 32]
+    );
+    assert_eq!(context.retained_bytes(), 0);
+}
+
 #[cfg(feature = "ui-tests")]
 #[test]
 fn source_reuse_observation_rejects_independently_recomputed_equal_pixels() {
