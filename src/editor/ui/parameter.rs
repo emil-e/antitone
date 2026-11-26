@@ -111,12 +111,16 @@ impl<'a> ParameterRow<'a> {
 #[cfg(test)]
 mod tests;
 
-/// A track drag retains its press value and whether it began with Shift.
-#[derive(Clone, Copy, Default)]
-struct FineDrag {
-    start: f64,
-    travel: f32,
-    fine: bool,
+#[derive(Clone, Copy)]
+struct TrackInteraction {
+    slider: egui::Id,
+    precision_drag: Option<PrecisionDrag>,
+}
+
+#[derive(Clone, Copy)]
+enum PrecisionDrag {
+    Active { start: f64 },
+    Interrupted,
 }
 
 fn parameter_name(ui: &mut Ui, row: &ParameterRow<'_>) -> Response {
@@ -144,72 +148,79 @@ fn name_reset_gesture(ui: &Ui, label: &Response) -> bool {
 
 /// The track: absolute drag normally, slow relative travel when the press began with Shift.
 fn track(ui: &mut Ui, row: &ParameterRow<'_>, value: &mut f64, width: f32) -> Response {
-    let step = row.step
-        * if ui.input(|input| input.modifiers.shift) {
-            0.1
-        } else {
-            1.
-        };
+    let (shift, focused) = ui.input(|input| (input.modifiers.shift, input.focused));
+    let step = if shift { row.step * 0.1 } else { row.step };
     ui.scope(|ui| {
         ui.spacing_mut().slider_width = width;
         ui.spacing_mut().interact_size.y = PARAMETER_SLIDER_HEIGHT;
-        let drag_id = ui.make_persistent_id("fine-drag");
-        let mut fine = ui
+        let interaction_id = ui.make_persistent_id("track-interaction");
+        let previous = ui
             .ctx()
-            .data_mut(|data| data.remove_temp::<FineDrag>(drag_id));
-        let shift = ui.input(|input| input.modifiers.shift);
+            .data(|data| data.get_temp::<TrackInteraction>(interaction_id));
         let range = row
             .slider_range
             .clone()
             .unwrap_or_else(|| row.range.clone());
-        let before = *value;
-        let mut shown = before;
-        let response = ui
-            .add(
-                egui::Slider::new(&mut shown, range.clone())
-                    .clamping(egui::SliderClamping::Edits)
-                    .show_value(false)
-                    .logarithmic(row.logarithmic)
-                    .smart_aim(false)
-                    .step_by(step),
-            )
-            .on_hover_text(row.slider_help.unwrap_or("Shift-drag for finer steps."));
-        let pointer_down = ui.is_enabled() && response.is_pointer_button_down_on();
-        if fine.is_some() && !pointer_down && !response.drag_stopped() {
-            // A gesture interrupted by disabling or hiding the row must not hold the value
-            // back to its pre-drag snapshot when the row reappears.
-            fine = None;
-        }
-        if response.drag_started() || (shift && pointer_down && fine.is_none()) {
-            // The press itself holds the accepted value, so precision never jumps.
-            fine = Some(FineDrag {
-                start: before,
-                travel: 0.,
-                fine: shift,
-            });
-        }
-        match fine.as_mut() {
-            Some(state) if state.fine => {
-                if response.dragged() {
-                    state.travel += response.drag_delta().x;
+
+        // Egui hit-tests the previous pass. Resolve the gesture before Slider uses the
+        // value to paint the thumb and publish its accessibility state.
+        let mut precision_drag = None;
+        let mut precision_value = None;
+        if let Some(previous) = previous
+            && let Some(response) = ui.ctx().read_response(previous.slider)
+        {
+            let drag = if response.drag_started() {
+                shift.then_some(PrecisionDrag::Active { start: *value })
+            } else {
+                previous.precision_drag
+            };
+            if let Some(drag) = drag {
+                // Neither release nor an interrupted drag may fall back to absolute input.
+                if response.interact_pointer_pos().is_some() {
+                    precision_value = Some(*value);
                 }
-                // One tenth of a full-width linear drag; logarithmic tracks scale the value,
-                // so their per-pixel travel differs at either end.
-                let span = range.end() - range.start();
-                let per_pixel = span / f64::from(width);
-                // Fine motion must retain typed values beyond the slider's normal travel.
-                let bounds = row.range.clone();
-                *value = (state.start + f64::from(state.travel) * per_pixel * 0.1)
-                    .clamp(*bounds.start(), *bounds.end());
+                if response.is_pointer_button_down_on() {
+                    precision_drag = Some(PrecisionDrag::Interrupted);
+                    if let PrecisionDrag::Active { start } = drag
+                        && focused
+                        && ui.is_enabled()
+                    {
+                        precision_drag = Some(drag);
+                        let span = range.end() - range.start();
+                        let travel = response.total_drag_delta().map_or(0., |delta| delta.x);
+                        // Keep typed values outside the track range available to precise motion.
+                        let adjusted = start + f64::from(travel) * span / f64::from(width) * 0.1;
+                        precision_value =
+                            Some(adjusted.clamp(*row.range.start(), *row.range.end()));
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+                    }
+                }
             }
-            _ => *value = shown,
         }
-        if response.drag_stopped() {
-            fine = None;
-        }
-        if pointer_down && let Some(state) = fine {
-            ui.ctx().data_mut(|data| data.insert_temp(drag_id, state));
-        }
+
+        let slider = egui::Slider::from_get_set(range, |candidate| {
+            if let Some(candidate) = candidate {
+                *value = precision_value.unwrap_or(candidate);
+            }
+            *value
+        })
+        .clamping(egui::SliderClamping::Edits)
+        .show_value(false)
+        .logarithmic(row.logarithmic)
+        .smart_aim(false)
+        .step_by(step);
+        let response = ui
+            .add(slider)
+            .on_hover_text(row.slider_help.unwrap_or("Shift-drag for finer steps."));
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                interaction_id,
+                TrackInteraction {
+                    slider: response.id,
+                    precision_drag,
+                },
+            );
+        });
         response
     })
     .inner

@@ -127,6 +127,78 @@ fn delete_targets_the_focused_canvas_or_filmstrip() {
 }
 
 #[test]
+fn exposure_precision_drag_owns_the_cursor_over_the_dust_canvas() {
+    tools::calibrated_harness(|mut h| {
+        stage(&mut h, "Photo");
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+            .click();
+        h.step();
+        let role = egui::accesskit::Role::Slider;
+        if h.query_by_role_and_label(role, "Exposure").is_none() {
+            let button = egui::accesskit::Role::Button;
+            scroll_to_control(&mut h, button, "Exposure");
+            h.get_by_role_and_label(button, "Exposure").click();
+        }
+        scroll_to_control(&mut h, role, "Exposure");
+        wait_for(&mut h, |editor| {
+            editor.document.visit.working_view.idle() && editor.dusting()
+        });
+        let slider = h.get_by_role_and_label(role, "Exposure").rect();
+        let image = h.read(|editor| editor.active_canvas().last_layout.unwrap().0.image);
+        let initial = h.read(|editor| editor.photo_settings().exposure);
+        let start = slider.left_center() + egui::vec2(slider.width() / 4., 0.);
+        let end = image.right_center() - egui::vec2(20., 0.);
+        let modifiers = egui::Modifiers::SHIFT;
+
+        h.event(egui::Event::ModifiersChanged(modifiers));
+        h.hover_at(end);
+        h.step();
+        assert_eq!(
+            h.output().platform_output.cursor_icon,
+            egui::CursorIcon::Crosshair
+        );
+        assert!(brush_ring_at(&h, end));
+
+        h.hover_at(start);
+        h.event(egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers,
+        });
+        h.step();
+        assert_eq!(
+            h.output().platform_output.cursor_icon,
+            egui::CursorIcon::None
+        );
+        h.read(|editor| assert_eq!(editor.photo_settings().exposure, initial));
+
+        h.hover_at(end);
+        h.step();
+        assert_eq!(
+            h.output().platform_output.cursor_icon,
+            egui::CursorIcon::None
+        );
+        assert!(!brush_ring_at(&h, end));
+        let adjusted = h.read(|editor| editor.photo_settings().exposure);
+        assert!(adjusted < initial && adjusted > -3.);
+
+        h.event(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers,
+        });
+        h.step();
+        assert_ne!(
+            h.output().platform_output.cursor_icon,
+            egui::CursorIcon::None
+        );
+        h.read(|editor| assert_eq!(editor.photo_settings().exposure, adjusted));
+    });
+}
+
+#[test]
 fn dust_direct_cleanup_reuses_heals_and_gpu_sources_through_grading_and_navigation() {
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Photo");

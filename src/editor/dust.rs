@@ -796,12 +796,15 @@ impl tool::Tool for DustTool {
                     layout,
                     relayout,
                 );
+                let canvas_pointer =
+                    canvas.response.hovered() || canvas.response.is_pointer_button_down_on();
                 canvas.ui.add_enabled_ui(!panning, |ui| {
                     tool.dust_interaction(editor, ui, canvas.response, layout, cx);
                 });
                 let ready = canvas.paint_image(editor, layout, false, cx);
-                tool.paint_dust(editor, canvas.ui, layout);
-                if canvas.ui.is_enabled()
+                tool.paint_dust(editor, canvas.ui, layout, canvas_pointer);
+                if canvas_pointer
+                    && canvas.ui.is_enabled()
                     && ready
                     && !panning
                     && editor.tab == 1
@@ -1522,7 +1525,13 @@ impl DustTool {
         }
     }
 
-    fn paint_dust(&self, editor: &Editor, ui: &egui::Ui, geometry: crate::viewport::CanvasLayout) {
+    fn paint_dust(
+        &self,
+        editor: &Editor,
+        ui: &egui::Ui,
+        geometry: crate::viewport::CanvasLayout,
+        canvas_pointer: bool,
+    ) {
         let Some(source) = editor.document.visit.current_source else {
             return;
         };
@@ -1538,7 +1547,9 @@ impl DustTool {
         if !overlays_hidden {
             self.paint_mask_outline(ui, geometry, &painter);
         }
-        self.paint_brush_cursor(editor, ui, geometry, &painter);
+        if canvas_pointer {
+            self.paint_brush_cursor(editor, ui, geometry, &painter);
+        }
         if show_masks && !overlays_hidden {
             self.paint_donor_guides(editor, ui, geometry, &painter);
         }
