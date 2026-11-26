@@ -40,7 +40,8 @@ The names come from film density, but what you pick are measurements in the imag
 
 Choose **Pick Dmin (film base)** or **Pick Dmax**, then click the patch to measure.
 To choose a specific area, drag a rectangle and click **Apply**.
-Pickers keep your current view; use **View source** if you want to inspect the negative.
+The viewer switches to the positive when the two picks give you a usable calibration.
+Use **View source** to inspect the negative again.
 The values come from original samples per colour channel, and the two picks need not be
 the same kind of material.
 

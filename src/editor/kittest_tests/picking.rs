@@ -54,8 +54,6 @@ fn incompatible_reference_fails_only_the_positive_view_and_can_be_repicked() {
             .click();
         h.step();
         wait_interaction(h);
-        h.get_by_label("View source").click();
-        h.step();
     }
 
     workflow::calibrated_workflow(|mut h, _, _directory| {
@@ -70,6 +68,8 @@ fn incompatible_reference_fails_only_the_positive_view_and_can_be_repicked() {
             set_layout(&mut h, size, width);
             let before = h.read(|editor| editor.input());
             pick_at(&mut h, egui::pos2(96., 32.));
+            h.read(|editor| assert!(editor.canvas_inspection()));
+            h.get_by_label("View source").click();
             h.run_steps(3);
             h.read(|editor| {
                 assert_ne!(editor.input(), before);

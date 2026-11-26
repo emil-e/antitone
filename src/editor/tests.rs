@@ -820,7 +820,7 @@ fn incompatible_reference_preserves_view_preferences_and_survives_cancelling_ano
 }
 
 #[test]
-fn completing_calibration_preserves_the_current_view_in_either_pick_order() {
+fn either_reference_can_complete_calibration_without_overriding_an_existing_view_choice() {
     for order in [
         [PickerCase::Dmin, PickerCase::Dmax],
         [PickerCase::Dmax, PickerCase::Dmin],
@@ -846,9 +846,9 @@ fn completing_calibration_preserves_the_current_view_in_either_pick_order() {
                 })
                 .unwrap();
                 editor.finish_pick(&crate::application::UiContext::render_only());
-                let expected = initial_source.unwrap_or(true);
+                let expected_source = initial_source.unwrap_or(index == 0);
                 assert_eq!(
-                    editor.document.source, expected,
+                    editor.document.source, expected_source,
                     "{order:?}, initial={initial_source:?}, index={index}"
                 );
                 assert_eq!(
