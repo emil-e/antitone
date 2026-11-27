@@ -199,67 +199,20 @@ impl Request {
         Some(images)
     }
 
-    pub(crate) fn detail_pending(&self) -> bool {
-        self.pending.lock().unwrap().is_some()
-    }
-
-    pub(crate) fn replan_pending(&self) {
-        let pending = self.pending.lock().unwrap().take();
-        let Some(mut planned) = pending else {
-            return;
-        };
-        // Keep the original plan if the optional resident-input path cannot be planned.
-        let evaluations = || {
-            planned
-                .requests
-                .iter()
-                .map(|image| image.evaluation(&planned.context))
-                .collect::<Result<Vec<_>, _>>()
-        };
-        match evaluations().and_then(|images| planned.context.request_images(images)) {
-            Ok(ImageDelivery::Drawable(images)) => {
-                match view_images(
-                    &planned.context,
-                    &planned.kernels,
-                    planned.requests.clone(),
-                    images,
-                ) {
-                    Ok(images) => {
-                        *self.ready.lock().unwrap() = Some(images);
-                        return;
-                    }
-                    Err(error) => {
-                        log::debug!(error = error.to_string().as_str(); "working_resident_plan_unavailable")
-                    }
-                }
-            }
-            Ok(ImageDelivery::Pending(job)) => planned.job = job,
-            Err(error) => {
-                log::debug!(error = error.to_string().as_str(); "working_resident_plan_unavailable")
-            }
-        }
-        *self.pending.lock().unwrap() = Some(planned);
-    }
-
     pub(crate) fn underlay_pending(&self) -> bool {
         self.underlay
             .as_ref()
             .is_some_and(|underlay| underlay.pending.lock().unwrap().is_some())
     }
 
-    pub(crate) fn replan_underlay(&self) {
-        if let Some(underlay) = &self.underlay {
-            underlay.replan_pending();
-        }
-    }
-
     pub(crate) async fn produce_underlay(
         &self,
         queue: &crate::gpu::submission::Queue,
+        run: &crate::evaluation::EvaluationRun,
         cancelled: impl Fn() -> bool,
     ) -> Result<(), Error> {
         if let Some(underlay) = &self.underlay {
-            underlay.produce(queue, cancelled).await?;
+            underlay.produce(queue, run, cancelled).await?;
         }
         Ok(())
     }
@@ -267,6 +220,7 @@ impl Request {
     pub(crate) async fn produce(
         &self,
         queue: &crate::gpu::submission::Queue,
+        run: &crate::evaluation::EvaluationRun,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<Vec<Arc<ViewImage>>>, Error> {
         let pending = self.pending.lock().unwrap().take();
@@ -279,7 +233,7 @@ impl Request {
         else {
             return Ok(self.ready());
         };
-        let images = match job.finish(queue, cancelled).await {
+        let images = match job.finish(queue, run, cancelled).await {
             Ok(images) => view_images(&context, &kernels, requests, images)?,
             Err(Error::Cancelled) => return Ok(None),
             Err(error) => return Err(error),

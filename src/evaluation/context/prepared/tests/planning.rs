@@ -148,7 +148,7 @@ fn overlapping_branch_demands_compute_one_shared_value_with_cold_or_available_in
         } else {
             let image = pollster::block_on(
                 context
-                    .produce_images(&queue, vec![shared])
+                    .produce_images(&queue, vec![shared], EvaluationRun::default())
                     .unwrap()
                     .remove(0),
             )
@@ -310,7 +310,7 @@ fn mtf_and_halation_share_the_upstream_blur_without_changing_signed_light() {
     );
     let image = pollster::block_on(
         context
-            .produce_images(&queue, vec![shared])
+            .produce_images(&queue, vec![shared], EvaluationRun::default())
             .unwrap()
             .remove(0),
     )
@@ -665,7 +665,7 @@ fn check_projection_reuse(extent: [u32; 2], pitch: [f64; 2]) {
 
     let image = pollster::block_on(
         context
-            .produce_images(&queue, vec![work])
+            .produce_images(&queue, vec![work], EvaluationRun::default())
             .unwrap()
             .remove(0),
     )

@@ -36,6 +36,10 @@ mod batch;
 #[cfg(feature = "editor")]
 mod batch_units;
 mod materialize;
+#[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]
+mod source_residency;
+#[cfg(feature = "editor")]
+pub(crate) use source_residency::EvaluationRun;
 #[cfg(feature = "editor")]
 mod prepared;
 #[cfg(feature = "editor")]

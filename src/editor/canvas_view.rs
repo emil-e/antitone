@@ -134,7 +134,9 @@ impl Preview {
         let (queue, context) = (queue.clone(), context.clone());
         let task = cx.spawn(move |_| async move {
             let result = request
-                .produce(&queue, || false)
+                .produce(&queue, &crate::evaluation::EvaluationRun::default(), || {
+                    false
+                })
                 .await
                 .map(|images| images.map(|mut images| images.remove(0)));
             context.request_repaint();
