@@ -54,6 +54,12 @@ Corrected originals retain continuous f32 camera samples (fractions and values a
 
 Panasonic RW2 development applies enabled distortion profiles from `DistortionInfo` (`0x0119`). The [darktable 5.8 interpretation](https://github.com/darktable-org/darktable/pull/21656) defines a radial polynomial on the sensor's active half-diagonal; development inverts it on a sampled grid. Sensor bounds set the optical centre and radius; the camera's aspect crop sets the output framing. Reconstruction uses the same camera-RGB path as Sony and trims the frame as needed for valid sampling at native pixel pitch. RW2 correction does not include shading or chromatic aberration.
 
+### Embedded Nikon Z lens correction
+
+Nikon Z development applies enabled distortion and vignetting independently on supported FX captures (Z 6, Z 6II, Z 7, Z 8, Z 9 and Z f). Both use the active half-diagonal and stabilizer-dependent optical centre. [Distortion](https://github.com/storytold/lightcraft/blob/main/docs/nikon-lens-corrections.md) also uses the recorded zoom to map output radii to RAW locations; only geometric correction can trim the output.
+
+Vignetting multiplies linear camera RGB at the source samples before bilinear reconstruction. The embedded strength scales four even radial terms to give `1 + strength × (a r² + b r⁴ + c r⁶ + d r⁸)`, consistent with controlled NX Studio exports. Camera Off and unsupported records skip that component without disabling the other. DX framing and lateral chromatic aberration are outside this correction's scope.
+
 ## Digital starting brightness
 
 Digital uses the embedded camera preview as a per-capture brightness reference, leaving Roll and layer exposure at zero. Source preparation resolves the fixed gain; captured interpretation includes it in the camera-to-AP1 transform, so tools, repairs, viewer, thumbnails and exports receive the same normalized baseline pixels. The native samples and recorded colour matrix remain unchanged; no additional full-image pass is needed. Roll and adjustment-layer grading follow that baseline.
