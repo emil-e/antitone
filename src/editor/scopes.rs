@@ -373,10 +373,11 @@ impl Editor {
     }
 
     pub(super) fn scope_panel(&mut self, ui: &mut egui::Ui) -> Option<Slot> {
+        let target = self.preview_target();
         egui::Frame::new()
             .fill(ui.visuals().faint_bg_color)
             .inner_margin(4)
-            .show(ui, |ui| self.scopes.panel(ui, self.document.target(), 180.))
+            .show(ui, |ui| self.scopes.panel(ui, target, 180.))
             .inner
     }
 
@@ -410,7 +411,7 @@ impl Editor {
             .canvas_frame
             .displayed
             .as_ref()
-            .map_or(self.document.target(), |image| image.view.target);
+            .map_or(self.preview_target(), |image| image.view.target);
         let Some(input) = self.scope_request() else {
             if let Some(gpu) = &self.scopes.gpu {
                 gpu.invalidate();
@@ -439,7 +440,11 @@ impl Editor {
                 egui::Vec2::splat(side),
             );
         } else {
-            trace.min.x += 24.;
+            trace.min.x += if slot.settings.target.is_hdr() {
+                44.
+            } else {
+                24.
+            };
             // Endpoint labels need vertical breathing room; the vectorscope has no text gutter.
             trace.min.y += 4.;
             trace.max.y -= 4.;
@@ -503,8 +508,15 @@ fn scope_notice(
 fn graticule(painter: &egui::Painter, rect: egui::Rect, settings: Settings) {
     let stroke = egui::Stroke::new(1., egui::Color32::from_rgb(82, 72, 110));
     if settings.plot != Plot::Vector {
+        let maximum = settings.target.peak_nits() as f32;
         for level in [0., 0.25, 0.5, 0.75, 1.] {
             let y = egui::lerp(rect.bottom()..=rect.top(), level);
+            let value = (level * maximum) as u32;
+            let label = if settings.target.is_hdr() && level == 1. {
+                format!("{value} nit")
+            } else {
+                value.to_string()
+            };
             painter.line_segment(
                 [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
                 stroke,
@@ -512,7 +524,7 @@ fn graticule(painter: &egui::Painter, rect: egui::Rect, settings: Settings) {
             painter.text(
                 egui::pos2(rect.left() - 3., y),
                 egui::Align2::RIGHT_CENTER,
-                format!("{}", (level * 100.) as u32),
+                label,
                 egui::FontId::proportional(9.),
                 egui::Color32::GRAY,
             );
@@ -528,13 +540,15 @@ fn graticule(painter: &egui::Painter, rect: egui::Rect, settings: Settings) {
     for radius in [0.25, 0.5] {
         painter.circle_stroke(center, (radius * scale) as f32, stroke);
     }
-    let skin_end = direction_on_rim(rect, basis.skin_reference_direction(), 8.);
-    painter.extend(egui::Shape::dashed_line(
-        &[center, skin_end],
-        egui::Stroke::new(1., egui::Color32::from_rgb(160, 123, 68)),
-        4.,
-        4.,
-    ));
+    if !settings.target.is_hdr() {
+        let skin_end = direction_on_rim(rect, basis.skin_reference_direction(), 8.);
+        painter.extend(egui::Shape::dashed_line(
+            &[center, skin_end],
+            egui::Stroke::new(1., egui::Color32::from_rgb(160, 123, 68)),
+            4.,
+            4.,
+        ));
+    }
     for (_, rgb) in references() {
         let direction = basis.vector(rgb);
         let color = egui::Color32::from_rgb(

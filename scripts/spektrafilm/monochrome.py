@@ -45,7 +45,6 @@ PRODUCERS = [
     DEFINITION,
     *SOURCES,
     ROOT / "native/spektrafilm/reference.cpp",
-    ROOT / "native/rendering_transform.h",
     ROOT / "assets/ocio/authoring-reference.json",
 ]
 

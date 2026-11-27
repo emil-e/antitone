@@ -10,7 +10,9 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
-pub struct Targets([Target; 2]);
+const TARGET_COUNT: usize = OutputTarget::ALL.len();
+
+pub struct Targets(Box<[Target]>);
 
 impl Targets {
     pub async fn new(
@@ -18,16 +20,14 @@ impl Targets {
         queue: &crate::gpu::submission::Queue,
     ) -> Result<Self, Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let targets = (|| {
-            Ok(Self([
-                target_resources(device, queue, OutputTarget::Srgb)?,
-                target_resources(device, queue, OutputTarget::DisplayP3)?,
-            ]))
-        })();
+        let targets = OutputTarget::ALL
+            .into_iter()
+            .map(|target| target_resources(device, queue, target))
+            .collect::<Result<Box<[_]>, Error>>();
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
-        targets
+        targets.map(Self)
     }
 
     pub fn get(&self, target: OutputTarget) -> &Target {
@@ -148,32 +148,35 @@ impl Operation for Display {
 fn callable_library(target: OutputTarget, generated: &str) -> Result<Arc<str>, Error> {
     use std::sync::OnceLock;
 
-    static SRGB: OnceLock<Result<Arc<str>, Error>> = OnceLock::new();
-
-    static P3: OnceLock<Result<Arc<str>, Error>> = OnceLock::new();
-    let cache = match target {
-        OutputTarget::Srgb => &SRGB,
-        OutputTarget::DisplayP3 => &P3,
-    };
-    cache.get_or_init(|| aces::library(generated)).clone()
+    static LIBRARIES: [OnceLock<Result<Arc<str>, Error>>; TARGET_COUNT] =
+        [const { OnceLock::new() }; TARGET_COUNT];
+    LIBRARIES[target as usize]
+        .get_or_init(|| aces::library(generated))
+        .clone()
 }
 
 fn target_assets(target: OutputTarget) -> (&'static str, [&'static [u8]; 2]) {
+    macro_rules! assets {
+        ($name:literal) => {
+            (
+                include_str!(concat!("../../../../assets/ocio/", $name, "-ap1.glsl")),
+                [
+                    include_bytes!(concat!("../../../../assets/ocio/", $name, "-ap1-lut-0.f32"))
+                        .as_slice(),
+                    include_bytes!(concat!("../../../../assets/ocio/", $name, "-ap1-lut-1.f32"))
+                        .as_slice(),
+                ],
+            )
+        };
+    }
+
     match target {
-        OutputTarget::Srgb => (
-            include_str!("../../../../assets/ocio/srgb-ap1.glsl"),
-            [
-                include_bytes!("../../../../assets/ocio/srgb-ap1-lut-0.f32").as_slice(),
-                include_bytes!("../../../../assets/ocio/srgb-ap1-lut-1.f32").as_slice(),
-            ],
-        ),
-        OutputTarget::DisplayP3 => (
-            include_str!("../../../../assets/ocio/display-p3-ap1.glsl"),
-            [
-                include_bytes!("../../../../assets/ocio/display-p3-ap1-lut-0.f32").as_slice(),
-                include_bytes!("../../../../assets/ocio/display-p3-ap1-lut-1.f32").as_slice(),
-            ],
-        ),
+        OutputTarget::Srgb => assets!("srgb"),
+        OutputTarget::DisplayP3 => assets!("display-p3"),
+        OutputTarget::Rec2020_500 => assets!("rec2020-500"),
+        OutputTarget::Rec2020_1000 => assets!("rec2020-1000"),
+        OutputTarget::Rec2020_2000 => assets!("rec2020-2000"),
+        OutputTarget::Rec2020_4000 => assets!("rec2020-4000"),
     }
 }
 

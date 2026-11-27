@@ -1,4 +1,4 @@
-// Generates upstream OCIO AP1/AP0 equivalence references, GLSL and LUTs for both SDR targets.
+// Generates upstream OCIO AP1/AP0 equivalence references, GLSL and LUTs for the selected-output targets.
 // Requires pinned OCIO and an existing .cache/probes.
 // Gates finite outputs/LUTs, neutral spread and basis agreement; prints resource/error statistics.
 // Writes regenerable reference artifacts, not photographic or physical-display acceptance.
@@ -67,10 +67,14 @@ int main(int argc, char **) try {
     inputFile.write(reinterpret_cast<const char *>(inputs.data()),
                     inputs.size() * sizeof(inputs[0]));
     inputFile.close();
-    for (int target = 0; target < 2; ++target) {
+    const std::array names{
+        "srgb", "display-p3", "rec2020-500", "rec2020-1000", "rec2020-2000", "rec2020-4000",
+    };
+    for (unsigned target = 0; target < names.size(); ++target) {
+        const char *name = names[target];
         auto processor = antitone::rendering(target);
         auto cpu = processor->getDefaultCPUProcessor();
-        std::printf("TARGET %s\n", target ? "Display-P3-D65" : "sRGB-D65");
+        std::printf("TARGET %s\n", name);
         float neutralError = 0.f;
         for (float value : {0.f, .001f, .01f, .18f, 1.f, 10.f, 1000.f}) {
             float pixel[4] = {value, value, value, 1.f};
@@ -101,8 +105,7 @@ int main(int argc, char **) try {
             }
         }
         std::printf("AP1_entry_vs_converted_AP0_reference_max_error=%.8g\n", basisError);
-        std::ofstream referenceFile(std::string(".cache/probes/") +
-                                        (target ? "display-p3" : "srgb") + "-ap1-reference.f32",
+        std::ofstream referenceFile(std::string(".cache/probes/") + name + "-ap1-reference.f32",
                                     std::ios::binary);
         referenceFile.write(reinterpret_cast<const char *>(outputs.data()),
                             outputs.size() * sizeof(outputs[0]));
@@ -113,7 +116,6 @@ int main(int argc, char **) try {
         shader->setFunctionName("antitone_render");
         shader->setResourcePrefix("aces_");
         processor->getDefaultGPUProcessor()->extractGpuShaderInfo(shader);
-        const char *name = target ? "display-p3" : "srgb";
         std::ofstream code(std::string(".cache/probes/") + name + "-ap1.glsl");
         code << shader->getShaderText();
         std::printf("neutral_max_error=%.8g textures=%u textures3d=%u uniforms=%u\n", neutralError,
@@ -142,7 +144,8 @@ int main(int argc, char **) try {
                                std::ios::binary);
             data.write(reinterpret_cast<const char *>(values), count * sizeof(float));
         }
-        if (neutralError > 2e-5f)
+        const double peak = antitone::output_parameters(target)[0] / 100.;
+        if (neutralError > 2e-5 * peak)
             return 5;
     }
     return 0;

@@ -1,7 +1,9 @@
 //! File settings, metadata and bounded encoding. No photographic graph or GPU state.
+#[cfg(any(test, all(feature = "gpu", feature = "raw")))]
+use super::samples::Layout;
 use super::{
     BlockOrder, ImageSize, RenderTarget, Result,
-    samples::{FloatPrecision, Layout, Samples},
+    samples::{FloatPrecision, Samples},
 };
 use crate::Error;
 use std::fs;
@@ -59,6 +61,15 @@ impl FileFormat {
         }
     }
 
+    pub(crate) fn supports_target(self, target: RenderTarget) -> bool {
+        match self {
+            Self::Tiff => matches!(target, RenderTarget::Display(_)),
+            Self::Jpeg(_) => matches!(target, RenderTarget::Display(display) if !display.is_hdr()),
+            Self::Exr(_) => matches!(target, RenderTarget::SceneLinearAp0),
+        }
+    }
+
+    #[cfg(any(test, all(feature = "gpu", feature = "raw")))]
     pub(crate) fn layout(self) -> Layout {
         match self {
             Self::Tiff => Layout::Rgb16,
@@ -85,7 +96,7 @@ impl FileFormat {
             (Self::Exr(precision), RenderTarget::SceneLinearAp0) => {
                 exr::encode(file, size, precision, &mut block)
             }
-            _ => unreachable!("the export plan admits only supported target and layout pairs"),
+            _ => unreachable!("the export plan admits only supported target and codec pairs"),
         }
     }
 }

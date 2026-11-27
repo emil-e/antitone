@@ -1,7 +1,7 @@
 {
   "upstream_revision": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
   "inputs": {
-    "scripts/spektrafilm/monochrome.py": "2c586df14e701e4aec3f6930f7cb7091ff892e81fdefa33d3d3eb285810cab95",
+    "scripts/spektrafilm/monochrome.py": "86cbd02c64ec97fc516c0cde1f9020a810c351a91fa3d60a0b976d04473d4163",
     "scripts/spektrafilm/build.py": "b48a7bd12bf29025c0de3643610e9e7dc805aa51dab67fc6f0cb75c26a7b999a",
     "scripts/spektrafilm/requirements.lock": "e1182ee0eb7b0aeb29fa75a4b11ec33ba776570f60cebba10bd74cbd2d1841f8",
     "scripts/spektrafilm/characteristic.py": "45b0784723093edfb0715e88fa1f74c8fb5b51491b5ec0f0100c562cd86c9d4d",
@@ -18,7 +18,6 @@
     "assets/negatives/kodak-tmax-400-d76-8m/source.json": "638b5c199300bc906b4e344d34bb43a094007fc3a6761fc0a6ec948d4bba1f59",
     "assets/negatives/kodak-trix-400-d76-8m/source.json": "df8a70dee2f57f683e38628ad9bf9d825adc916fc3a019982926e424a8d454f2",
     "native/spektrafilm/reference.cpp": "121c8116744b33f9f003797c8f102c63304fcea08c8d1c21e5f13910793e1262",
-    "native/rendering_transform.h": "ad7b554e6bca7eb3521199310e33becab41a2870649db12e68e945f39b1932a2",
     "assets/ocio/authoring-reference.json": "a299444e75f6a85c3e1482f3d45665e939a0a3e486f4d3c11573e158f61f8d40"
   },
   "dependencies": {

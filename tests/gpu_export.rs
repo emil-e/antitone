@@ -98,6 +98,59 @@ fn file_writer_executes_already_authored_linear_nodes_without_photographic_reint
 }
 
 #[test]
+fn hdr_tiff_roundtrips_absolute_pq_codes_and_full_range_rec2020_signal() {
+    let (context, queue) = context();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pq.tif");
+    let target = OutputTarget::Rec2020_1000;
+    antitone::gpu_export::write(
+        &context,
+        &queue,
+        Request {
+            definition: evaluation::source(Arc::new(Linear {
+                pixels: vec![[0., 1., 2.03, 0.], [5., 8., 10., 0.]],
+            })),
+            composition: composition(2),
+            plan: Plan::new(RenderTarget::Display(target), FileFormat::Tiff).unwrap(),
+        },
+        &path,
+        Overwrite::Refuse,
+    )
+    .unwrap();
+
+    let mut decoder = Decoder::new(std::fs::File::open(&path).unwrap()).unwrap();
+    let icc = decoder
+        .get_tag_u8_vec(tiff::tags::Tag::Unknown(34675))
+        .unwrap();
+    let profile = lcms2::Profile::new_icc(&icc).unwrap();
+    let lcms2::Tag::VideoSignal(signal) = profile.read_tag(lcms2::TagSignature::CicpTag) else {
+        panic!("HDR ICC profile must identify the coded RGB signal");
+    };
+    assert_eq!(
+        (
+            signal.ColourPrimaries,
+            signal.TransferCharacteristics,
+            signal.MatrixCoefficients,
+            signal.VideoFullRangeFlag
+        ),
+        (9, 16, 0, 1)
+    );
+    // Unrounded ST 2084 code units for 0, 100, 203, 500, 800 and 1000 cd/m².
+    let reference = [
+        0.0479, 33296.9194, 38055.4457, 44339.9856, 47678.3625, 49270.9888,
+    ];
+    let actual = tiff(&path);
+    assert_eq!(actual.len(), reference.len());
+    assert_eq!(actual[0], 0);
+    for (code, expected) in actual.into_iter().zip(reference) {
+        assert!(
+            (f64::from(code) - expected).abs() <= 1.,
+            "{code} vs {expected}"
+        );
+    }
+}
+
+#[test]
 fn jpeg_uses_the_same_authored_display_value_as_tiff() {
     use image::{ImageDecoder, codecs::jpeg::JpegDecoder};
     use std::{fs::File, io::BufReader};

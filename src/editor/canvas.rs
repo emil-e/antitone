@@ -603,7 +603,7 @@ impl Editor {
                 return None;
             }
         };
-        let target = self.document.target();
+        let target = self.preview_target();
         let precision = !source_outside_frame && !pending && image.is_sample();
         let demand =
             self.source_context()
@@ -768,7 +768,7 @@ impl Editor {
             field: correction
                 .prepared()
                 .map(|correction| correction.gpu.clone()),
-            target: self.document.target(),
+            target: self.preview_target(),
         };
         let rendered = self
             .active_canvas_mut()
@@ -921,7 +921,7 @@ impl SourceView {
         };
         self.original.observe(original_view::Demand {
             capture: capture.clone(),
-            target: editor.document.target(),
+            target: editor.preview_target(),
             view: Some(view),
             composition,
             source: self.source().expect("prepared source"),
@@ -964,7 +964,7 @@ impl SourceView {
                 frame,
                 capture,
                 field: None,
-                target: editor.document.target(),
+                target: editor.preview_target(),
             };
             let queue = services
                 .map(|services| &services.queue)

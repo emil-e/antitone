@@ -148,7 +148,10 @@ fn lightroom_new_roll_returns_rendered_photos_and_single_member_reopens_the_whol
         assert!(!first.join("saved.json").exists());
         let first_render = returned_paths(&first.join("result.json"))[0].clone();
         let first_bytes = std::fs::read(&first_render).unwrap();
+        let hdr = OutputTarget::Rec2020_2000;
         h.update(|editor| {
+            editor.document.set_target(hdr);
+            assert_eq!(editor.preview_target(), OutputTarget::DisplayP3);
             let id = editor.document.project.order[0];
             let crop = editor
                 .document
@@ -167,6 +170,15 @@ fn lightroom_new_roll_returns_rendered_photos_and_single_member_reopens_the_whol
         assert_eq!(next.len(), 2);
         assert_ne!(next[0], first_render);
         assert_eq!(tiff_dimensions(&next[0]), (24, 18));
+        for (path, target) in [(&first_render, OutputTarget::DisplayP3), (&next[0], hdr)] {
+            let mut tiff = tiff::decoder::Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
+            assert_eq!(
+                tiff.get_tag_u8_vec(tiff::tags::Tag::Unknown(34675))
+                    .unwrap(),
+                crate::profiles::icc(target),
+                "Send must use the project target independently of preview capability"
+            );
+        }
         assert_eq!(std::fs::read(first_render).unwrap(), first_bytes);
         h.enter(|editor, cx| {
             editor.save_project(project.clone(), crate::project::Save::New, None, cx)

@@ -2,7 +2,7 @@
 
 The editor connects photographic settings, image tools and asynchronous work. Its central rule is simple: **a view may be temporary, but accepted photographic state must remain coherent**.
 
-Roll, Photo and Rendering are editing scopes, not separate pipelines. Roll selects Negative or Digital interpretation and owns shared grading plus Negative calibration and optional flat-field correction; Photo owns individual grading and composition — its turn/flip setting starts from the orientation the camera recorded, and saved projects keep their stored setting; Rendering owns Film texture, LUT, Film & paper and the preview target, which also initializes rendered export. Changing tabs changes available controls, not the image's processing. [Architecture](architecture.md) describes how these scopes are owned and disposed.
+Roll, Photo and Rendering are editing scopes, not separate pipelines. Roll selects Negative or Digital interpretation and owns shared grading plus Negative calibration and optional flat-field correction; Photo owns individual grading and composition — its turn/flip setting starts from the orientation the camera recorded, and saved projects keep their stored setting; Rendering owns Film texture, LUT, Film & paper and the [preview target](colour-and-output.md#render-for-a-declared-target). Changing tabs changes available controls, not the image's processing. [Architecture](architecture.md) describes how these scopes are owned and disposed.
 
 The editor uses a neutral dark workspace with amber identity and active-state accents. The shared application header presents the film-edge wordmark and project identity without making the wordmark an interactive control. [Branding assets](../assets/branding/README.md) explain the artwork and regeneration.
 
@@ -119,7 +119,7 @@ Escape invokes the active modal activity’s Cancel action, even before progress
 
 ## Export photographs
 
-File → **Export…** captures Selected photos or All photos in the displayed filmstrip order on confirmation. Choose an existing destination folder and a file format. JPEG and TIFF offer sRGB or Display P3. JPEG uses 8-bit RGB and adjustable quality; TIFF uses 16-bit RGB and lossless Deflate. EXR writes scene-linear AP0 in half or full float. [Colour and output](colour-and-output.md#render-and-encode-a-file) explains what each target renders.
+File → **Export…** captures Selected photos or All photos in the displayed filmstrip order on confirmation. Choose an existing destination folder and a file format. JPEG and TIFF offer sRGB or Display P3. TIFF also offers the Rec.2020 PQ presets and defaults to the project's Rendering target. JPEG uses 8-bit RGB and adjustable quality; TIFF uses 16-bit RGB and lossless Deflate. EXR writes scene-linear AP0 in half or full float. [Colour and output](colour-and-output.md#render-and-encode-a-file) explains what each target renders.
 
 Filenames use the source stem with an optional suffix. Keep both is the non-destructive default, Skip leaves existing files alone, and Replace requires explicit batch confirmation. The last accepted folder is an application preference. Export choices and target overrides do not edit the project or dirty state.
 

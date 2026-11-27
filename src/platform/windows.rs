@@ -24,7 +24,14 @@ pub(crate) fn presentation() -> Presentation {
     }
 }
 
-pub(crate) fn configure_presentation(_surface: &wgpu::Surface<'_>) -> Result<(), Error> {
+pub(crate) fn hdr_available(_window: &Window) -> bool {
+    false
+}
+
+pub(crate) fn configure_presentation(
+    _surface: &wgpu::Surface<'_>,
+    _hdr: bool,
+) -> Result<(), Error> {
     Ok(())
 }
 

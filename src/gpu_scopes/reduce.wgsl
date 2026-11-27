@@ -1,5 +1,5 @@
 struct Parameters {
-    size: vec4u,
+    size: vec4u, // width, height, plot, target peak in nits
     luma_gain: vec4f,
     direction_extent: vec4f,
     uv_x: vec4f,
@@ -36,20 +36,24 @@ fn reduce(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
     let rgb = pixel.rgb;
-    if !all(rgb >= vec3f(0.)) || !all(rgb <= vec3f(1.)) {
+    let peak = f32(p.size.w) / 100.;
+    if !all(rgb >= vec3f(0.)) || !all(rgb <= vec3f(peak)) {
         return;
     }
-    let encoded = select(
-            1.055 * pow(rgb, vec3f(1. / 2.4)) - .055,
-            12.92 * rgb,
-            rgb <= vec3f(.0031308),
-        );
-    let y = dot(p.luma_gain.xyz, encoded);
+    var channels = rgb / peak;
+    if p.size.w == 100u {
+        channels = select(
+                1.055 * pow(rgb, vec3f(1. / 2.4)) - .055,
+                12.92 * rgb,
+                rgb <= vec3f(.0031308),
+            );
+    }
+    let y = dot(p.luma_gain.xyz, channels);
     if p.size.z == 2u {
         // Normalize by all admitted samples, even those outside the zoomed plot.
         atomicAdd(&totals[0], 1u);
-        let cb = (encoded.b - y) / (2. * (1. - p.luma_gain.z));
-        let cr = (encoded.r - y) / (2. * (1. - p.luma_gain.x));
+        let cb = (channels.b - y) / (2. * (1. - p.luma_gain.z));
+        let cr = (channels.r - y) / (2. * (1. - p.luma_gain.x));
         let d = p.direction_extent.xy;
         let point = vec2f(dot(d, vec2f(cb, cr)), dot(vec2f(-d.y, d.x), vec2f(cb, cr)));
         let uv = point / (2. * p.direction_extent.z) + .5;
@@ -59,7 +63,7 @@ fn reduce(@builtin(global_invocation_id) id: vec3u) {
     } else {
         let column = bin((f32(id.x) + .5) / f32(p.size.x));
         atomicAdd(&totals[1u + column], 1u);
-        let values = vec4f(encoded, y);
+        let values = vec4f(channels, y);
         for(var c = 0u; c < 4u; c++) {
             atomicAdd(&bins[c * 65536u + bin(1. - values[c]) * 256u + column], 1u);
         }

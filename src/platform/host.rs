@@ -7,7 +7,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::window::{Window, WindowId};
 
 use super::{
-    QuitGuard, WindowPlacement, configure_presentation, fullscreen::PhotoFullscreen,
+    QuitGuard, WindowPlacement, configure_presentation, fullscreen::PhotoFullscreen, hdr_available,
     latency::Trace, menu, presentation, quit_cancel_on_unwind,
 };
 use crate::application::{Application, UiContext};
@@ -57,6 +57,10 @@ pub trait App: Sized {
     }
     /// Delivered after window presentation is changed; UI restoration uses the next frame's bounds.
     fn photo_fullscreen_changed(&mut self, _active: bool) {}
+    fn hdr_preview_requested(&self) -> bool {
+        false
+    }
+    fn hdr_preview_changed(&mut self, _active: bool) {}
     fn on_exit(&mut self) {}
 }
 
@@ -419,6 +423,9 @@ impl<
             }
             WindowEvent::Moved(_) => {
                 state.capture_windowed_placement();
+                if state.app.read(App::hdr_preview_requested) {
+                    state.gpu.window.request_redraw();
+                }
                 Ok(())
             }
             WindowEvent::Occluded(occluded) => {
@@ -550,6 +557,13 @@ impl<A: App> State<'_, A> {
 
     fn draw(&mut self, context: &egui::Context, event_loop: &ActiveEventLoop) -> Result<()> {
         let mut timing = self.gpu.trace.as_mut().map(Trace::begin);
+        let hdr_requested = self.app.read(App::hdr_preview_requested);
+        let hdr = hdr_requested && hdr_available(&self.gpu.window);
+        if hdr != self.gpu.hdr {
+            self.gpu.hdr = hdr;
+            self.gpu.needs_configure = true;
+            self.app.with_mut(|app| app.hdr_preview_changed(hdr));
+        }
         let size = self.gpu.window.inner_size();
         let frame = if size.width == 0 || size.height == 0 {
             None
@@ -619,6 +633,9 @@ impl<A: App> State<'_, A> {
             timing.ui_start = Some(Instant::now());
         }
         let mut output = context.run_ui(raw, |ui| self.app.with_mut(|app| app.ui(ui, &self.app)));
+        if hdr_requested != self.app.read(App::hdr_preview_requested) {
+            self.gpu.window.request_redraw();
+        }
         if let (Some(menus), Some(state)) = (&mut self.menus, self.app.read(App::menu_state)) {
             menus.update(&state);
         }
@@ -904,6 +921,7 @@ struct Gpu {
     staged: Option<StagedTarget>,
     renderer: egui_wgpu::Renderer,
     needs_configure: bool,
+    hdr: bool,
     presented: u64,
     trace: Option<Trace>,
 }
@@ -966,6 +984,7 @@ impl Gpu {
             staged: None,
             renderer,
             needs_configure: true,
+            hdr: false,
             presented: 0,
             trace: Trace::from_env(),
         };
@@ -1022,7 +1041,7 @@ impl Gpu {
         );
 
         self.queue.configure(&self.surface, &self.config);
-        configure_presentation(&self.surface)?;
+        configure_presentation(&self.surface, self.hdr)?;
         if let Some(bridge) = &self.bridge {
             self.staged = Some(bridge.target(&self.device, self.config.width, self.config.height));
         }

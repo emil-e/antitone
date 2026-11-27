@@ -567,6 +567,23 @@ fn crops_roundtrip_by_source_id_and_reject_outside_fractional_or_empty_coverage(
 }
 
 #[test]
+fn rec2020_peak_presets_roundtrip_as_project_rendering_intent() {
+    use antitone::color::OutputTarget;
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut project = Project::default();
+    assert_eq!(project.output.display_target, OutputTarget::DisplayP3);
+    for target in OutputTarget::HDR {
+        project.output.display_target = target;
+        let path = directory
+            .path()
+            .join(format!("{}.antitone", target.peak_nits()));
+        project.save(&path, Save::New).unwrap();
+        assert_eq!(Project::load(&path).unwrap(), project);
+    }
+}
+
+#[test]
 fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_sources() {
     let dir = tempfile::tempdir().unwrap();
     let (mut project, dmin_source_id, dmax_source_id) = fixture(dir.path());
