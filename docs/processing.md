@@ -50,6 +50,10 @@ The current binding reconstructs one conservative valid rectangle at unchanged p
 
 Corrected originals retain continuous f32 camera samples (fractions and values above native white included) and release LibRaw's redundant development buffer. Without optical correction, sources retain native integer storage unless early highlight handling produces changed float pixels. [The source-storage study](diagnostics.md#sony-source-storage-precision) distinguishes rounding differences from headroom loss. All consumers use the corrected developed raster rather than applying their own lens warp: [flat references](flat-field.md) estimate residual illumination in those coordinates, and [projects](projects.md#source-interpretation-and-identity) reuse accepted WB with the current decoder.
 
+### Embedded Panasonic distortion
+
+Panasonic RW2 development applies enabled distortion profiles from `DistortionInfo` (`0x0119`). The [darktable 5.8 interpretation](https://github.com/darktable-org/darktable/pull/21656) defines a radial polynomial on the sensor's active half-diagonal; development inverts it on a sampled grid. Sensor bounds set the optical centre and radius; the camera's aspect crop sets the output framing. Reconstruction uses the same camera-RGB path as Sony and trims the frame as needed for valid sampling at native pixel pitch. RW2 correction does not include shading or chromatic aberration.
+
 ## Digital starting brightness
 
 Digital uses the embedded camera preview as a per-capture brightness reference, leaving Roll and layer exposure at zero. Source preparation resolves the fixed gain; captured interpretation includes it in the camera-to-AP1 transform, so tools, repairs, viewer, thumbnails and exports receive the same normalized baseline pixels. The native samples and recorded colour matrix remain unchanged; no additional full-image pass is needed. Roll and adjustment-layer grading follow that baseline.

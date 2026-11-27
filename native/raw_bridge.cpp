@@ -21,8 +21,9 @@
 #include <windows.h>
 #endif
 
-static_assert(sizeof(AntitoneRawMetadata) == 680);
+static_assert(sizeof(AntitoneRawMetadata) == 728);
 static_assert(sizeof(AntitoneRawSonyLens) == 160);
+static_assert(sizeof(AntitoneRawPanasonicLens) == 44);
 static_assert(sizeof(AntitoneRawView) == 72);
 static_assert(sizeof(AntitoneRawThumbnail) == 32);
 
@@ -403,9 +404,48 @@ void sony_lens_tag(void *context, int encoded_tag, int type, int count, unsigned
     length = uint32_t(count);
 }
 
+struct PanasonicLensCapture {
+    AntitoneRawPanasonicLens lens{};
+    uint32_t seen_bounds = 0;
+    bool invalid_bounds = false;
+
+    void tag(int id, int type, int count, unsigned order, LibRaw_abstract_datastream &stream,
+             INT64 base) {
+        // LibRaw labels the native PanasonicRaw namespace separately from standard TIFF.
+        if (base != 0)
+            return;
+        if (id == 0x30119) {
+            // DistortionInfo is a byte blob containing little-endian words.
+            lens.status = lens.status == 0 && type == 7 && count == 32 &&
+                                  read_words(stream, 0x4949, lens.words, 16)
+                              ? 1
+                              : 2;
+        } else if (id >= 0x30004 && id <= 0x30007) {
+            const auto index = id - 0x30004;
+            const auto bit = 1u << index;
+            if ((seen_bounds & bit) || type != 3 || count != 1 ||
+                !read_words(stream, order, &lens.sensor_bounds[index], 1))
+                invalid_bounds = true;
+            seen_bounds |= bit;
+        }
+    }
+
+    AntitoneRawPanasonicLens selected(const libraw_iparams_t &format) const {
+        if (format.maker_index != LIBRAW_CAMERAMAKER_Panasonic || format.dng_version)
+            return {};
+        auto selected = lens;
+        if (invalid_bounds || seen_bounds != 0xf) {
+            // No reliable normalization; disabled profiles don't need these bounds.
+            std::fill(std::begin(selected.sensor_bounds), std::end(selected.sensor_bounds), 0);
+        }
+        return selected;
+    }
+};
+
 struct HeaderCapture {
     PreviewRaw &raw;
     SonyLensCapture lens;
+    PanasonicLensCapture panasonic{};
     std::array<char, 20> capture_time{};
     bool conflicting_time = false;
 };
@@ -415,10 +455,11 @@ void header_tag(void *context, int tag, int type, int count, unsigned order, voi
     auto &capture = *static_cast<HeaderCapture *>(context);
     capture.raw.capture_orientation(tag);
     sony_lens_tag(&capture.lens, tag, type, count, order, input, base);
+    auto &stream = *static_cast<LibRaw_abstract_datastream *>(input);
+    capture.panasonic.tag(tag, type, count, order, stream, base);
 
     // DateTimeOriginal in the Exif IFD, not DateTime or DateTimeDigitized.
     if (tag == 0x9003 && type == 2 && count == 20 && !capture.conflicting_time) {
-        auto &stream = *static_cast<LibRaw_abstract_datastream *>(input);
         std::array<char, 20> value{};
         if (stream.read(value.data(), 1, value.size()) == value.size() && value.back() == 0) {
             capture.conflicting_time =
@@ -590,6 +631,7 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
     }
     metadata(*raw, *out);
     out->vendor.sony_lens = selected_sony_lens(*raw, capture.lens);
+    out->vendor.panasonic_lens = capture.panasonic.selected(raw->imgdata.idata);
     if (capture.conflicting_time)
         capture.capture_time.fill(0);
     std::memcpy(out->capture_time, capture.capture_time.data(), capture.capture_time.size());
