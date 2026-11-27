@@ -204,7 +204,9 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
             processing::{DEFAULT_GAMMA, InputSettings, Response},
             project::{FlatFieldSettings, Project, Save, Source, SourceDevelopment, SourceId},
         };
-        let decode = scan.metadata().development([1.; 4]);
+        let development = SourceDevelopment::from_developed(&scan).unwrap();
+        assert_eq!(development.dimensions, [384, 320]);
+        assert_eq!(development.active_area, [8, 8, 368, 304]);
         let mut project = Project {
             input: InputSettings::Negative {
                 dmin: Some(anchors.dmin),
@@ -224,16 +226,7 @@ fn authored_bare_light_corrects_known_illumination_and_persists_the_measured_map
                     development_mode: antitone::project::DevelopmentMode::Unity,
                     id: SourceId(0),
                     path: fixture(name),
-                    development: SourceDevelopment {
-                        decode: antitone::project::Development {
-                            white_balance: scan.white_balance(),
-                            ..decode.clone()
-                        },
-                        dimensions: [384, 320],
-                        active_area: [8, 8, 368, 304],
-                        camera_model: scan.camera_model().to_owned(),
-                        camera_to_ap1: scan.camera_to_ap1().to_cols_array_2d(),
-                    },
+                    development: development.clone(),
                     adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
                         AdjustmentLayerSettings::default(),
                     )),

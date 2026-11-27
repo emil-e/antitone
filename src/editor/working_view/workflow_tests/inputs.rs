@@ -11,11 +11,7 @@ fn held_correction(
         .register(crate::project::Source {
             id: SourceId(0),
             path: input.source.path().to_path_buf(),
-            development: crate::project::SourceDevelopment::from_metadata(
-                &input.source.metadata(),
-                input.source.white_balance(),
-            )
-            .unwrap(),
+            development: crate::project::SourceDevelopment::from_developed(&input.source).unwrap(),
             capture_time: None,
             development_mode: crate::project::DevelopmentMode::Unity,
             repairs: Default::default(),

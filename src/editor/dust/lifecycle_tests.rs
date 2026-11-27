@@ -737,9 +737,7 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         input: calibration.into(),
         ..Default::default()
     };
-    let source =
-        crate::source::source_metadata(scan.path(), &scan.metadata(), scan.white_balance())
-            .unwrap();
+    let source = crate::source::developed_record(&scan).unwrap();
     let id = project.add_source(source).unwrap();
     let mut recipe = project.image_recipe(id).unwrap();
     recipe.neutral.correction = scan_field.clone();

@@ -14,16 +14,7 @@ fn input() -> (
 ) {
     let file = fixture::bayer_dng();
     let source = DevelopedSource::open(file.path(), Some([1.; 4])).unwrap();
-    let metadata = source.metadata();
-    let image = source.camera_image().unwrap();
-    let area = source.area();
-    let development = SourceDevelopment {
-        decode: metadata.development([1.; 4]),
-        dimensions: [image.width, image.height],
-        active_area: [area.x, area.y, area.width, area.height],
-        camera_model: source.camera_model().to_owned(),
-        camera_to_ap1: source.camera_to_ap1().to_cols_array_2d(),
-    };
+    let development = SourceDevelopment::from_developed(&source).unwrap();
     let key = SourceKey::new(file.path(), &development);
     (file, key, source)
 }
@@ -342,11 +333,7 @@ fn an_interpreted_pixel_lease_remains_discoverable_across_cache_scopes() {
 #[test]
 fn cacheless_preparation_does_not_bypass_backend_development_validation() {
     let (file, _key, source) = input();
-    let mut development = crate::project::SourceDevelopment::from_metadata(
-        &source.metadata(),
-        source.white_balance(),
-    )
-    .unwrap();
+    let mut development = SourceDevelopment::from_developed(&source).unwrap();
     development.camera_model.push_str(" different");
     let other_key = SourceKey::capture(file.path(), &development).unwrap();
     assert!(

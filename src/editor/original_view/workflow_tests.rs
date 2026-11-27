@@ -93,11 +93,8 @@ fn held_correction(
         .register(crate::project::Source {
             id: SourceId(0),
             path: demand.source.source.path().to_path_buf(),
-            development: crate::project::SourceDevelopment::from_metadata(
-                &demand.source.source.metadata(),
-                demand.source.source.white_balance(),
-            )
-            .unwrap(),
+            development: crate::project::SourceDevelopment::from_developed(&demand.source.source)
+                .unwrap(),
             capture_time: None,
             development_mode: crate::project::DevelopmentMode::Unity,
             repairs: Default::default(),

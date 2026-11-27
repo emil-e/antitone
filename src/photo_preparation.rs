@@ -79,7 +79,7 @@ pub(crate) fn native_with_preview(
             proxy: None,
         });
     }
-    let development = SourceDevelopment::from_metadata(&source.metadata(), source.white_balance())?;
+    let development = SourceDevelopment::from_developed(source)?;
     let mut sampled = None;
     let value = reference.get_or_init(|| {
         resolve(

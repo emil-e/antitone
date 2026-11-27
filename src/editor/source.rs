@@ -1,8 +1,7 @@
 //! Explicit source acquisition and preparation. Each consumer leases immutable
 //! development and carries its own correction; no selected-source slot is needed.
 use super::{
-    ActivityOptions, Editor, Ready, SelectionTiming, UiContext, document, source_loading,
-    thumbnails,
+    ActivityOptions, Editor, Ready, SelectionTiming, UiContext, source_loading, thumbnails,
 };
 use crate::{Error, project::Source, scan::DevelopedSource};
 use std::{path::PathBuf, sync::Arc};
@@ -242,23 +241,16 @@ impl Services {
         let timing = Timing {
             started,
             development_seconds: started.elapsed().as_secs_f64(),
-            registration_seconds: 0.,
-            verification_seconds: 0.,
         };
-        crate::background::run(move |_| {
-            request.accept(acquired, &|| cancelled.is_cancelled(), timing)
-        })
-        .await
-        .map_err(|_| "Source acceptance worker panicked".to_owned())?
-        .map_err(|error| error.to_string())
+        request
+            .accept(acquired, &|| cancelled.is_cancelled(), timing)
+            .map_err(|error| error.to_string())
     }
 }
 
 struct Timing {
     started: std::time::Instant,
     development_seconds: f64,
-    registration_seconds: f64,
-    verification_seconds: f64,
 }
 
 impl Request {
@@ -299,8 +291,6 @@ impl Request {
         let timing = Timing {
             started,
             development_seconds: started.elapsed().as_secs_f64(),
-            registration_seconds: 0.,
-            verification_seconds: 0.,
         };
         self.accept(prepared, cancelled, timing)
     }
@@ -309,31 +299,17 @@ impl Request {
         self,
         acquired: crate::source::input::Acquired,
         cancelled: &dyn Fn() -> bool,
-        mut timing: Timing,
+        timing: Timing,
     ) -> Result<Developed, Error> {
         self.require_live(cancelled)?;
-        let tick = std::time::Instant::now();
         let crate::source::input::Acquired {
             prepared,
             record,
             file,
             ..
         } = acquired;
-        let source = prepared.source;
-        let actual = document::source_metadata(
-            self.source.path(),
-            &source.metadata(),
-            source.white_balance(),
-        )?;
-        timing.registration_seconds = tick.elapsed().as_secs_f64();
-        document::verify_source(&record, &actual)?;
-        let tick = std::time::Instant::now();
-        document::verify_development(&record, &source)?;
-        timing.verification_seconds = tick.elapsed().as_secs_f64();
-        let camera_proxy = prepared.proxy;
-        self.require_live(cancelled)?;
         let context = Context {
-            source,
+            source: prepared.source,
             reference: prepared.reference,
             correction: self.correction,
         };
@@ -343,7 +319,7 @@ impl Request {
             file,
             path: self.source.path().to_owned(),
             timing,
-            camera_proxy,
+            camera_proxy: prepared.proxy,
         })
     }
 }
@@ -391,15 +367,11 @@ impl Developed {
         let Timing {
             started,
             development_seconds,
-            registration_seconds,
-            verification_seconds,
         } = self.timing;
 
         log::debug!(
             seconds = started.elapsed().as_secs_f64(),
-            registration_seconds,
             development_seconds,
-            verification_seconds,
             proxy_seconds,
             renderer_seconds,
             images_seconds;

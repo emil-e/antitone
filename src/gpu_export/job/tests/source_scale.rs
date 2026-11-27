@@ -26,7 +26,7 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
             )
             .unwrap(),
         );
-        let area = scan.area();
+        assert_eq!(scan.dimensions().unwrap(), (64, 64));
         let mut project = Project {
             input: InputSettings::Digital,
             ..Default::default()
@@ -37,13 +37,7 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
                 development_mode: crate::project::DevelopmentMode::Unity,
                 id: SourceId(0),
                 path: file.path().into(),
-                development: SourceDevelopment {
-                    decode: scan.metadata().development(scan.white_balance()),
-                    dimensions: [64; 2],
-                    active_area: [area.x, area.y, area.width, area.height],
-                    camera_model: scan.camera_model().to_owned(),
-                    camera_to_ap1: scan.camera_to_ap1().to_cols_array_2d(),
-                },
+                development: SourceDevelopment::from_developed(&scan).unwrap(),
                 adjustment_layers: None,
                 repairs: Default::default(),
                 orientation: Default::default(),

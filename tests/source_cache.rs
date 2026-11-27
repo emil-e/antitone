@@ -1,7 +1,6 @@
 #![cfg(all(feature = "raw", feature = "project"))]
 use antitone::{
     project::{Development, Source, SourceDevelopment, SourceId},
-    raw::RawFile,
     scan::{CameraPixels, DevelopedSource},
     source::{Charges, SourceCache, SourceKey},
 };
@@ -23,11 +22,9 @@ struct Input {
 impl Input {
     fn new() -> Self {
         let file = fixture::bayer_dng();
-        let raw = RawFile::open(file.path()).unwrap();
-        let metadata = raw.metadata;
-        assert_eq!(metadata.width, fixture::SIDE);
-        let area = metadata.image_area().unwrap();
-        let mut record = Source {
+        let (raw, development) = SourceDevelopment::read_header(file.path(), Some(WB)).unwrap();
+        assert_eq!(raw.metadata.width, fixture::SIDE);
+        let record = Source {
             capture_time: None,
             development_mode: antitone::project::DevelopmentMode::Unity,
             id: SourceId(1),
@@ -38,16 +35,9 @@ impl Input {
             repairs: Default::default(),
             crop: None,
             orientation: Default::default(),
-            development: SourceDevelopment {
-                decode: metadata.development(WB),
-                dimensions: [metadata.width, metadata.height],
-                active_area: [area.x, area.y, area.width, area.height],
-                camera_model: metadata.camera_model(),
-                camera_to_ap1: metadata.camera_to_ap1().unwrap().to_cols_array_2d(),
-            },
+            development,
         };
-        let development = metadata.development([1.; 4]);
-        record.development.decode = development.clone();
+        let development = record.development.decode.clone();
         let key = SourceKey::capture(file.path(), &record.development).unwrap();
         Self {
             file,

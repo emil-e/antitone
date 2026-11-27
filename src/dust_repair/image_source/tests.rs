@@ -5,9 +5,7 @@ use crate::processing::InputSettings;
 use glam::{DMat3, DVec3};
 
 fn recipe(scan: &DevelopedSource, input: InputSettings) -> crate::image_recipe::ImageRecipe {
-    let source =
-        crate::source::source_metadata(scan.path(), &scan.metadata(), scan.white_balance())
-            .unwrap();
+    let source = crate::source::developed_record(scan).unwrap();
     let mut project = crate::project::Project {
         input,
         ..Default::default()

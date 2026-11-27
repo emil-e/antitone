@@ -517,7 +517,7 @@ impl Worker {
         work.metrics.development_seconds =
             work.started.elapsed().as_secs_f64() - work.metrics.disk_seconds;
         if let Ok(record) = work.job.physical.record() {
-            work.job.key.source.source = record.development.for_runtime();
+            work.job.key.source.source = record.development.for_current_producer();
         }
         let (reply, result) = futures_channel::oneshot::channel();
         let start = {

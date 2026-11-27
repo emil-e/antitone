@@ -103,8 +103,7 @@ fn native_and_proxy_preparation_share_captured_reference_precedence_without_muta
         development_mode: crate::project::DevelopmentMode::AsShot,
         id: crate::project::SourceId(0),
         path: file.path().to_owned(),
-        development: SourceDevelopment::from_metadata(&metadata, developed.white_balance())
-            .unwrap(),
+        development: SourceDevelopment::from_developed(&developed).unwrap(),
         adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
             Default::default(),
         )),

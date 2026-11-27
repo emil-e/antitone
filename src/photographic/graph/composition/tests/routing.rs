@@ -87,8 +87,7 @@ fn one_central_effect_addition_reaches_complete_purpose_endpoints_without_changi
             path: file.path().into(),
             capture_time: None,
             development_mode: crate::project::DevelopmentMode::Unity,
-            development: SourceDevelopment::from_metadata(&scan.metadata(), scan.white_balance())
-                .unwrap(),
+            development: SourceDevelopment::from_developed(&scan).unwrap(),
             orientation: Default::default(),
             crop: None,
             repairs: Default::default(),
@@ -312,8 +311,7 @@ fn preview_and_proxy_layouts_can_be_replanned_with_an_explicit_capture() {
             path: file.path().into(),
             capture_time: None,
             development_mode: crate::project::DevelopmentMode::Unity,
-            development: SourceDevelopment::from_metadata(&scan.metadata(), scan.white_balance())
-                .unwrap(),
+            development: SourceDevelopment::from_developed(&scan).unwrap(),
             orientation: Default::default(),
             crop: None,
             repairs: Default::default(),

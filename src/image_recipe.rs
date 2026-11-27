@@ -6,7 +6,7 @@ use crate::{
     flat_field::FlatField,
     geometry::Composition,
     processing::{InputSettings, RollSettings},
-    project::{Project, Source, SourceDevelopment, SourceId},
+    project::{Project, Source, SourceId},
 };
 use std::sync::Arc;
 
@@ -40,7 +40,7 @@ impl SourceRecipe {
     #[cfg(feature = "raw")]
     pub fn require_source(&self, source: &crate::scan::DevelopedSource) -> Result<(), Error> {
         source.require_input(&self.input)?;
-        let actual = SourceDevelopment::from_metadata(&source.metadata(), source.white_balance())?;
+        let actual = crate::project::SourceDevelopment::from_developed(source)?;
         if !self.source_development.resolved()?.same_processing(&actual) {
             return Err(Error::Raw(
                 "captured recipe differs from developed source".into(),

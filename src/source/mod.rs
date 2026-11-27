@@ -5,6 +5,8 @@ pub(crate) use identity::FileKey;
 pub use identity::FileRevision;
 
 #[cfg(all(feature = "raw", feature = "project"))]
+mod development;
+#[cfg(all(feature = "raw", feature = "project"))]
 mod key;
 #[cfg(all(feature = "raw", feature = "project"))]
 pub use key::SourceKey;
@@ -31,8 +33,10 @@ pub(crate) use loader::{NativePhase, Request};
 pub use loader::{Priority, SourceLoader};
 #[cfg(feature = "editor")]
 mod metadata;
+#[cfg(all(test, feature = "editor"))]
+pub(crate) use metadata::developed_record;
 #[cfg(feature = "editor")]
-pub(crate) use metadata::{open_source, source_metadata, verify_development, verify_source};
+pub(crate) use metadata::{open_source, verify_development};
 
 /// Acquires an owning source lease. Dropping the future retires that request;
 /// a native call already in progress keeps its inputs until it finishes.

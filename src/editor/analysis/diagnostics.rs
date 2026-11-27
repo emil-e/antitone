@@ -52,7 +52,7 @@ fn render_roll(editor: &Editor, output: &Path) -> Result<Vec<Value>, Box<dyn std
         let record = project.source(*id)?;
         let path = editor.document.source_path(*id)?;
         let source = crate::scan::DevelopedSource::open(&path, wb)?;
-        document::verify_development(record, &source)?;
+        crate::source::verify_development(record, &source)?;
         let correction = project.active_flat_field().map(|field| field.map.as_ref());
         let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
             project.input.with_calibration((calibration).validate()?),

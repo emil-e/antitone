@@ -224,10 +224,9 @@ fn recorded_decoder_releases_do_not_block_open_preparation_or_export() {
             .unwrap();
             let context = developed.context.clone();
             assert_eq!(
-                context
-                    .source
-                    .metadata()
-                    .development([1.; 4])
+                crate::project::SourceDevelopment::from_developed(&context.source)
+                    .unwrap()
+                    .decode
                     .backend_version,
                 if sdk {
                     crate::dng::INTERPRETATION.into()

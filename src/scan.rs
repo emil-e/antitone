@@ -73,11 +73,12 @@ impl DevelopedSource {
     /// Develop and freeze a caller-configured, uniquely owned RAW handle.
     pub fn from_raw(mut raw: RawFile, white_balance: Option<[f64; 4]>) -> Result<Self> {
         let wb = white_balance.unwrap_or_else(|| raw.metadata.as_shot_wb());
-        raw.prepare_basis(wb)?;
+        raw.develop_camera(wb)?;
+
+        // The SDK supplies the basis of the developed pixels with the result.
         let matrix = raw.metadata.camera_to_ap1()?;
         let camera_model = raw.metadata.camera_model();
-        let area = raw.metadata.image_area()?;
-        raw.develop_camera(wb)?;
+        let (_, area) = raw.source_layout()?;
         let wb = raw.white_balance(wb);
         let source_scale = raw.metadata.source_scale(wb)?;
         Ok(Self {

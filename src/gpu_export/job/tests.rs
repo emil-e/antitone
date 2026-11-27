@@ -9,7 +9,7 @@ fn fixture_render(format: Format, renderer: &crate::render_fixture::RenderFixtur
 use crate::{
     dust_repair::{RepairOrigin, SupportMask},
     photographic::test_inputs::AuthoredPhotograph,
-    project::{Development, Project, Source, SourceDevelopment, SourceId},
+    project::{Project, Source, SourceDevelopment, SourceId},
     scan::DevelopedSource,
 };
 mod cancellation;
@@ -21,16 +21,8 @@ mod source_scale;
 mod starting_exposure;
 
 fn fixture(scan: &DevelopedSource) -> (Project, SourceId) {
-    let (width, height) = scan.dimensions().unwrap();
     let a = scan.area();
-    let mut source_development = SourceDevelopment {
-        decode: scan.metadata().development(scan.white_balance()),
-        dimensions: [width, height],
-        active_area: [a.x, a.y, a.width, a.height],
-        camera_model: scan.camera_model().to_owned(),
-        camera_to_ap1: scan.camera_to_ap1().to_cols_array_2d(),
-    };
-    source_development.decode = Development::for_source(&source_development);
+    let source_development = SourceDevelopment::from_developed(scan).unwrap();
     let mut project = Project {
         input: crate::processing::InputSettings::Negative {
             dmin: Some(DVec3::splat(0.8)),
