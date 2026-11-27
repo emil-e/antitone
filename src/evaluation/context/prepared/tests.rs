@@ -88,11 +88,11 @@ fn independent_preparations_join_the_same_pending_image() {
         .unwrap();
     let second = context.prepare_image(request(&context, root)).unwrap();
     let first = context
-        .produce_images(&queue, vec![first])
+        .produce_images(&queue, vec![first], EvaluationRun::default())
         .unwrap()
         .remove(0);
     let second = context
-        .produce_images(&queue, vec![second])
+        .produce_images(&queue, vec![second], EvaluationRun::default())
         .unwrap()
         .remove(0);
     assert_eq!(reads.load(Ordering::SeqCst), 0);
@@ -131,7 +131,7 @@ fn incomplete_read_descriptions_use_ordinary_preparation() {
     assert_eq!(reads.load(Ordering::SeqCst), 0);
     let image = pollster::block_on(
         context
-            .produce_images(&queue, vec![prepared])
+            .produce_images(&queue, vec![prepared], EvaluationRun::default())
             .unwrap()
             .remove(0),
     )
@@ -229,15 +229,18 @@ fn pending_batch_does_not_start_early_or_record_only_the_resident_member() {
         };
         batch
     };
-    drop(pending().finish(&queue, || panic!("unpolled job checked cancellation")));
+    drop(pending().finish(&queue, &EvaluationRun::default(), || {
+        panic!("unpolled job checked cancellation")
+    }));
     assert!(matches!(
-        pollster::block_on(pending().finish(&queue, || true)),
+        pollster::block_on(pending().finish(&queue, &EvaluationRun::default(), || true)),
         Err(Error::Cancelled)
     ));
     assert_eq!(warm_reads.load(Ordering::SeqCst), 1);
     assert_eq!(cold_reads.load(Ordering::SeqCst), 0);
 
-    let images = pollster::block_on(pending().finish(&queue, || false)).unwrap();
+    let images =
+        pollster::block_on(pending().finish(&queue, &EvaluationRun::default(), || false)).unwrap();
     assert_eq!(images.len(), 2);
     for (image, shift) in images.iter().zip([3., 7.]) {
         assert!(image.commands.is_none());

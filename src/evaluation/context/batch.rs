@@ -18,6 +18,6 @@ impl Context {
             ..self.clone()
         };
         let prepared = context.prepare_images(evaluations)?;
-        context.produce_images(queue, prepared)
+        context.produce_images(queue, prepared, EvaluationRun::default())
     }
 }

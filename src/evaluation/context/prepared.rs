@@ -48,12 +48,15 @@ impl PendingImages {
     pub(crate) async fn finish(
         self,
         queue: &crate::gpu::submission::Queue,
+        run: &EvaluationRun,
         cancelled: impl Fn() -> bool,
     ) -> Result<Vec<RecordedImage>, Error> {
         if cancelled() {
             return Err(Error::Cancelled);
         }
-        let images = self.context.produce_images(queue, self.plans)?;
+        let images = self
+            .context
+            .produce_images(queue, self.plans, run.clone())?;
         let mut images = Box::pin(futures_util::future::try_join_all(images));
         let completed = futures_util::future::poll_fn(|cx| {
             if cancelled() {
@@ -117,6 +120,21 @@ impl Preparation {
                 "image preparation requires production before recording",
             )),
         }
+    }
+
+    fn needs_production(&self) -> bool {
+        matches!(self.work, PreparedWork::Produce(_) | PreparedWork::Units)
+    }
+
+    fn resolve_resident_inputs(self, context: &Context) -> Self {
+        // Unit work discovers storage when lowered. Only a prebuilt upload plan
+        // needs to be rebuilt; if that plan cannot be prepared, keep the original.
+        if matches!(self.work, PreparedWork::Produce(_))
+            && let Ok(plan) = context.prepare_image(self.evaluation.clone())
+        {
+            return plan;
+        }
+        self
     }
 
     fn produce(self, worker: &Worker<'_>, layout: ImageLayout) -> Result<Arc<ImageValue>, Error> {
@@ -296,6 +314,14 @@ impl Context {
         if cancelled() {
             return Err(Error::Cancelled);
         }
+        let run = EvaluationRun::default();
+        let preparation = if preparation.needs_production()
+            && run.prepare_sources(self, queue, &preparation.evaluation, &cancelled)
+        {
+            preparation.resolve_resident_inputs(self)
+        } else {
+            preparation
+        };
         let evaluation = &preparation.evaluation;
         let definition = evaluation.job.image();
         let region = evaluation.job.region();
@@ -339,6 +365,7 @@ impl Context {
         &self,
         queue: &crate::gpu::submission::Queue,
         prepared: Vec<Preparation>,
+        run: EvaluationRun,
     ) -> Result<Vec<ImageFuture<ImageLayout>>, Error> {
         let scope = self.materializations();
         let mut requests = Vec::new();
@@ -376,6 +403,17 @@ impl Context {
                 let working = RunWorkingSet::default();
                 let cancelled = || stop.is_cancelled();
                 let progress = || wake.wake();
+                let resident = missing
+                    .iter()
+                    .map(|&index| &prepared[index])
+                    .find(|plan| plan.needs_production())
+                    .is_some_and(|plan| {
+                        run.prepare_sources(&context, &queue, &plan.evaluation, &cancelled)
+                    });
+                if cancelled() {
+                    return Err(Error::Cancelled);
+                }
+
                 if missing.len() > 1 {
                     let jobs = missing
                         .iter()
@@ -437,6 +475,11 @@ impl Context {
                         .cloned()
                         .unwrap();
                     let retain = evaluation.retain;
+                    let preparation = if resident {
+                        preparation.resolve_resident_inputs(&context)
+                    } else {
+                        preparation
+                    };
                     let image = preparation.produce(&worker, layout)?;
                     owned_scope.publish(
                         &Image {

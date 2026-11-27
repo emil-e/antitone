@@ -763,6 +763,15 @@ impl Materializations {
         key: RetainedKey,
         layout: Arc<ImageLayout>,
     ) -> (ImageFuture<ImageLayout>, Option<InlineProducer>) {
+        self.claim_unit_for(key, layout, RequestPolicy { retain: true })
+    }
+
+    pub(super) fn claim_unit_for(
+        &self,
+        key: RetainedKey,
+        layout: Arc<ImageLayout>,
+        policy: RequestPolicy,
+    ) -> (ImageFuture<ImageLayout>, Option<InlineProducer>) {
         let mut entries = self.0.entries.lock().unwrap();
         // A queued root/batch cannot be awaited by a worker it may depend on. Fulfil its
         // calculation here; when its continuation runs, it can reuse the completed value.
@@ -780,7 +789,7 @@ impl Materializations {
             reserved_retention = Some(reserved_retention.unwrap_or(false) || entry.retain);
         }
         let policy = RequestPolicy {
-            retain: reserved_retention.unwrap_or(true),
+            retain: reserved_retention.unwrap_or(policy.retain),
         };
         if let Some(value) = self.find_entry(
             &mut entries,

@@ -67,7 +67,179 @@ fn wait_for_upload(device: &wgpu::Device, done: mpsc::Receiver<()>) -> Result<()
     }
 }
 
+fn upload_source_texture(
+    device: &wgpu::Device,
+    queue: &crate::gpu::submission::Queue,
+    source: &dyn Source,
+    layout: ImageLayout,
+    cancelled: &dyn Fn() -> bool,
+    progress: &dyn Fn(),
+) -> Result<Arc<ImageValue>, Error> {
+    let format = layout.format;
+    let texture = device.try_create_texture(&wgpu::TextureDescriptor {
+        label: Some("materialized source image"),
+        size: wgpu::Extent3d {
+            width: layout.region.width,
+            height: layout.region.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: match format {
+            ImageFormat::Rgba16Uint => wgpu::TextureFormat::Rgba16Uint,
+            ImageFormat::Rgba32Float => wgpu::TextureFormat::Rgba32Float,
+        },
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })?;
+    // Bound CPU and queued upload storage independently of image size.
+    let row_bytes = u64::from(layout.region.width) * format.pixel_bytes();
+    let rows = ((4 << 20) / row_bytes)
+        .max(1)
+        .min(u64::from(layout.region.height)) as u32;
+    let started = Instant::now();
+    let mut read_time = Duration::ZERO;
+    let mut queue_time = Duration::ZERO;
+    let mut uploads = std::collections::VecDeque::new();
+    let transferred = (|| -> Result<(), Error> {
+        for y in (0..layout.region.height).step_by(rows as usize) {
+            if cancelled() {
+                break;
+            }
+            let region = CellRegion {
+                y: layout.region.y + y as i32,
+                height: rows.min(layout.region.height - y),
+                ..layout.region
+            };
+            let reading = Instant::now();
+            let upload = read_source(source, region, format)?;
+            read_time += reading.elapsed();
+            let submitting = Instant::now();
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: 0, y, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                upload.bytes(),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row_bytes as u32),
+                    rows_per_image: Some(region.height),
+                },
+                wgpu::Extent3d {
+                    width: region.width,
+                    height: region.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let (send, done) = mpsc::sync_channel(1);
+            queue.submit_with_completion(std::iter::empty(), move || {
+                let _ = send.send(());
+            });
+            queue_time += submitting.elapsed();
+            if y == 0 {
+                log::debug!(format:? = format, bytes = layout.bytes(); "texture_source_upload_started");
+            }
+            uploads.push_back(done);
+            if uploads.len() == 2 {
+                wait_for_upload(device, uploads.pop_front().unwrap())?;
+            }
+            progress();
+        }
+
+        Ok(())
+    })();
+    // Queued uploads own storage until completion, including cancellation
+    // and a later read failure.
+    for done in uploads {
+        wait_for_upload(device, done)?;
+    }
+    transferred?;
+    log::debug!(
+        format:? = format,
+        bytes = layout.bytes(),
+        cancelled = cancelled(),
+        read_ms = read_time.as_secs_f64() * 1000.,
+        submit_ms = queue_time.as_secs_f64() * 1000.,
+        total_ms = started.elapsed().as_secs_f64() * 1000.;
+        "texture_source_upload"
+    );
+    Ok(ImageValue::texture(texture))
+}
+
 impl Context {
+    /// Acquire on the calling worker so a running calculation never waits on
+    /// an upload queued to its own pool. The caller owns the transient lease.
+    #[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]
+    pub(crate) fn resident_source_texture(
+        &self,
+        queue: &crate::gpu::submission::Queue,
+        value: &Value,
+        admit: impl FnOnce(ImageLayout) -> bool,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Option<Image<ImageLayout>>, Error> {
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
+
+        let source = value.source().ok_or(Error::InvalidParameter(
+            "texture materialization requires an acquired source image",
+        ))?;
+        let domain = value.domain();
+        let layout = ImageLayout {
+            domain,
+            region: domain.finite()?,
+            format: source.storage_format(),
+            backing: ImageBacking::Texture,
+        };
+        let max_dimension = self.device.limits().max_texture_dimension_2d;
+        if layout.region.width > max_dimension
+            || layout.region.height > max_dimension
+            || !admit(layout)
+        {
+            return Ok(None);
+        }
+
+        let Some(key) = value.output(layout.region)?.identity().cloned() else {
+            return Ok(None);
+        };
+        let scope = self.materializations();
+        scope.requested(value, layout.region);
+        let (pending, producer) = scope.claim_unit_for(
+            key,
+            Arc::new(layout),
+            super::super::materializations::RequestPolicy { retain: false },
+        );
+        if let Some(producer) = producer {
+            let stopped = || cancelled() && producer.cancel_when_unshared();
+            let uploaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if stopped() {
+                    return Err(Error::Cancelled);
+                }
+                let image = upload_source_texture(
+                    &self.device,
+                    queue,
+                    source.as_ref(),
+                    layout,
+                    &stopped,
+                    &|| {},
+                )?;
+                if stopped() {
+                    return Err(Error::Cancelled);
+                }
+                Ok(image)
+            }))
+            .unwrap_or_else(|_| Err(Error::Gpu("source texture upload panicked".into())));
+            producer.complete(uploaded);
+        }
+        super::unit::wait_image(pending, cancelled, &|| {}).map(Some)
+    }
+
     pub fn materialize(
         &self,
         queue: &crate::gpu::submission::Queue,
@@ -170,116 +342,14 @@ impl Context {
                                     },
                                 )?)
                             }
-                            ImageBacking::Texture => {
-                                let texture = context.device.try_create_texture(
-                                    &wgpu::TextureDescriptor {
-                                        label: Some("materialized source image"),
-                                        size: wgpu::Extent3d {
-                                            width: layout.region.width,
-                                            height: layout.region.height,
-                                            depth_or_array_layers: 1,
-                                        },
-                                        mip_level_count: 1,
-                                        sample_count: 1,
-                                        dimension: wgpu::TextureDimension::D2,
-                                        format: match format {
-                                            ImageFormat::Rgba16Uint => {
-                                                wgpu::TextureFormat::Rgba16Uint
-                                            }
-                                            ImageFormat::Rgba32Float => {
-                                                wgpu::TextureFormat::Rgba32Float
-                                            }
-                                        },
-                                        usage: wgpu::TextureUsages::TEXTURE_BINDING
-                                            | wgpu::TextureUsages::COPY_DST
-                                            | wgpu::TextureUsages::COPY_SRC,
-                                        view_formats: &[],
-                                    },
-                                )?;
-                                // Bound CPU and queued upload storage independently of image size.
-                                let row_bytes =
-                                    u64::from(layout.region.width) * format.pixel_bytes();
-                                let rows = ((4 << 20) / row_bytes)
-                                    .max(1)
-                                    .min(u64::from(layout.region.height))
-                                    as u32;
-                                let started = Instant::now();
-                                let mut read_time = Duration::ZERO;
-                                let mut queue_time = Duration::ZERO;
-                                let mut uploads = std::collections::VecDeque::new();
-                                let transferred = (|| -> Result<(), Error> {
-                                    for y in (0..layout.region.height).step_by(rows as usize) {
-                                        if stop.is_cancelled() {
-                                            break;
-                                        }
-                                        let region = CellRegion {
-                                            y: layout.region.y + y as i32,
-                                            height: rows.min(layout.region.height - y),
-                                            ..layout.region
-                                        };
-                                        let reading = Instant::now();
-                                        let upload = read_source(source.as_ref(), region, format)?;
-                                        read_time += reading.elapsed();
-                                        let submitting = Instant::now();
-                                        queue.write_texture(
-                                            wgpu::TexelCopyTextureInfo {
-                                                texture: &texture,
-                                                mip_level: 0,
-                                                origin: wgpu::Origin3d { x: 0, y, z: 0 },
-                                                aspect: wgpu::TextureAspect::All,
-                                            },
-                                            upload.bytes(),
-                                            wgpu::TexelCopyBufferLayout {
-                                                offset: 0,
-                                                bytes_per_row: Some(row_bytes as u32),
-                                                rows_per_image: Some(region.height),
-                                            },
-                                            wgpu::Extent3d {
-                                                width: region.width,
-                                                height: region.height,
-                                                depth_or_array_layers: 1,
-                                            },
-                                        );
-                                        let (send, done) = mpsc::sync_channel(1);
-                                        queue.submit_with_completion(
-                                            std::iter::empty(),
-                                            move || {
-                                                let _ = send.send(());
-                                            },
-                                        );
-                                        queue_time += submitting.elapsed();
-                                        if y == 0 {
-                                            log::debug!(format:? = format, bytes = layout.bytes(); "texture_source_upload_started");
-                                        }
-                                        uploads.push_back(done);
-                                        if uploads.len() == 2 {
-                                            wait_for_upload(
-                                                &context.device,
-                                                uploads.pop_front().unwrap(),
-                                            )?;
-                                        }
-                                        wake.wake();
-                                    }
-
-                                    Ok(())
-                                })();
-                                // Queued uploads own storage until completion, including cancellation
-                                // and a later read failure.
-                                for done in uploads {
-                                    wait_for_upload(&context.device, done)?;
-                                }
-                                transferred?;
-                                log::debug!(
-                                    format:? = format,
-                                    bytes = layout.bytes(),
-                                    cancelled = stop.is_cancelled(),
-                                    read_ms = read_time.as_secs_f64() * 1000.,
-                                    submit_ms = queue_time.as_secs_f64() * 1000.,
-                                    total_ms = started.elapsed().as_secs_f64() * 1000.;
-                                    "texture_source_upload"
-                                );
-                                ImageValue::texture(texture)
-                            }
+                            ImageBacking::Texture => upload_source_texture(
+                                &context.device,
+                                &queue,
+                                source.as_ref(),
+                                layout,
+                                &|| stop.is_cancelled(),
+                                &|| wake.wake(),
+                            )?,
                         }
                     } else {
                         let working = RunWorkingSet::default();

@@ -357,6 +357,15 @@ pub(crate) fn execute_blocks(
         },
     };
     let root = crate::reconstruction::reconstruct_complete(original, domain)?;
+    let evaluation = context.request(
+        root,
+        evaluation::Region {
+            bounds: domain.finite()?,
+            grid: domain.grid,
+        },
+        evaluation::Tiling { tile: block },
+    )?;
+    let traversal = context.traversal(queue, evaluation, check)?;
     let mut executor = context.executor();
     #[cfg(all(test, target_os = "macos"))]
     let mut stats = Stats {
@@ -387,18 +396,7 @@ pub(crate) fn execute_blocks(
             let timing = std::cell::RefCell::new(timestamps.borrow_mut());
             let plan = timed!(
                 CoveragePlan,
-                context
-                    .request(
-                        root.clone(),
-                        evaluation::Region {
-                            bounds: [origin[0], origin[1], extent[0], extent[1]].try_into()?,
-                            grid: root.domain().grid
-                        },
-                        evaluation::Tiling { tile: block }
-                    )?
-                    .plans()
-                    .next()
-                    .ok_or(Error::InvalidParameter("empty original evaluation"))?
+                traversal.plan([origin[0], origin[1], extent[0], extent[1]].try_into()?)
             )?;
             #[cfg(all(test, target_os = "macos", feature = "export"))]
             {
