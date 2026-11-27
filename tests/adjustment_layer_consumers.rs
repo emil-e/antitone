@@ -599,7 +599,7 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
 }
 
 #[test]
-fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_grade() {
+fn scopes_share_local_preparation_and_do_not_label_held_bins_as_the_new_grade() {
     pollster::block_on(async {
         let (device, queue) = device().await;
         let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
@@ -650,7 +650,11 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
                 .unwrap()
         );
         paint(latest.clone()).prepare_frame(&device, &mut encoder);
-        assert_eq!(gpu.reduction_count(), 1, "one readback remains outstanding");
+        assert_eq!(
+            gpu.reduction_count(),
+            1,
+            "one reduction remains outstanding"
+        );
         assert!(
             gpu.status_authored(&image, &latest, frame, settings)
                 .is_none()
@@ -674,28 +678,14 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         assert_eq!(gpu.reduction_count(), 2);
-        for (i, (actual, expected)) in read_buffer(&device, &queue, &gpu.bins)
-            .iter()
-            .zip(&expected_bins)
-            .enumerate()
-        {
+        let actual_bins = read_buffer(&device, &queue, &gpu.bins);
+        for (i, (actual, expected)) in actual_bins.iter().zip(&expected_bins).enumerate() {
             assert_eq!(actual, expected, "scope bin {i}");
         }
+        assert_eq!(actual_bins[..scopes::PLANE_LEN].iter().sum::<u32>(), 35);
         assert_eq!(
-            gpu.status_authored(&image, &latest, frame, settings)
-                .unwrap()
-                .unwrap()
-                .valid,
-            35
-        );
-        let (_, _, counts) =
-            scopes::reference([7, 5], &read_image(&device, &queue, &image).await, settings)
-                .unwrap();
-        assert_eq!(
-            gpu.status_authored(&image, &latest, frame, settings)
-                .unwrap()
-                .unwrap(),
-            counts
+            gpu.status_authored(&image, &latest, frame, settings),
+            Some(Ok(()))
         );
         let duplicate = {
             let mut a = layers.clone();

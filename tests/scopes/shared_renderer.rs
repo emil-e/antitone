@@ -101,12 +101,13 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 }
                 queue.submit([encoder.finish()]);
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-                let counts = gpu
-                    .status_authored(&image, &parameters, frame, settings)
-                    .unwrap()
-                    .unwrap();
                 assert_eq!(
-                    counts.valid, 32,
+                    gpu.status_authored(&image, &parameters, frame, settings),
+                    Some(Ok(()))
+                );
+                assert_eq!(
+                    read(&device, &queue, &gpu.totals)[0],
+                    32,
                     "viewer crop must not narrow scope coverage"
                 );
                 let bins = read(&device, &queue, &gpu.bins);
@@ -182,10 +183,8 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                 assert_eq!(gpu.reduction_count(), 1);
                 assert_eq!(
-                    gpu.status_authored(&image, &parameters, frame, settings)
-                        .unwrap()
-                        .unwrap(),
-                    counts
+                    gpu.status_authored(&image, &parameters, frame, settings),
+                    Some(Ok(()))
                 );
                 assert_eq!(read(&device, &queue, &gpu.bins), bins);
                 assert!(

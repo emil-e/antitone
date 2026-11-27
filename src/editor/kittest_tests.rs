@@ -1354,22 +1354,17 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
                 harness.read(|editor| assert!(editor.preference_store.is_none()));
                 workflow::wait_settled(&mut harness);
                 harness.render().unwrap();
+                let settings = harness.read(|e| e.scopes.settings(e.document.target()));
                 wait_for(&mut harness, |e| {
                     let gpu = e.scopes.gpu.as_ref().expect("scope GPU resources");
+                    e.scope_request().unwrap().status(gpu, settings) == Some(Ok(()))
+                });
+                harness.read(|e| {
                     let input = e.scope_request().unwrap();
-                    let frame = input.frame();
-                    let settings = crate::scopes::Settings {
-                        target: e.document.target(),
-                        plot: crate::scopes::Plot::Vector,
-                        amplification: 1,
-                    };
-                    let Some(counts) = input.status(gpu, settings) else {
-                        return false;
-                    };
-                    let counts = counts.expect("scope diagnostics");
-                    assert_eq!(counts.invalid, 0);
-                    assert_eq!(counts.valid, frame.output[0] * frame.output[1]);
-                    true
+                    assert_eq!(
+                        input.sample_count(e, settings),
+                        input.frame().output.iter().product::<u32>()
+                    );
                 });
                 let timing = harness.read(|editor| {
                     Arc::new(SelectionTiming::new(

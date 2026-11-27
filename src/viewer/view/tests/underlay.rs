@@ -365,21 +365,15 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                     let mut encoder = device.create_command_encoder(&Default::default());
                     paint.prepare_frame(&device, &mut encoder);
                     queue.submit([encoder.finish()]);
-                    let totals = read(&device, &queue, &gpu.totals);
-                    let (_, columns, counts) =
+                    let totals =
+                        crate::gpu_scopes::testing::read_words(&device, &gate, &gpu.totals);
+                    let (_, columns, _) =
                         crate::scopes::reference(requested.output, &actual, settings).unwrap();
                     assert_eq!(
-                        gpu.status_rendered(&composite, requested, settings)
-                            .unwrap()
-                            .unwrap(),
-                        counts
+                        gpu.status_rendered(&composite, requested, settings),
+                        Some(Ok(()))
                     );
-                    let words = totals
-                        .iter()
-                        .flatten()
-                        .map(|v| v.to_bits())
-                        .collect::<Vec<_>>();
-                    assert_eq!(&words[4..], &columns);
+                    assert_eq!(&totals[1..], &columns);
                     assert_eq!(gpu.reduction_count(), 1);
                     if epoch == 0 && target == OutputTarget::Srgb && requested == full {
                         let mut held = composite.clone();

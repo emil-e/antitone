@@ -11,7 +11,7 @@ use antitone::{
     gpu_scopes::{GpuScopes, ScopePaint},
     photographic::parameters::ProcessingParameters,
     processing::{InputSettings, RollSettings},
-    scopes::{Counts, Settings},
+    scopes::Settings,
     viewer::{GpuImage, ImagePaint, Presentation},
 };
 use glam::DMat3;
@@ -133,7 +133,7 @@ pub trait ScopeCalculations {
         calculation: &Calculation,
         frame: FrameRaster,
         settings: Settings,
-    ) -> Option<Result<Counts, String>>;
+    ) -> Option<Result<(), String>>;
 }
 
 impl ScopeCalculations for GpuScopes {
@@ -143,7 +143,7 @@ impl ScopeCalculations for GpuScopes {
         calculation: &Calculation,
         frame: FrameRaster,
         settings: Settings,
-    ) -> Option<Result<Counts, String>> {
+    ) -> Option<Result<(), String>> {
         self.status_calculation(
             image,
             (&calculation(image).ok()?, &Default::default()),

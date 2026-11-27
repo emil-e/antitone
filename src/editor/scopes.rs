@@ -321,12 +321,21 @@ impl ScopeInput {
         self.frame
     }
 
-    pub(super) fn status(
-        &self,
-        gpu: &GpuScopes,
-        settings: Settings,
-    ) -> Option<Result<crate::scopes::Counts, String>> {
+    pub(super) fn status(&self, gpu: &GpuScopes, settings: Settings) -> Option<Result<(), String>> {
         gpu.status_mapped_rendered(&self.view, self.frame, self.mapping, settings)
+    }
+
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub(super) fn sample_count(&self, editor: &Editor, settings: Settings) -> u32 {
+        let gpu = editor.scopes.gpu.as_ref().unwrap();
+        assert_eq!(self.status(gpu, settings), Some(Ok(())));
+        let view = &editor.document.visit.working_view;
+        crate::gpu_scopes::testing::sample_count(
+            view.device().unwrap(),
+            view.queue().unwrap(),
+            gpu,
+            settings.plot,
+        )
     }
 
     fn paint(
@@ -452,17 +461,16 @@ impl Editor {
             trace,
             slot.settings,
         );
-        let status = input.status(gpu, slot.settings);
-        if let Some((text, color)) = scope_feedback(status)
+        if let Some(Err(error)) = input.status(gpu, slot.settings)
             && scope_notice(
                 &slot.painter,
                 slot.trace_well,
-                text.clone(),
-                color,
+                error.clone(),
+                egui::Color32::LIGHT_RED,
                 egui::Align2::LEFT_BOTTOM,
             )
         {
-            slot.response.on_hover_text(text);
+            slot.response.on_hover_text(error);
         }
     }
 }
@@ -490,19 +498,6 @@ fn scope_notice(
     let truncated = galley.elided;
     painter.galley(rect.min, galley, color);
     truncated
-}
-
-fn scope_feedback(
-    status: Option<Result<crate::scopes::Counts, String>>,
-) -> Option<(String, egui::Color32)> {
-    match status {
-        Some(Ok(counts)) if counts.invalid > 0 => Some((
-            format!("Invalid samples: {}", counts.invalid),
-            egui::Color32::LIGHT_RED,
-        )),
-        Some(Err(error)) => Some((error, egui::Color32::LIGHT_RED)),
-        Some(Ok(_)) | None => None,
-    }
 }
 
 fn graticule(painter: &egui::Painter, rect: egui::Rect, settings: Settings) {

@@ -1077,7 +1077,7 @@ fn compact_scope_header_fits_and_disclosure_preserves_state_at_both_densities() 
                             plot,
                             amplification: 1,
                         };
-                        matches!(input.status(editor.scopes.gpu.as_ref().unwrap(), settings), Some(Ok(counts)) if counts.invalid == 0)
+                        input.status(editor.scopes.gpu.as_ref().unwrap(), settings) == Some(Ok(()))
                     });
                     let png = harness.render().unwrap();
                     let (trace, plot_rect) = harness
@@ -1322,24 +1322,23 @@ fn scope_plot_scale_and_target_widgets_produce_valid_completed_reductions() {
                         assert_eq!(editor.scopes.settings(target).amplification, *amplification);
                     });
                     harness.render().unwrap();
+                    let settings = crate::scopes::Settings {
+                        target,
+                        plot,
+                        amplification: *amplification,
+                    };
                     wait_for(&mut harness, |e| {
                         let input = e.scope_request().unwrap();
-                        let frame = input.frame();
-                        let settings = crate::scopes::Settings {
-                            target,
-                            plot,
-                            amplification: *amplification,
-                        };
-                        let Some(counts) = input.status(e.scopes.gpu.as_ref().unwrap(), settings)
-                        else {
-                            return false;
-                        };
-                        let counts = counts.expect("scope diagnostics");
-                        assert_eq!(counts.invalid, 0);
-                        assert_eq!(counts.valid, frame.output[0] * frame.output[1]);
-                        true
+                        input.status(e.scopes.gpu.as_ref().unwrap(), settings) == Some(Ok(()))
                     });
-                    harness.read(|editor| assert_eq!(editor.document.state.project, project));
+                    harness.read(|editor| {
+                        let input = editor.scope_request().unwrap();
+                        assert_eq!(
+                            input.sample_count(editor, settings),
+                            input.frame().output.iter().product::<u32>()
+                        );
+                        assert_eq!(editor.document.state.project, project);
+                    });
                 }
                 let png = harness.render().unwrap();
                 if vector {

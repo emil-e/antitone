@@ -116,11 +116,11 @@ fn composed_scope_bins_follow_frame_centres_not_the_source_bounding_rectangle() 
                             queue.submit([encoder.finish()]);
                             let actual = read(&device, &queue, &gpu.bins);
                             let totals = read(&device, &queue, &gpu.totals);
-                            assert_eq!(
-                                &totals[..3],
-                                &[counts.valid, counts.invalid, counts.outside]
-                            );
-                            assert_eq!(&totals[4..], columns);
+                            if plot == Plot::Vector {
+                                assert_eq!(totals[0], counts.valid);
+                            } else {
+                                assert_eq!(&totals[1..], columns);
+                            }
                             // Isolate geometry from neutral/primary chroma-bin edge rounding:
                             // compare with the same reduction on an independently mapped raster.
                             let mut encoder = device.create_command_encoder(&Default::default());
@@ -129,7 +129,10 @@ fn composed_scope_bins_follow_frame_centres_not_the_source_bounding_rectangle() 
                             queue.submit([encoder.finish()]);
                             let expected = read(&device, &queue, &gpu.bins);
                             assert!(actual == expected, "{target:?} {plot:?} {frame:?}");
-                            assert_eq!(counts.valid + counts.invalid, output[0] * output[1]);
+                            assert_eq!(
+                                counts.valid as usize,
+                                mapped.iter().filter(|pixel| !pixel[0].is_nan()).count()
+                            );
                         }
                     }
                 }

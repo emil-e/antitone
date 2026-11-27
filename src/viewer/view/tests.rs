@@ -426,18 +426,12 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             let mut encoder = device.create_command_encoder(&Default::default());
             paint.prepare_frame(&device, &mut encoder);
             queue.submit([encoder.finish()]);
-            let totals = read(&device, &queue, &gpu.totals);
-            let words: Vec<u32> = totals.iter().flatten().map(|v| v.to_bits()).collect();
+            let totals = crate::gpu_scopes::testing::read_words(&device, &gate, &gpu.totals);
             let (expected_bins, expected_columns, expected_counts) =
                 crate::scopes::reference(frame.output, &actual, settings).unwrap();
-            assert_eq!(
-                gpu.status_rendered(&partial, frame, settings)
-                    .unwrap()
-                    .unwrap(),
-                expected_counts
-            );
+            assert_eq!(gpu.status_rendered(&partial, frame, settings), Some(Ok(())));
             assert_eq!(expected_counts.valid, frame.output[0] * frame.output[1] - 1);
-            assert_eq!(&words[4..], &expected_columns);
+            assert_eq!(&totals[1..], &expected_columns);
             let bins: Vec<u32> = read(&device, &queue, &gpu.bins)
                 .iter()
                 .flatten()

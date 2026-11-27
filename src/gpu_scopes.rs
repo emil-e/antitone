@@ -8,7 +8,6 @@ use crate::photographic::parameters::ProcessingParameters;
 use crate::photographic::test_inputs::AuthoredPhotograph;
 use crate::scopes::BINS;
 use crate::scopes::Basis;
-use crate::scopes::Counts;
 use crate::scopes::PLANE_LEN;
 use crate::scopes::Plot;
 use crate::scopes::Settings;
@@ -126,13 +125,29 @@ struct Prepared {
     key: Key,
     plot: Plot,
     group: Option<wgpu::BindGroup>,
+    result: Option<Result<(), String>>,
 }
 
 #[derive(Default)]
-struct Diagnostic {
-    revision: u64,
-    pending: bool,
-    result: Option<Result<Counts, String>>,
+struct ReductionState {
+    prepared: Option<Prepared>,
+    // The command's completion callback owns the flight, even when the plot is hidden.
+    pending: Weak<()>,
+}
+
+impl ReductionState {
+    fn finish(&mut self, flight: &Arc<()>, result: Result<(), String>) {
+        if !self.pending.ptr_eq(&Arc::downgrade(flight)) {
+            return;
+        }
+        self.pending = Weak::new();
+        if let Some(prepared) = &mut self.prepared {
+            if result.is_err() {
+                prepared.group = None;
+            }
+            prepared.result = Some(result);
+        }
+    }
 }
 
 pub struct GpuScopes {
@@ -140,8 +155,7 @@ pub struct GpuScopes {
     display: wgpu::RenderPipeline,
     pub bins: wgpu::Buffer,
     pub totals: wgpu::Buffer,
-    prepared: Mutex<Option<Prepared>>,
-    diagnostic: Arc<Mutex<Diagnostic>>,
+    state: Arc<Mutex<ReductionState>>,
     reductions: std::sync::atomic::AtomicU64,
 }
 
@@ -158,7 +172,7 @@ impl GpuScopes {
         });
         let totals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("scope sample totals"),
-            size: u64::from(BINS + 4) * 4,
+            size: u64::from(BINS + 1) * 4,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
@@ -283,8 +297,7 @@ impl GpuScopes {
             display,
             bins,
             totals,
-            prepared: Mutex::new(None),
-            diagnostic: Arc::default(),
+            state: Arc::default(),
             reductions: Default::default(),
         })
     }
@@ -451,7 +464,7 @@ impl GpuScopes {
         parameters: ProcessingParameters,
         frame: FrameRaster,
         settings: Settings,
-    ) -> Option<Result<Counts, String>> {
+    ) -> Option<Result<(), String>> {
         let root = image
             .inspection(parameters, None)
             .and_then(|prefix| image.output(prefix, &Default::default()))
@@ -466,7 +479,7 @@ impl GpuScopes {
         input: &AuthoredPhotograph,
         frame: FrameRaster,
         settings: Settings,
-    ) -> Option<Result<Counts, String>> {
+    ) -> Option<Result<(), String>> {
         let root = image.legacy_calculation(input).ok()?;
         self.status_calculation(image, (&root, input.luts()), frame, settings)
     }
@@ -477,22 +490,8 @@ impl GpuScopes {
         calculation: (&Value, &LutChain),
         frame: FrameRaster,
         settings: Settings,
-    ) -> Option<Result<Counts, String>> {
-        if self
-            .prepared
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|prepared| {
-                prepared
-                    .key
-                    .matches(&Key::new(image, calculation, frame, settings))
-            })
-        {
-            self.diagnostic.lock().unwrap().result.clone()
-        } else {
-            None
-        }
+    ) -> Option<Result<(), String>> {
+        self.status_for(&Key::new(image, calculation, frame, settings))
     }
 
     #[cfg(all(test, feature = "editor"))]
@@ -501,7 +500,7 @@ impl GpuScopes {
         view: &crate::viewer::view::RenderedView,
         frame: FrameRaster,
         settings: Settings,
-    ) -> Option<Result<Counts, String>> {
+    ) -> Option<Result<(), String>> {
         self.status_mapped_rendered(view, frame, TextureMapping::IDENTITY, settings)
     }
 
@@ -512,23 +511,23 @@ impl GpuScopes {
         frame: FrameRaster,
         mapping: TextureMapping,
         settings: Settings,
-    ) -> Option<Result<Counts, String>> {
-        if self.prepared.lock().unwrap().as_ref().is_some_and(|p| {
-            p.key
-                .matches(&Key::rendered(view, frame, mapping, settings))
-        }) {
-            self.diagnostic.lock().unwrap().result.clone()
-        } else {
-            None
-        }
+    ) -> Option<Result<(), String>> {
+        self.status_for(&Key::rendered(view, frame, mapping, settings))
+    }
+
+    fn status_for(&self, key: &Key) -> Option<Result<(), String>> {
+        self.state
+            .lock()
+            .unwrap()
+            .prepared
+            .as_ref()
+            .filter(|prepared| prepared.key.matches(key))?
+            .result
+            .clone()
     }
 
     pub fn invalidate(&self) {
-        if self.prepared.lock().unwrap().take().is_some() {
-            let mut diagnostic = self.diagnostic.lock().unwrap();
-            diagnostic.revision += 1;
-            diagnostic.result = None;
-        }
+        self.state.lock().unwrap().prepared = None;
     }
 
     pub fn paint(&self, pass: &mut wgpu::RenderPass<'static>, group: &wgpu::BindGroup) {
@@ -536,54 +535,10 @@ impl GpuScopes {
         pass.set_bind_group(0, group, &[]);
         pass.draw(0..3, 0..1);
     }
-
-    fn read_diagnostics(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        context: &egui::Context,
-    ) {
-        let revision = {
-            let mut state = self.diagnostic.lock().unwrap();
-            state.revision += 1;
-            state.pending = true;
-            state.result = None;
-            state.revision
-        };
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("16-byte scope diagnostic readback"),
-            size: 16,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        encoder.copy_buffer_to_buffer(&self.totals, 0, &staging, 0, 16);
-        let buffer = staging.clone();
-        let state = self.diagnostic.clone();
-        let context = context.clone();
-        encoder.map_buffer_on_submit(&staging, wgpu::MapMode::Read, .., move |result| {
-            let result = result
-                .map_err(|e| format!("Scope diagnostics failed: {e}"))
-                .and_then(|()| {
-                    let mapped = buffer.get_mapped_range(..).map_err(|e| e.to_string())?;
-                    let values: &[u32] = bytemuck::cast_slice(&mapped);
-                    let counts = Counts {
-                        valid: values[0],
-                        invalid: values[1],
-                        outside: values[2],
-                    };
-                    drop(mapped);
-                    buffer.unmap();
-                    Ok(counts)
-                });
-            let mut state = state.lock().unwrap();
-            state.pending = false;
-            if state.revision == revision {
-                state.result = Some(result);
-            }
-            context.request_repaint();
-        });
-    }
 }
+
+#[cfg(all(test, feature = "editor"))]
+pub(crate) mod testing;
 
 pub struct ScopePaint {
     pub gpu: Arc<GpuScopes>,
@@ -742,13 +697,17 @@ impl ScopePaint {
                 .expect("validated rendering resources");
             key = Key::new(&self.image, (root, &self.luts), self.frame, self.settings);
         }
-        let mut cached = self.gpu.prepared.lock().unwrap();
-        let matches = cached
+        let mut state = self.gpu.state.lock().unwrap();
+        let pending = state.pending.upgrade().is_some();
+        if !pending && state.prepared.as_ref().is_some_and(|p| p.result.is_none()) {
+            // An abandoned encoder cannot leave its bins available for reuse.
+            state.prepared = None;
+        }
+        let matches = state
+            .prepared
             .as_ref()
             .is_some_and(|prepared| prepared.key.matches(&key));
-        // UI state supplies the newest request on the completion repaint. Don't enqueue another
-        // reduction/readback while the previous one is outstanding, even after hide/source changes.
-        let pending = self.gpu.diagnostic.lock().unwrap().pending;
+        // Completion requests the latest UI demand without queueing intermediate reductions.
         if !matches && !pending {
             let encoded = if rendered.is_some() {
                 self.gpu.encode_mapped(
@@ -768,29 +727,33 @@ impl ScopePaint {
                     self.settings,
                 )
             };
-            match encoded {
+            let (group, result) = match encoded {
                 Ok(group) => {
-                    *cached = Some(Prepared {
-                        key: key.clone(),
-                        plot: self.settings.plot,
-                        group: Some(group),
+                    let flight = Arc::new(());
+                    state.pending = Arc::downgrade(&flight);
+                    let state = Arc::downgrade(&self.gpu.state);
+                    let context = self.context.clone();
+                    encoder.on_submitted_work_done(move || {
+                        if let Some(state) = state.upgrade() {
+                            state.lock().unwrap().finish(&flight, Ok(()));
+                            context.request_repaint();
+                        }
                     });
-                    self.gpu.read_diagnostics(device, encoder, &self.context);
+                    (Some(group), None)
                 }
                 Err(error) => {
-                    *cached = Some(Prepared {
-                        key: key.clone(),
-                        plot: self.settings.plot,
-                        group: None,
-                    });
-                    let mut diagnostic = self.gpu.diagnostic.lock().unwrap();
-                    diagnostic.revision += 1;
-                    diagnostic.result = Some(Err(error.to_string()));
                     self.context.request_repaint();
+                    (None, Some(Err(error.to_string())))
                 }
-            }
+            };
+            state.prepared = Some(Prepared {
+                key: key.clone(),
+                plot: self.settings.plot,
+                group,
+                result,
+            });
         }
-        *self.group.lock().unwrap() = cached.as_mut().and_then(|prepared| {
+        *self.group.lock().unwrap() = state.prepared.as_mut().and_then(|prepared| {
             // Keep the previous complete trace during grade/navigation updates.
             // Its bins and normalization stay together; source/composition/graticule changes reject it.
             if !prepared.key.can_hold(&key) {
@@ -808,14 +771,15 @@ impl ScopePaint {
             }
             prepared.group.clone()
         });
-        drop(cached);
-        let pending = self.gpu.diagnostic.lock().unwrap().pending;
-        if pending {
+        let flight = state.pending.upgrade();
+        drop(state);
+        if let Some(flight) = flight {
             if let Err(error) = device.poll(wgpu::PollType::Poll) {
-                let mut diagnostic = self.gpu.diagnostic.lock().unwrap();
-                diagnostic.revision += 1;
-                diagnostic.pending = false;
-                diagnostic.result = Some(Err(format!("Scope GPU polling failed: {error}")));
+                self.gpu
+                    .state
+                    .lock()
+                    .unwrap()
+                    .finish(&flight, Err(format!("Scope GPU polling failed: {error}")));
                 self.context.request_repaint();
             } else {
                 self.context
