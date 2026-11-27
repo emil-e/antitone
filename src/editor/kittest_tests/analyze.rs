@@ -63,10 +63,11 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
             signature.composition,
             Composition::new(
                 editor.document.visit.canvas.ready.as_ref().unwrap().area,
-                Default::default(),
-                Default::default()
+                editor.document.project.orientation,
+                editor.photo_orientation(),
             )
-            .unwrap()
+            .unwrap(),
+            "sampling review uses the photo's orientation but not its crop"
         );
         let scopes::ScopeInput { view, .. } = editor.scope_request().unwrap();
         assert!(view.capture.is_inspection());
@@ -136,11 +137,8 @@ fn draw_picture(harness: &mut Harness<'_, Editor>, area: Rect) {
     harness.get_by_label("Fit").click();
     harness.step();
     let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
-    let start = geometry.screen_point(egui::pos2(area.x as f32, area.y as f32));
-    let end = geometry.screen_point(egui::pos2(
-        (area.x + area.width) as f32,
-        (area.y + area.height) as f32,
-    ));
+    let target = geometry.screen_region(area);
+    let (start, end) = (target.min, target.max);
     let region = harness.read(|editor| editor.test_pick_region());
     if let Some(region) = region {
         let bounds = geometry.screen_coverage(region);
@@ -339,13 +337,14 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         assert_eq!(after.order, before.order);
         assert!(after.analysis_area.is_none());
         assert_eq!(after.analysis_regions.len(), after.order.len());
-        assert!(
-            after
-                .analysis_regions
-                .iter()
-                .all(|e| e.areas.picture
-                    == Some(Coverage::rectangle(picture).corners().map(|p| p.0)))
-        );
+        for entry in &after.analysis_regions {
+            let active = after.source(entry.source).unwrap().development.active_area;
+            let coverage = crate::scan_regions::Areas::coverage(entry.areas.picture.unwrap());
+            assert_eq!(
+                coverage.unwrap().exact_rectangle(active.into()),
+                Some(picture)
+            );
+        }
         assert_eq!(after.input.gamma(), before.input.gamma());
         assert_eq!(
             Editor::response_of(after.input),
@@ -533,12 +532,33 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
             editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
         });
         wait_opened_photo(&mut harness);
-        harness.update(|editor| editor.photo_settings_mut().exposure = 1.25);
+        harness.update(|editor| {
+            editor.document.project.orientation.turn_clockwise();
+            editor.photo_orientation_mut().flips.horizontal = true;
+            editor.photo_settings_mut().exposure = 1.25;
+        });
 
         let before = harness.read(|editor| editor.document.state.project.clone());
         let first = harness.read(|editor| editor.document.visit.current_source);
         let scopes_visible = harness.read(|editor| editor.scopes.visible);
         show_confirmation(&mut harness);
+        let preview = harness
+            .update(|editor| editor.with_current_tool(|tool, editor| tool.roll_preview(editor)))
+            .unwrap();
+        assert_eq!(preview.images.compositions.len(), before.order.len());
+        for (id, composition) in &preview.images.compositions {
+            let source = before.source(*id).unwrap();
+            assert_eq!(
+                *composition,
+                Composition::new(
+                    source.development.active_area.into(),
+                    before.orientation,
+                    source.orientation,
+                )
+                .unwrap(),
+                "filmstrip review uses each photo's uncropped orientation"
+            );
+        }
         wait_for(&mut harness, |e| {
             e.document
                 .thumbnails

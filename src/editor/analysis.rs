@@ -373,12 +373,7 @@ impl tool::Tool for AnalyzeTool {
     }
     fn composition(&self, normal: Composition) -> Composition {
         if self.review.is_some() {
-            Composition::new(
-                normal.area(),
-                RollOrientation::default(),
-                PhotoOrientation::default(),
-            )
-            .expect("source composition")
+            normal.uncropped()
         } else {
             normal
         }
@@ -474,17 +469,12 @@ impl tool::Tool for AnalyzeTool {
             return preview;
         };
         for row in &review.approved.entries {
-            let Ok(source) = review.document.project.source(row.source) else {
+            let Ok(source) = editor.document.project.source(row.source) else {
                 continue;
             };
             preview.images.compositions.push((
                 row.source,
-                Composition::new(
-                    source.development.active_area.into(),
-                    RollOrientation::default(),
-                    PhotoOrientation::default(),
-                )
-                .expect("review source"),
+                self.composition(editor.source_composition(source)),
             ));
             preview.images.sources.push((
                 row.source,
@@ -657,7 +647,7 @@ pub(super) struct Review {
 }
 
 fn review_label(canvas: egui::Rect, q: [egui::Pos2; 4], picture: bool) -> egui::Rect {
-    let p = q[0] + egui::vec2(5., 4.);
+    let p = egui::Rect::from_points(&q).min + egui::vec2(5., 4.);
     let p = egui::pos2(
         p.x.clamp(
             canvas.left() + 4.,
@@ -826,7 +816,9 @@ impl AnalyzeTool {
         } else {
             entry.areas.opening
         };
-        if old == Some(region.corners().map(|point| point.0)) {
+        // The same footprint can start at a different source corner or reverse winding.
+        let corners = region.corners().map(|point| point.0);
+        if old.is_some_and(|old| corners.iter().all(|point| old.contains(point))) {
             return;
         }
         if review.picture {
