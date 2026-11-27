@@ -5,6 +5,7 @@ use std::path::Path;
 mod decoder_version;
 #[cfg(feature = "ocio-reference")]
 mod exposure;
+mod panasonic;
 #[cfg(target_os = "macos")]
 mod raw_formats;
 #[cfg(target_os = "macos")]

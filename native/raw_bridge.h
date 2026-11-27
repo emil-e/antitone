@@ -8,11 +8,15 @@ struct AntitoneRawSonyLens {
     int16_t distortion[17], ca[33], vignetting[17];
 };
 
-/// Vendor makernote payload. Sony is the vendor with parsed payloads; other makes arrive
-/// zeroed and report absent embedded lens data.
+struct AntitoneRawPanasonicLens {
+    uint32_t status;                      // 0: absent, 1: captured, 2: malformed
+    uint16_t words[16], sensor_bounds[4]; // Bounds in top, left, bottom, right order.
+};
+
 struct AntitoneRawVendorMetadata {
     uint32_t sony_file_type;
     AntitoneRawSonyLens sony_lens;
+    AntitoneRawPanasonicLens panasonic_lens;
 };
 
 struct AntitoneRawMetadata {

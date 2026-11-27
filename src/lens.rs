@@ -2,12 +2,11 @@
 //!
 //! Pixel origin, optical centre and radius normalization belong to the development adapter.
 //! These maps do not resample pixels or choose whether to apply an available camera profile.
-//! Profiles arrive as radial samples decoded from a vendor payload; `raw_sony` decodes Sony
-//! makernotes today, and other vendors evaluate into the same knot layout.
+//! Profiles arrive as radial samples decoded from a vendor payload.
 
 use glam::{DVec2, DVec3};
 
-use crate::Error;
+use crate::{Error, geometry::SourceRegion};
 
 /// Geometric components; shading is independent source-space radiometry.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -76,6 +75,17 @@ impl EmbeddedLensProfile {
             profile.validate_map(corrections)?;
         }
         Ok(profile)
+    }
+
+    #[cfg(feature = "raw")]
+    pub(crate) fn from_inverse_distortion(
+        samples: usize,
+        scale: impl Fn(f64) -> f64,
+    ) -> Result<Self, Error> {
+        let distortion: Vec<_> = (0..samples)
+            .map(|i| scale((i as f64 + 0.5) / (samples - 1) as f64))
+            .collect();
+        Self::from_knots(&distortion, &[], &[])
     }
 
     pub fn has_distortion(&self) -> bool {
@@ -207,34 +217,49 @@ impl EmbeddedLensProfile {
     }
 }
 
-/// Embedded lens mapping in pixel-edge source coordinates. The output keeps original pixel
-/// pitch, trimming symmetrically only where required to keep every channel's bilinear
-/// support in-frame.
+/// Embedded lens mapping in source coordinates. The calibrated rectangle determines the
+/// optical centre and sampling bounds; the output keeps native pitch and fits within its framing.
 #[derive(Debug, Clone)]
 pub struct EmbeddedLensGeometry {
     profile: EmbeddedLensProfile,
-    original: crate::geometry::SourceRegion,
-    trim: [u32; 2],
-    size: [u32; 2],
+    original: SourceRegion,
+    output: SourceRegion,
 }
 
 impl EmbeddedLensGeometry {
-    pub fn new(
+    pub fn new(profile: EmbeddedLensProfile, original: SourceRegion) -> Result<Self, Error> {
+        Self::with_framing(profile, original, original)
+    }
+
+    pub(crate) fn with_framing(
         profile: EmbeddedLensProfile,
-        original: crate::geometry::SourceRegion,
+        original: SourceRegion,
+        framing: SourceRegion,
     ) -> Result<Self, Error> {
         original.validate()?;
-        if original.width < 2 || original.height < 2 {
-            return Err(invalid(
-                "embedded lens correction needs at least two pixels per axis",
-            ));
+        if !original.contains_region(framing) || framing.width < 2 || framing.height < 2 {
+            return Err(invalid("invalid embedded lens framing"));
         }
         let maximum = profile.maximum_scale();
-        let trim = [original.width, original.height]
-            .map(|length| (((length - 1) as f64 * 0.5) * (1. - 1. / maximum)).ceil() as u32);
-        let size = [original.width, original.height];
-        let size = std::array::from_fn(|i| size[i].saturating_sub(2 * trim[i]));
-        if size.iter().any(|&n| n < 2) {
+        let support_trim = [original.width, original.height]
+            .map(|length| ((length - 1) as f64 * 0.5) * (1. - 1. / maximum));
+        let trim = if framing == original {
+            support_trim.map(|v| v.ceil() as u32)
+        } else {
+            // Fit the requested aspect frame inside valid support without shifting its centre.
+            let inset = [
+                (framing.x - original.x).min(original.right() - framing.right()),
+                (framing.y - original.y).min(original.bottom() - framing.bottom()),
+            ];
+            let half = [framing.width, framing.height].map(|length| (length - 1) as f64 * 0.5);
+            let fraction = (0..2)
+                .map(|i| (support_trim[i] - f64::from(inset[i])) / half[i])
+                .fold(0., f64::max);
+            half.map(|length| (length * fraction).ceil() as u32)
+        };
+        let width = framing.width.saturating_sub(trim[0].saturating_mul(2));
+        let height = framing.height.saturating_sub(trim[1].saturating_mul(2));
+        if width < 2 || height < 2 {
             return Err(invalid(
                 "embedded lens profile leaves no usable rectangular image",
             ));
@@ -242,27 +267,26 @@ impl EmbeddedLensGeometry {
         Ok(Self {
             profile,
             original,
-            trim,
-            size,
+            output: SourceRegion::from([framing.x + trim[0], framing.y + trim[1], width, height]),
         })
     }
 
-    pub fn original_area(&self) -> crate::geometry::SourceRegion {
+    pub fn original_area(&self) -> SourceRegion {
         self.original
     }
     pub fn size(&self) -> [u32; 2] {
-        self.size
+        [self.output.width, self.output.height]
     }
 
     /// Original developed pixel-index coordinates of the red, green and blue samples.
     pub fn sample_positions(&self, x: u32, y: u32) -> Result<[DVec2; 3], Error> {
-        if x >= self.size[0] || y >= self.size[1] {
+        if x >= self.output.width || y >= self.output.height {
             return Err(invalid("pixel outside the corrected image"));
         }
         let origin = DVec2::new(self.original.x as f64, self.original.y as f64);
         let half = DVec2::new(self.original.width as f64, self.original.height as f64) * 0.5;
         let center = origin + half - DVec2::splat(0.5);
-        let base = origin + DVec2::new((x + self.trim[0]) as f64, (y + self.trim[1]) as f64);
+        let base = DVec2::new((self.output.x + x) as f64, (self.output.y + y) as f64);
         let delta = base - center;
         let radius = delta.length() / half.length();
         let scales = self.profile.inverse_scales(radius, LensCorrections::ALL)?;
@@ -303,11 +327,9 @@ impl EmbeddedLensGeometry {
     }
 
     #[cfg(feature = "raw")]
-    pub(crate) fn identity(&self) -> String {
-        // Retained compatibility identity: it names the shading interpretation applied to the
-        // embedded payloads. Changing it invalidates saved projects' processing basis.
+    pub(crate) fn identity(&self, algorithm: &[u8]) -> String {
         let mut hash = blake3::Hasher::new();
-        hash.update(b"sony-active-shading-before-bilinear-valid-rectangle-v2");
+        hash.update(algorithm);
         hash.update(&(self.profile.attenuation.len() as u32).to_le_bytes());
         for value in &self.profile.attenuation {
             hash.update(&value.to_bits().to_le_bytes());
@@ -317,10 +339,10 @@ impl EmbeddedLensGeometry {
             self.original.y,
             self.original.width,
             self.original.height,
-            self.trim[0],
-            self.trim[1],
-            self.size[0],
-            self.size[1],
+            self.output.x - self.original.x,
+            self.output.y - self.original.y,
+            self.output.width,
+            self.output.height,
             self.profile.knot_count() as u32,
         ] {
             hash.update(&value.to_le_bytes());

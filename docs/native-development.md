@@ -25,7 +25,7 @@ Normal native setup runs authored sample/curve/ownership checks and actual LibRa
 
 ## Bayer GPU development
 
-The editor supplies [DHT](../native/dht/README.md) with the host's device and guarded queue. LibRaw lends a prepared Bayer RGBG image only during synchronous development; the callback is cleared before return, including exceptional exits. Successful GPU work replaces the image after completed readback, then existing native highlights and Sony reconstruction continue. Unsupported layouts and unavailable acceleration retain LibRaw development. Standalone native APIs without a supplied accelerator remain CPU-only; SDK DNG and non-Bayer paths are unchanged.
+The editor supplies [DHT](../native/dht/README.md) with the host's device and guarded queue. LibRaw lends a prepared Bayer RGBG image only during synchronous development; the callback is cleared before return, including exceptional exits. Successful GPU work replaces the image after completed readback, then native highlight handling and embedded lens reconstruction continue. Unsupported layouts and unavailable acceleration retain LibRaw development. Standalone native APIs without a supplied accelerator remain CPU-only; SDK DNG and non-Bayer paths are unchanged.
 
 One shared loader serializes GPU demosaicing. The [accelerator](../src/raw/demosaic/gpu.rs) runs the compute passes over the whole frame, but batches upload, buffer initialization and readback separately. The worker completes each batch before submitting the next, using callbacks and nonblocking device polls: a blocking wgpu poll can hold a device lock needed by presentation.
 

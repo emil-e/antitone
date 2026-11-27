@@ -7,8 +7,10 @@ use glam::{DMat3, DVec3};
 
 use crate::Error;
 use crate::color::{AP1_TO_XYZ, BRADFORD};
+use crate::lens::EmbeddedLensGeometry;
 use crate::sampling::mean;
 
+mod panasonic;
 mod sony;
 pub use sony::{SonyLensData, SonyLensDataStatus};
 #[cfg(feature = "gpu")]
@@ -24,6 +26,9 @@ pub(crate) use source_preview::{SourcePreview, SourceWhiteBalance};
 #[cfg(test)]
 #[path = "../tests/support/raw_fixture.rs"]
 pub(crate) mod fixture;
+#[cfg(test)]
+#[path = "../tests/support/panasonic_fixture.rs"]
+pub(crate) mod panasonic_fixture;
 #[cfg(all(test, feature = "project"))]
 #[path = "../tests/support/sony_fixture.rs"]
 pub(crate) mod sony_fixture;
@@ -67,13 +72,13 @@ pub struct NativeMetadata {
     capture_time: [u8; 20],
 }
 
-/// Vendor makernote payload. Sony is the vendor with parsed payloads; other makes arrive
-/// zeroed and report absent embedded lens data.
+/// Embedded vendor metadata captured from native RAW containers.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct VendorMetadata {
     pub sony_file_type: u32,
     pub sony_lens: SonyLensData,
+    panasonic_lens: panasonic::LensData,
 }
 
 /// Shared source descriptor. LibRaw supplies the header/container fields; SDK DNG
@@ -222,9 +227,16 @@ impl Metadata {
         Ok(AP1_TO_XYZ.inverse() * adaptation * SRGB_TO_XYZ * camera_to_srgb)
     }
 
-    pub fn lens_geometry(&self) -> Result<Option<crate::lens::EmbeddedLensGeometry>, Error> {
-        if self.dng_identity().is_some() || self.lens_disabled != 0 {
+    pub fn lens_geometry(&self) -> Result<Option<EmbeddedLensGeometry>, Error> {
+        Ok(self.embedded_lens()?.map(|(geometry, _)| geometry))
+    }
+
+    fn embedded_lens(&self) -> Result<Option<(EmbeddedLensGeometry, &'static [u8])>, Error> {
+        if self.uses_sdk() || self.lens_disabled != 0 {
             return Ok(None);
+        }
+        if let Some(geometry) = self.vendor.panasonic_lens.geometry(self)? {
+            return Ok(Some((geometry, b"panasonic-full-sensor-distortion-v1")));
         }
         let Some(profile) = self.vendor.sony_lens.profile()? else {
             return Ok(None);
@@ -232,7 +244,11 @@ impl Metadata {
         if !profile.has_distortion() && !profile.has_ca() && !profile.has_vignetting() {
             return Ok(None);
         }
-        crate::lens::EmbeddedLensGeometry::new(profile, self.native_image_area()?).map(Some)
+        let geometry = EmbeddedLensGeometry::new(profile, self.native_image_area()?)?;
+        Ok(Some((
+            geometry,
+            b"sony-active-shading-before-bilinear-valid-rectangle-v2",
+        )))
     }
 
     pub(crate) fn source_scale(&self, white_balance: [f64; 4]) -> Result<f64, Error> {
@@ -256,7 +272,9 @@ impl Metadata {
     }
 
     pub fn lens_identity(&self) -> Result<Option<String>, Error> {
-        Ok(self.lens_geometry()?.map(|g| g.identity()))
+        Ok(self
+            .embedded_lens()?
+            .map(|(geometry, algorithm)| geometry.identity(algorithm)))
     }
 
     /// Orientation the camera recorded for this source, as the initial per-photo
@@ -453,7 +471,7 @@ pub fn development_version() -> String {
         "bayer-dht-v2"
     };
     format!(
-        "{};rawspeed={unpacker};{demosaic};blend-highlights-v4",
+        "{};rawspeed={unpacker};{demosaic};blend-highlights-v4;rw2-distortion-v1",
         version()
     )
 }
@@ -511,7 +529,7 @@ pub struct RawFile {
     camera_view: Option<NativeView>,
     #[cfg(feature = "gpu")]
     demosaicer: Option<std::sync::Arc<demosaic::Demosaicer>>,
-    correction: Option<crate::lens::EmbeddedLensGeometry>,
+    correction: Option<EmbeddedLensGeometry>,
     corrected: Option<lens_source::CorrectedImage>,
     #[cfg(feature = "dng-sdk")]
     path: std::path::PathBuf,
@@ -1523,8 +1541,9 @@ mod tests {
 
     #[test]
     fn bridge_layout_matches_native_static_assertions() {
-        assert_eq!(size_of::<NativeMetadata>(), 680);
+        assert_eq!(size_of::<NativeMetadata>(), 728);
         assert_eq!(size_of::<SonyLensData>(), 160);
+        assert_eq!(size_of::<panasonic::LensData>(), 44);
         assert_eq!(size_of::<NativeView>(), 72);
         #[cfg(feature = "editor")]
         assert_eq!(size_of::<NativeThumbnail>(), 32);
