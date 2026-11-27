@@ -161,7 +161,7 @@ fn show_cards(
                             .outlines
                             .iter()
                             .find(|(source, _)| *source == id)
-                            .map(|(_, points)| (points, source.development.active_area)),
+                            .map(|(_, points)| points),
                     };
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     let drag_preview = starts_drag

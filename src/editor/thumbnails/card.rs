@@ -1,9 +1,10 @@
 use super::{NavigationImage, NavigationPhotograph, ui};
+use crate::geometry::SourcePoint;
 
 pub(in crate::editor) struct Card<'a> {
     pub image: NavigationImage<'a>,
     pub warning: Option<String>,
-    pub outline: Option<(&'a [[f64; 2]; 4], [u32; 4])>,
+    pub outline: Option<&'a [[f64; 2]; 4]>,
 }
 
 impl Card<'_> {
@@ -61,20 +62,19 @@ impl Card<'_> {
 
 fn draw_photo(
     photo: NavigationPhotograph<'_>,
-    outline: Option<(&[[f64; 2]; 4], [u32; 4])>,
+    outline: Option<&[[f64; 2]; 4]>,
     ui: &egui::Ui,
     image_rect: egui::Rect,
 ) -> Result<(), String> {
     let full = photo.fitted_rect(image_rect);
+    let composition = photo.composition;
     let result = photo.show(ui, full);
 
-    if let Some((outline, [x, y, width, height])) = outline {
+    if let Some(outline) = outline {
+        let [width, height] = composition.size().map(f64::from);
         let points = outline.map(|point| {
-            full.min
-                + egui::vec2(
-                    ((point[0] - f64::from(x)) / f64::from(width)) as f32 * full.width(),
-                    ((point[1] - f64::from(y)) / f64::from(height)) as f32 * full.height(),
-                )
+            let [x, y] = composition.source_to_frame(SourcePoint(point)).0;
+            full.min + egui::vec2((x / width) as f32, (y / height) as f32) * full.size()
         });
         ui.painter()
             .with_clip_rect(full.intersect(ui.clip_rect()))

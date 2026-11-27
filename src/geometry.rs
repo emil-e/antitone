@@ -438,6 +438,13 @@ impl Composition {
         Ok(Self { crop, ..self })
     }
 
+    pub fn uncropped(self) -> Self {
+        Self {
+            crop: Crop::from_region(self.area()),
+            ..self
+        }
+    }
+
     pub fn is_exact(self) -> bool {
         self.crop.angle == 0.
     }

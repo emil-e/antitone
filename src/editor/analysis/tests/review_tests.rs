@@ -121,6 +121,18 @@ fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_are
             );
             editor.select_review_area(geometry, point(picture, 0));
             assert!(editor.document.analysis_review().unwrap().picture);
+
+            let mut reversed = picture.corners();
+            reversed.reverse();
+            editor.set_test_pick_region(Some(Coverage::new(reversed).unwrap()));
+            assert_eq!(editor.test_pick_region(), Some(picture));
+            assert!(
+                !editor
+                    .review_areas(editor.document.visit.current_source.unwrap())
+                    .unwrap()
+                    .picture_edited
+            );
+
             let drag = PickDrag::begin(geometry, point(picture, 0), editor.test_pick_region());
             editor.set_test_pick_region(Some(
                 drag.update(geometry, point(picture, 0) + egui::vec2(5., 5.)),
