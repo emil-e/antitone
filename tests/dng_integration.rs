@@ -38,20 +38,12 @@ mod render_fixture;
 mod exports;
 
 fn record(path: &Path, scan: &DevelopedSource) -> Source {
-    let metadata = scan.metadata();
-    let area = scan.area();
     Source {
         id: SourceId(0),
         capture_time: None,
         development_mode: antitone::project::DevelopmentMode::Unity,
         path: path.into(),
-        development: SourceDevelopment {
-            decode: metadata.development(scan.white_balance()),
-            dimensions: metadata.source_dimensions().unwrap(),
-            active_area: [area.x, area.y, area.width, area.height],
-            camera_model: scan.camera_model().to_owned(),
-            camera_to_ap1: scan.camera_to_ap1().to_cols_array_2d(),
-        },
+        development: SourceDevelopment::from_developed(scan).unwrap(),
 
         repairs: Default::default(),
         adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
@@ -269,9 +261,18 @@ fn sdk_project_roundtrip_restores_accepted_wb_and_cache_keeps_interpretations_di
         .unwrap()
         .unwrap();
     assert!(Arc::ptr_eq(&store.get(&key).unwrap(), &scan));
-    let mut recorded = loaded.source(id).unwrap().development.clone();
-    recorded.decode.backend_version.push_str("-previous");
-    let current = SourceKey::capture(file.path(), &recorded).unwrap();
+    let mut old_project = loaded.clone();
+    old_project
+        .source_mut(id)
+        .unwrap()
+        .development
+        .decode
+        .backend_version
+        .push_str("-previous");
+    let old = &old_project.source(id).unwrap().development;
+    let recipe = old_project.image_recipe(id).unwrap();
+    recipe.neutral.require_source(&reopened).unwrap();
+    let current = SourceKey::capture(file.path(), old).unwrap();
     assert_eq!(
         current, key,
         "recorded provenance does not select a historical decoder"
@@ -287,6 +288,15 @@ fn sdk_project_roundtrip_restores_accepted_wb_and_cache_keeps_interpretations_di
     assert_ne!(stale, key);
     assert!(store.get(&stale).is_none());
     assert!(store.publish_source(stale, scan.clone()).is_err());
+    old_project.source_mut(id).unwrap().development = wrong;
+    assert!(
+        old_project
+            .image_recipe(id)
+            .unwrap()
+            .neutral
+            .require_source(&reopened)
+            .is_err()
+    );
     let legacy = antitone::project::Development::new(antitone::raw::version(), [1.; 4]);
     assert_ne!(
         legacy.backend, loaded.sources[0].development.decode.backend,
@@ -365,8 +375,19 @@ fn sdk_runtime_wb_rejects_unequal_greens_and_out_of_range_gains_and_normalizes_v
     for wb in [[2., 1., 1.5, 0.75], [512., 1., 1., 1.]] {
         assert!(DevelopedSource::open(file.path(), Some(wb)).is_err());
     }
-    let canonical = DevelopedSource::open(file.path(), Some([4., 2., 3., 2.])).unwrap();
-    assert_eq!(canonical.white_balance(), [2., 1., 1.5, 1.]);
+    let requested = Some([4., 2., 3., 2.]);
+    let (_, expected) = SourceDevelopment::read_header(file.path(), requested).unwrap();
+    assert!(expected.decode.uses_sdk());
+    assert_eq!(expected.decode.white_balance, [2., 1., 1.5, 1.]);
+
+    let (as_shot_raw, as_shot) = SourceDevelopment::read_header(file.path(), None).unwrap();
+    assert_ne!(as_shot.decode.white_balance, expected.decode.white_balance);
+    assert_ne!(as_shot.camera_to_ap1, expected.camera_to_ap1);
+    let developed = DevelopedSource::from_raw(as_shot_raw, requested).unwrap();
+    assert_eq!(
+        SourceDevelopment::from_developed(&developed).unwrap(),
+        expected
+    );
 }
 
 #[test]

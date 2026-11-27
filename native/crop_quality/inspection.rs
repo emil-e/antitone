@@ -33,15 +33,7 @@ impl Original {
 }
 
 fn verify_development(expected: &SourceDevelopment, scan: &DevelopedSource) -> Result<()> {
-    let (width, height) = scan.dimensions()?;
-    let area = scan.area();
-    let actual = SourceDevelopment {
-        decode: scan.metadata().development(scan.white_balance()),
-        dimensions: [width, height],
-        active_area: [area.x, area.y, area.width, area.height],
-        camera_model: scan.camera_model().to_owned(),
-        camera_to_ap1: scan.camera_to_ap1().to_cols_array_2d(),
-    };
+    let actual = SourceDevelopment::from_developed(scan)?;
     if !expected.same_processing(&actual) {
         return Err("original development differs from the recorded source".into());
     }

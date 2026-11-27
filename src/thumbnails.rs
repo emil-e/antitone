@@ -468,7 +468,7 @@ impl SourceKey {
         development: crate::development_metadata::Development,
     ) -> Self {
         if let Ok(resolved) = development.resolved() {
-            self.source = resolved.for_runtime();
+            self.source = resolved.for_current_producer();
         }
         self.development = development;
         self
@@ -489,7 +489,7 @@ impl SourceKey {
         Self {
             id: source.id,
             file,
-            source: source.development.for_runtime(),
+            source: source.development.for_current_producer(),
             development,
         }
     }

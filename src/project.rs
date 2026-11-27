@@ -105,34 +105,12 @@ impl Development {
         }
     }
 
-    #[cfg(feature = "dng-sdk")]
-    pub fn dng(white_balance: [f64; 4]) -> Self {
-        Self {
-            white_balance,
-            backend: Developer::DngSdk,
-            backend_version: crate::dng::INTERPRETATION.into(),
-        }
-    }
-
     pub fn uses_sdk(&self) -> bool {
         matches!(self.backend, Developer::DngSdk)
     }
 
     pub fn version(&self) -> &str {
         &self.backend_version
-    }
-
-    #[cfg(feature = "raw")]
-    pub fn for_source(source: &SourceDevelopment) -> Self {
-        let mut development = source.decode.clone();
-        match development.backend {
-            Developer::LibRaw => development.backend_version = crate::raw::development_version(),
-            #[cfg(feature = "dng-sdk")]
-            Developer::DngSdk => development.backend_version = crate::dng::INTERPRETATION.into(),
-            #[cfg(not(feature = "dng-sdk"))]
-            Developer::DngSdk => {}
-        }
-        development
     }
 
     fn same_processing(&self, other: &Self) -> bool {
@@ -185,29 +163,6 @@ impl SourceDevelopment {
             && self.active_area == other.active_area
             && self.camera_model == other.camera_model
             && self.camera_to_ap1 == other.camera_to_ap1
-    }
-
-    /// Acquisitions and caches describe the decoder producing pixels now, not saved provenance.
-    #[cfg(feature = "raw")]
-    pub(crate) fn for_runtime(&self) -> Self {
-        let mut source = self.clone();
-        source.decode = Development::for_source(self);
-        source
-    }
-
-    #[cfg(feature = "raw")]
-    pub(crate) fn from_metadata(
-        metadata: &crate::raw::Metadata,
-        white_balance: [f64; 4],
-    ) -> Result<Self> {
-        let area = metadata.image_area()?;
-        Ok(Self {
-            decode: metadata.development(white_balance),
-            dimensions: metadata.source_dimensions()?,
-            active_area: [area.x, area.y, area.width, area.height],
-            camera_model: metadata.camera_model(),
-            camera_to_ap1: metadata.camera_to_ap1()?.to_cols_array_2d(),
-        })
     }
 
     pub fn camera_basis(&self) -> CameraBasis {

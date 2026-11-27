@@ -140,15 +140,6 @@ impl Metadata {
         crate::project::CaptureTime::from_exif(self.native.capture_time.first_chunk()?)
     }
 
-    #[cfg(feature = "project")]
-    pub fn development(&self, white_balance: [f64; 4]) -> crate::project::Development {
-        #[cfg(feature = "dng-sdk")]
-        if self.sdk.is_some() {
-            return crate::project::Development::dng(white_balance);
-        }
-        crate::project::Development::new(development_version(), white_balance)
-    }
-
     pub(crate) fn pre_applied_wb(&self) -> Option<[f64; 3]> {
         (!self.uses_sdk() && self.as_shot_wb_applied != 0)
             .then(|| [self.cam_mul[0], self.cam_mul[1], self.cam_mul[2]])
@@ -660,20 +651,15 @@ impl RawFile {
         self.metadata.sdk = Some(header);
     }
 
-    pub(crate) fn prepare_basis(&mut self, requested: [f64; 4]) -> Result<(), Error> {
-        #[cfg(feature = "dng-sdk")]
-        if self.metadata.sdk.is_some() {
-            let header = crate::dng::Header::read(
-                &self.path,
-                sdk_options(Some(requested))?,
-                &crate::dng::Cancellation::default(),
-            )
-            .map_err(|e| Error::Raw(e.to_string()))?;
-            self.set_dng_header(header);
+    pub(crate) fn source_layout(&self) -> Result<([u32; 2], Rect), Error> {
+        if let Some(correction) = &self.correction {
+            let [width, height] = correction.size();
+            return Ok(([width, height], [0, 0, width, height].into()));
         }
-        #[cfg(not(feature = "dng-sdk"))]
-        let _ = requested;
-        Ok(())
+        Ok((
+            [self.metadata.width, self.metadata.height],
+            self.metadata.native_image_area()?,
+        ))
     }
 
     pub(crate) fn white_balance(&self, requested: [f64; 4]) -> [f64; 4] {

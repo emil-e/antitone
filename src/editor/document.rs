@@ -11,7 +11,7 @@ use std::{
     sync::Arc,
 };
 
-pub(super) use crate::source::{open_source, source_metadata, verify_development, verify_source};
+pub(super) use crate::source::open_source;
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 fn failure(error: impl std::fmt::Display) -> Error {

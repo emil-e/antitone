@@ -411,18 +411,7 @@ fn resampled_measurements_accept_finite_developed_samples_from_clipped_sensor_si
 
 #[cfg(feature = "project")]
 fn development(scan: &antitone::scan::DevelopedSource) -> antitone::project::SourceDevelopment {
-    antitone::project::SourceDevelopment {
-        decode: scan.metadata().development(scan.white_balance()),
-        dimensions: scan.metadata().source_dimensions().unwrap(),
-        active_area: [
-            scan.area().x,
-            scan.area().y,
-            scan.area().width,
-            scan.area().height,
-        ],
-        camera_model: scan.camera_model().to_owned(),
-        camera_to_ap1: scan.camera_to_ap1().to_cols_array_2d(),
-    }
+    antitone::project::SourceDevelopment::from_developed(scan).unwrap()
 }
 
 #[cfg(feature = "project")]

@@ -18,38 +18,39 @@ fn absolute(path: &Path) -> Result<PathBuf> {
     })
 }
 
-pub(crate) fn metadata_development(
-    metadata: &Metadata,
-    white_balance: [f64; 4],
-) -> Result<SourceDevelopment> {
-    SourceDevelopment::from_metadata(metadata, white_balance)
-}
-
 pub(crate) fn open_source(path: &Path, wb: Option<[f64; 4]>) -> Result<(Source, RawFile)> {
     let path = absolute(path)?;
     let started = std::time::Instant::now();
-    let raw = RawFile::open_with_wb(&path, wb)
+    let (raw, development) = SourceDevelopment::read_header(&path, wb)
         .map_err(|error| failure(format!("{}: {error}", path.display())))?;
     log::debug!(header_seconds = started.elapsed().as_secs_f64(); "source_registration");
-    let white_balance = raw.white_balance(wb.unwrap_or_else(|| raw.metadata.as_shot_wb()));
-    Ok((source_metadata(&path, &raw.metadata, white_balance)?, raw))
+    Ok((source_record(path, &raw.metadata, development)?, raw))
 }
 
-pub(crate) fn source_metadata(
-    path: &Path,
+#[cfg(test)]
+pub(crate) fn developed_record(source: &DevelopedSource) -> Result<Source> {
+    source_record(
+        source.path().to_owned(),
+        &source.metadata(),
+        SourceDevelopment::from_developed(source)?,
+    )
+}
+
+fn source_record(
+    path: PathBuf,
     metadata: &Metadata,
-    white_balance: [f64; 4],
+    development: SourceDevelopment,
 ) -> Result<Source> {
     Ok(Source {
         id: SourceId(0),
-        path: absolute(path)?,
+        path,
         capture_time: metadata.capture_time(),
-        development: metadata_development(metadata, white_balance)?,
-        development_mode: if white_balance == crate::project::UNITY_WB {
+        development_mode: if development.decode.white_balance == crate::project::UNITY_WB {
             crate::project::DevelopmentMode::Unity
         } else {
             crate::project::DevelopmentMode::AsShot
         },
+        development,
         adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
             Default::default(),
         )),
@@ -70,15 +71,7 @@ pub(crate) fn verify_source(expected: &Source, actual: &Source) -> Result<()> {
 }
 
 pub(crate) fn verify_development(source: &Source, developed: &DevelopedSource) -> Result<()> {
-    let image = developed.camera_image()?;
-    let area = developed.area();
-    let actual = SourceDevelopment {
-        decode: developed.metadata().development(developed.white_balance()),
-        dimensions: [image.width, image.height],
-        active_area: [area.x, area.y, area.width, area.height],
-        camera_model: developed.camera_model().to_owned(),
-        camera_to_ap1: developed.camera_to_ap1().to_cols_array_2d(),
-    };
+    let actual = SourceDevelopment::from_developed(developed)?;
     if !source.development.same_processing(&actual) {
         return Err(failure(
             "developed RAW differs from its recorded header identity",

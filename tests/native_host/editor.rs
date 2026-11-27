@@ -7,9 +7,7 @@ use std::path::{Path, PathBuf};
 
 pub(super) fn fixture_project(directory: &Path) -> host::Result<PathBuf> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
-    let metadata = antitone::raw::RawFile::open(&path)?.metadata;
-    let area = metadata.image_area()?;
-    let decode = metadata.development([1.; 4]);
+    let (_, development) = SourceDevelopment::read_header(&path, Some([1.; 4]))?;
     let mut project = Project {
         input: antitone::processing::InputSettings::Negative {
             dmin: Some(glam::DVec3::splat(3000. / 4031.)),
@@ -25,13 +23,7 @@ pub(super) fn fixture_project(directory: &Path) -> host::Result<PathBuf> {
         capture_time: None,
         development_mode: antitone::project::DevelopmentMode::Unity,
         path,
-        development: SourceDevelopment {
-            decode,
-            dimensions: [metadata.width, metadata.height],
-            active_area: [area.x, area.y, area.width, area.height],
-            camera_model: metadata.camera_model(),
-            camera_to_ap1: metadata.camera_to_ap1()?.to_cols_array_2d(),
-        },
+        development,
         adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
             Default::default(),
         )),

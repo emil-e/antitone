@@ -29,7 +29,7 @@ impl SourceKey {
         Self {
             locator: path.to_path_buf(),
             file,
-            source: source.for_runtime(),
+            source: source.for_current_producer(),
         }
     }
 
@@ -65,19 +65,7 @@ impl SourceKey {
     }
 
     pub(crate) fn matches(&self, source: &DevelopedSource) -> bool {
-        let Ok(image) = source.camera_image() else {
-            return false;
-        };
-        let area = source.area();
-        let actual = SourceDevelopment {
-            decode: source.metadata().development(source.white_balance()),
-            dimensions: [image.width, image.height],
-            active_area: [area.x, area.y, area.width, area.height],
-            camera_model: source.camera_model().to_owned(),
-            camera_to_ap1: source.camera_to_ap1().to_cols_array_2d(),
-        };
-        self.source.same_processing(&actual)
-            && self.source.decode.backend_version == actual.decode.backend_version
+        SourceDevelopment::from_developed(source).is_ok_and(|actual| self.source == actual)
     }
 
     pub(super) fn matches_proxy(&self, proxy: &CameraPixels) -> bool {
@@ -92,9 +80,7 @@ impl SourceKey {
 
 impl PartialEq for SourceKey {
     fn eq(&self, other: &Self) -> bool {
-        self.file == other.file
-            && self.source.same_processing(&other.source)
-            && self.source.decode.backend_version == other.source.decode.backend_version
+        self.file == other.file && self.source == other.source
     }
 }
 
@@ -110,8 +96,9 @@ mod tests {
             false,
             false,
         );
-        let raw = crate::raw::RawFile::open(file.path()).unwrap();
-        let mut recorded = SourceDevelopment::from_metadata(&raw.metadata, [1.; 4]).unwrap();
+        let wb = Some([1.; 4]);
+        let (raw, mut recorded) = SourceDevelopment::read_header(file.path(), wb).unwrap();
+        let developed = DevelopedSource::from_raw(raw, wb).unwrap();
         assert!(!recorded.decode.uses_sdk());
         // The same LibRaw release without our development revision is a different producer.
         recorded.decode.backend_version = crate::raw::version();
@@ -121,10 +108,16 @@ mod tests {
             crate::raw::development_version()
         );
         let mut previous_producer = current.clone();
-        previous_producer.source.decode.backend_version = recorded.decode.backend_version;
+        previous_producer.source.decode.backend_version = recorded.decode.backend_version.clone();
         assert_ne!(
             previous_producer, current,
             "pixels produced by different runtimes must not share a cache identity"
         );
+        assert!(
+            recorded.same_processing(&SourceDevelopment::from_developed(&developed).unwrap()),
+            "old recorded provenance must not block compatible developed pixels"
+        );
+        assert!(current.matches(&developed));
+        assert!(!previous_producer.matches(&developed));
     }
 }

@@ -163,13 +163,8 @@ impl Fit {
     fn verify_source(&self, index: usize, source: &DevelopedSource) -> Result<(), Error> {
         let project = &self.request.document.project;
         let id = project.order[index];
-        let path = self.request.document.source_path(id)?;
-        let actual = document::source_metadata(&path, &source.metadata(), source.white_balance())?;
-        crate::development_metadata::require_geometry(
-            &project.source(id)?.development,
-            &actual.development,
-        )?;
-        document::verify_development(&actual, source)
+        let actual = crate::project::SourceDevelopment::from_developed(source)?;
+        crate::development_metadata::require_geometry(&project.source(id)?.development, &actual)
     }
 
     fn geometry(&mut self) -> Result<(), Error> {

@@ -1,5 +1,4 @@
 use super::*;
-use crate::project::Development;
 use crate::raw::fixture as raw_fixture;
 use crate::source::SourceKey;
 
@@ -10,10 +9,7 @@ const BUDGET: u64 = 8 << 20;
 fn document(path: &std::path::Path) -> super::document_scope::DocumentScope {
     let mut document = Document::default();
     let (source, _) = document::open_source(path, Some([1.; 4])).unwrap();
-    let development = Development::for_source(&source.development);
-    document
-        .register_with_development(source, development)
-        .unwrap();
+    document.register(source).unwrap();
     let document: super::document_scope::DocumentScope = document.into();
     document.cache.set_budget(BUDGET);
     document
@@ -387,10 +383,7 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
         let b = raw_fixture::bayer_dng();
         let mut document = document(a.path());
         let (record, _) = document::open_source(b.path(), Some([1.; 4])).unwrap();
-        let development = Development::for_source(&record.development);
-        document
-            .register_with_development(record, development)
-            .unwrap();
+        document.register(record).unwrap();
         document.cache.set_budget(0);
         let native_a = DevelopedSource::open(a.path(), wb(&document)).unwrap();
         let native_b = DevelopedSource::open(b.path(), wb(&document)).unwrap();

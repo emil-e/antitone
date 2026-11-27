@@ -237,18 +237,7 @@ fn record(scan: &DevelopedSource, path: &std::path::Path) -> antitone::project::
         development_mode: antitone::project::DevelopmentMode::Unity,
         id: SourceId(0),
         path: path.into(),
-        development: SourceDevelopment {
-            decode: metadata.development(scan.white_balance()),
-            dimensions: metadata.source_dimensions().unwrap(),
-            active_area: [
-                scan.area().x,
-                scan.area().y,
-                scan.area().width,
-                scan.area().height,
-            ],
-            camera_model: scan.camera_model().to_owned(),
-            camera_to_ap1: scan.camera_to_ap1().to_cols_array_2d(),
-        },
+        development: SourceDevelopment::from_developed(scan).unwrap(),
         adjustment_layers: None,
         repairs: Default::default(),
         orientation: metadata.photo_orientation().unwrap(),
@@ -296,7 +285,7 @@ fn accepted_wb_separates_cache_entries_with_the_same_geometry_basis_and_precisio
 fn prebalanced_source_save_open_and_cold_development_retain_the_photographic_basis() {
     use antitone::{
         processing::{Calibration, InputSettings},
-        project::{Development, Project, Save},
+        project::{Project, Save},
     };
     let fixture = sony_ycc::source();
     let path = fixture.path();
@@ -319,10 +308,8 @@ fn prebalanced_source_save_open_and_cold_development_retain_the_photographic_bas
         };
         let id = project.add_source(record(&scan, path)).unwrap();
         let decode = &project.source(id).unwrap().development.decode;
-        assert_eq!(
-            Development::for_source(&project.source(id).unwrap().development),
-            *decode
-        );
+        assert!(!decode.uses_sdk());
+        assert_eq!(decode.backend_version, antitone::raw::development_version());
         let saved = directory.path().join("prebalanced.antitone");
         project.save(&saved, Save::Replace).unwrap();
         drop(scan);
