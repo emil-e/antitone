@@ -122,6 +122,56 @@ fn click(h: &mut Harness<'_, Editor>, label: &str) {
 }
 
 #[test]
+fn calibration_swatches_keep_the_measured_rgb_readouts() {
+    editor_harness(|mut h, _| {
+        h.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
+        wait_opened_photo(&mut h);
+        let role = egui::accesskit::Role::Button;
+        scroll_to_control(&mut h, role, "Pick Dmax");
+        assert_eq!(h.get_all_by_label("Not measured").count(), 2);
+
+        h.update(|editor| {
+            editor.load_input(
+                crate::processing::Calibration {
+                    dmin: DVec3::new(0.5, 0.125, 0.03125),
+                    dmax: DVec3::new(0.03125, 0.015625, 0.0078125),
+                }
+                .into(),
+            );
+        });
+        h.event(egui::Event::PointerGone);
+        // The inspector reads accepted values in the next paint, independent of the view worker.
+        h.step();
+        assert!(h.query_by_label("Not measured").is_none());
+
+        let png = h.render().unwrap();
+        let density = h.ctx.pixels_per_point();
+        for (picker, readout, colour) in [
+            (
+                "Pick Dmin (film base)",
+                "R 0.500000   G 0.125000   B 0.031250",
+                [188, 99, 49],
+            ),
+            (
+                "Pick Dmax",
+                "R 0.031250   G 0.015625   B 0.007812",
+                [69, 48, 32],
+            ),
+        ] {
+            h.get_by_label(readout);
+            let button = h.get_by_role_and_label(role, picker).rect();
+            let y = (button.center().y * density) as u32;
+            let right = (button.left() * density) as u32;
+            assert!(
+                (0..right).any(|x| png.get_pixel(x, y).0[..3] == colour),
+                "missing {picker} swatch"
+            );
+        }
+        save_capture(&png, "calibration-swatches");
+    });
+}
+
+#[test]
 fn digital_texture_controls_remain_live_during_photo_tools_and_survive_retirement() {
     editor_harness(|mut h, _| {
         h.update(|editor| {

@@ -34,16 +34,16 @@ Calibration tells Antitone what "clear film" and "dense film" look like in *your
 The names come from film density, but what you pick are measurements in the image:
 
 - **Dmin (film base)** — a low-density part of the negative, usually the clear film base
-  between or around frames. It becomes the bright end of the positive.
-- **Dmax** — a genuinely dense part of the negative (deep shadow on the positive side of
-  the film). It becomes the dark end.
+  between or around frames. It anchors black in the positive.
+- **Dmax** — a genuinely dense part of the negative. It anchors white in the positive.
 
 Choose **Pick Dmin (film base)** or **Pick Dmax**, then click the patch to measure.
 To choose a specific area, drag a rectangle and click **Apply**.
 The viewer switches to the positive when the two picks give you a usable calibration.
 Use **View source** to inspect the negative again.
-The values come from original samples per colour channel, and the two picks need not be
-the same kind of material.
+The RGB readouts give the measurements from the original samples. The swatches show
+an approximate colour preview on the same brightness scale, so the denser patch looks
+darker. The two picks need not be the same kind of material.
 
 If you used Analyze, these are measured for you; the status line shows "Dmin + Dmax
 measured". Re-pick Dmin by hand if the film base is dirty or unusual — Analyze's status
