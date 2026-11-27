@@ -393,9 +393,7 @@ fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos() {
                     }
                     let input = editor.scope_request().unwrap();
                     let settings = editor.scopes.settings(editor.document.target());
-                    input
-                        .status(editor.scopes.gpu.as_ref().unwrap(), settings)
-                        .is_some_and(|counts| counts.is_ok())
+                    input.status(editor.scopes.gpu.as_ref().unwrap(), settings) == Some(Ok(()))
                 });
                 harness.read(|editor| {
                     assert_eq!(
@@ -532,41 +530,6 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
             .collect()
     }
 
-    fn read_bins(
-        device: &wgpu::Device,
-        queue: &crate::gpu::submission::Queue,
-        source: &wgpu::Buffer,
-    ) -> Vec<u32> {
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: source.size(),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = device.create_command_encoder(&Default::default());
-        encoder.copy_buffer_to_buffer(source, 0, &staging, 0, source.size());
-        let submission = queue.submit([encoder.finish()]);
-        let (send, receive) = std::sync::mpsc::channel();
-        staging.map_async(wgpu::MapMode::Read, .., move |result| {
-            send.send(result).unwrap()
-        });
-        device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(submission),
-                timeout: Some(Duration::from_secs(30)),
-            })
-            .unwrap();
-        receive
-            .recv_timeout(Duration::from_secs(30))
-            .unwrap()
-            .unwrap();
-        let mapped = staging.get_mapped_range(..).unwrap();
-        let values = bytemuck::cast_slice::<u8, u32>(&mapped).to_vec();
-        drop(mapped);
-        staging.unmap();
-        values
-    }
-
     fixture_editor_gpu(|mut harness, capture, device, queue| {
         let source = harness.read(|editor| editor.document.visit.current_source.unwrap());
         let area = harness.read(|editor| editor.document.visit.canvas.ready.as_ref().unwrap().area);
@@ -606,9 +569,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
                 && editor
                     .scope_request()
                     .and_then(|input| input.status(editor.scopes.gpu.as_ref().unwrap(), settings))
-                    .is_some_and(|result| {
-                        result.is_ok_and(|counts| counts.valid > 0 && counts.invalid == 0)
-                    })
+                    == Some(Ok(()))
         };
         paint_until(&mut harness, ready);
         let before = pixels(&harness, &capture);
@@ -687,19 +648,20 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
             crate::scopes::reference([1, 1], &[[linear.x, linear.y, linear.z, 1.]], settings)
                 .unwrap();
         assert_eq!(expected_counts.outside, 0);
-        let (counts, bins) = harness.read(|editor| {
-            let counts = editor
-                .scope_request()
-                .unwrap()
-                .status(editor.scopes.gpu.as_ref().unwrap(), settings)
-                .unwrap()
-                .unwrap();
-            (counts, editor.scopes.gpu.as_ref().unwrap().bins.clone())
+        let (count, bins) = harness.read(|editor| {
+            let input = editor.scope_request().unwrap();
+            assert_eq!(
+                input.sample_count(editor, settings),
+                input.frame().output.iter().product::<u32>()
+            );
+            (
+                input.frame().output.iter().product::<u32>(),
+                editor.scopes.gpu.as_ref().unwrap().bins.clone(),
+            )
         });
-        assert_eq!(counts.outside, 0);
-        let actual = read_bins(&device, &queue, &bins);
+        let actual = crate::gpu_scopes::testing::read_words(&device, &queue, &bins);
         for (actual, expected) in actual.iter().zip(expected_bins) {
-            assert_eq!(*actual, expected * counts.valid);
+            assert_eq!(*actual, expected * count);
         }
 
         choose(&mut harness, "None");

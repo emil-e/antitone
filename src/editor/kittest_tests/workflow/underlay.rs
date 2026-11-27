@@ -58,14 +58,13 @@ fn successive_pans_keep_the_canvas_covered_while_a_composite_is_in_flight() {
             wait_for(&mut harness, |editor| {
                 let input = editor.scope_request().unwrap();
                 let settings = editor.scopes.settings(editor.document.target());
-                let Some(counts) = input.status(editor.scopes.gpu.as_ref().unwrap(), settings)
-                else {
-                    return false;
-                };
-                let counts = counts.unwrap();
-                assert_eq!(counts.invalid, 0);
+                input.status(editor.scopes.gpu.as_ref().unwrap(), settings) == Some(Ok(()))
+            });
+            harness.read(|editor| {
+                let input = editor.scope_request().unwrap();
+                let settings = editor.scopes.settings(editor.document.target());
                 assert_eq!(
-                    counts.valid,
+                    input.sample_count(editor, settings),
                     input.frame().output.iter().product::<u32>(),
                     "the panned canvas must not expose gaps beyond the held composite"
                 );
@@ -76,7 +75,6 @@ fn successive_pans_keep_the_canvas_covered_while_a_composite_is_in_flight() {
                 let fallback = input.view.spec.frame();
                 assert_eq!(fallback.min.0, [0., 0.]);
                 assert_eq!(fallback.max.0, fallback.composition.size().map(f64::from));
-                true
             });
 
             let second =
@@ -245,17 +243,16 @@ fn warm_physical_view_underlay_keeps_navigation_covered_during_blocked_acquisiti
                     e.document.visit.working_view.displayed.as_ref().unwrap()
                 ));
                 let settings = e.scopes.settings(e.document.target());
-                let Some(counts) = input.status(e.scopes.gpu.as_ref().unwrap(), settings) else {
-                    return false;
-                };
-                let counts = counts.unwrap();
-                assert_eq!(counts.invalid, 0);
+                input.status(e.scopes.gpu.as_ref().unwrap(), settings) == Some(Ok(()))
+            });
+            harness.read(|editor| {
+                let input = editor.scope_request().unwrap();
+                let settings = editor.scopes.settings(editor.document.target());
                 assert_eq!(
-                    counts.valid,
-                    input.frame().output[0] * input.frame().output[1],
+                    input.sample_count(editor, settings),
+                    input.frame().output.iter().product::<u32>(),
                     "no uncovered photograph pixels while regional acquisition is blocked"
                 );
-                true
             });
             harness.read(|editor| assert!(editor.document.visit.working_view.task.is_some()));
         }

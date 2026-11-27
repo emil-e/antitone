@@ -112,7 +112,6 @@ impl Settings {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Counts {
     pub valid: u32,
-    pub invalid: u32,
     pub outside: u32,
 }
 
@@ -134,21 +133,15 @@ pub fn reference(
     let basis = Basis::new(settings.target);
     let half_extent = basis.extent / settings.amplification as f64;
     for (i, pixel) in linear.iter().enumerate() {
-        if pixel[3] <= 0. {
+        if pixel[3] <= 0. || pixel[3].is_nan() {
             continue;
         }
-        let mut encoded = DVec3::ZERO;
-        let mut invalid = false;
-        for channel in 0..3 {
-            match settings.target.encode(f64::from(pixel[channel])) {
-                Ok(value) => encoded[channel] = value,
-                Err(_) => invalid = true,
-            }
-        }
-        if invalid {
-            counts.invalid += 1;
+        let [Ok(r), Ok(g), Ok(b)] =
+            [pixel[0], pixel[1], pixel[2]].map(|value| settings.target.encode(f64::from(value)))
+        else {
             continue;
-        }
+        };
+        let encoded = DVec3::new(r, g, b);
         counts.valid += 1;
         let x = i as u32 % size[0];
         let column = ((x as f64 + 0.5) / size[0] as f64 * BINS as f64).floor() as usize;
@@ -233,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn whole_raster_columns_endpoints_and_invalid_samples_are_accounted() {
+    fn whole_raster_columns_omit_unusable_samples_but_include_black_and_white() {
         let settings = Settings::default();
         let pixels = [
             [0., 0., 0., 1.],
@@ -246,7 +239,6 @@ mod tests {
             counts,
             Counts {
                 valid: 2,
-                invalid: 2,
                 outside: 0
             }
         );

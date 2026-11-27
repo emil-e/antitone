@@ -644,15 +644,13 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         tests::complete_service_request(&mut seeded, &document, job);
         assert_eq!(seeded.ready_count(&document, OutputTarget::DisplayP3), 1);
         wait(&device, &queue);
-        let counts = gpu
-            .status_processing(&image, &parameters, scope_frame, settings)
-            .unwrap()
-            .unwrap();
-        assert!(counts.valid > 0);
         assert_eq!(
-            counts.valid + counts.invalid,
-            image.linear.width() * image.linear.height()
+            gpu.status_processing(&image, &parameters, scope_frame, settings),
+            Some(Ok(()))
         );
+        let sample_count =
+            crate::gpu_scopes::testing::sample_count(&device, &queue, &gpu, settings.plot);
+        assert_eq!(sample_count, image.linear.width() * image.linear.height());
         assert_eq!(gpu.reduction_count(), 1);
         let mut restarted = Thumbnails::with_disk(
             device.clone(),
@@ -681,13 +679,11 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         wait(&device, &queue);
         assert_eq!(gpu.reduction_count(), 1);
         assert_eq!(
-            gpu.status_processing(&image, &parameters, scope_frame, settings)
-                .unwrap()
-                .unwrap(),
-            counts
+            gpu.status_processing(&image, &parameters, scope_frame, settings),
+            Some(Ok(()))
         );
         println!(
-            "prewarm_scope_thumbnail_integration reductions=1 counts={counts:?} selected_processing_reused=true"
+            "prewarm_scope_thumbnail_integration reductions=1 samples={sample_count} selected_processing_reused=true"
         );
     });
 }

@@ -11,35 +11,6 @@ fn vectorscope_is_the_initial_editor_plot() {
 }
 
 #[test]
-fn scope_feedback_reports_invalid_samples_and_errors_but_not_off_plot_samples() {
-    use crate::scopes::Counts;
-    let counts = Counts {
-        valid: 100,
-        invalid: 0,
-        outside: 0,
-    };
-    assert!(
-        scope_feedback(Some(Ok(Counts {
-            outside: 12,
-            ..counts
-        })))
-        .is_none()
-    );
-    let (text, color) = scope_feedback(Some(Ok(Counts {
-        invalid: 3,
-        outside: 12,
-        ..counts
-    })))
-    .unwrap();
-    assert_eq!(text, "Invalid samples: 3");
-    assert_eq!(color, egui::Color32::LIGHT_RED);
-    assert_eq!(
-        scope_feedback(Some(Err("Reduction failed".into()))).unwrap(),
-        ("Reduction failed".into(), color)
-    );
-}
-
-#[test]
 fn scope_notices_stay_within_small_plots_and_bound_long_errors() {
     for dpi in [1., 2.] {
         let context = egui::Context::default();
@@ -48,8 +19,7 @@ fn scope_notices_stay_within_small_plots_and_bound_long_errors() {
             let plot = egui::Rect::from_min_size(egui::pos2(10., 10.), egui::vec2(width, 96.));
             for align in [egui::Align2::LEFT_BOTTOM, egui::Align2::CENTER_CENTER] {
                 for text in [
-                    "No image".into(),
-                    "Invalid samples: 123".into(),
+                    "Scopes unavailable".into(),
                     "GPU reduction failed: ".to_owned() + &"long diagnostic ".repeat(100),
                 ] {
                     let long_error = text.len() > 100;
@@ -759,17 +729,11 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
                 }),
             "the tilted fixture must contain blank, out-of-texture corners"
         );
-        let counts = crop
-            .status(&gpu, settings)
-            .expect("submitted Crop reduction has completed")
-            .unwrap();
+        assert_eq!(crop.status(&gpu, settings), Some(Ok(())));
+        let count = crate::gpu_scopes::testing::sample_count(&device, &queue, &gpu, settings.plot);
         assert!(
-            counts.valid > 0,
-            "the displayed photograph still contributes samples"
-        );
-        assert_eq!(
-            counts.invalid, 0,
-            "blank canvas corners are absent coverage, not invalid image pixels"
+            count > 0 && count < crop_frame.output.iter().product(),
+            "only the displayed photograph, not the blank corners, contributes samples"
         );
         editor.hosted_action(tool::Action::Dismiss);
         prepare(frame(&mut editor, size), size);

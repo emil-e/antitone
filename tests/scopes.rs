@@ -313,7 +313,7 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
                     requested_settings
                 )
                 .is_none(),
-                "held bins must not be reported as current diagnostics"
+                "held bins must not be reported as current"
             );
             let pixels = paint_pixels(&device, &queue, encoder, |pass| {
                 let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(256., 256.));
@@ -354,10 +354,11 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
                         latest_parameters,
                         requested_frame,
                         requested_settings
-                    )
-                    .unwrap()
-                    .unwrap()
-                    .valid,
+                    ),
+                    Some(Ok(()))
+                );
+                assert_eq!(
+                    read(&device, &queue, &gpu.totals)[0],
                     requested_frame.output[0] * requested_frame.output[1]
                 );
             } else {
@@ -371,7 +372,7 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
 }
 
 #[test]
-fn gpu_waveform_matches_scalar_bins_columns_endpoints_and_invalid_counts() {
+fn gpu_waveform_matches_scalar_bins_and_columns_with_unusable_samples_omitted() {
     pollster::block_on(async {
         let (device, queue) = device().await;
         let gpu = GpuScopes::new(&device).await.unwrap();
@@ -398,6 +399,9 @@ fn gpu_waveform_matches_scalar_bins_columns_endpoints_and_invalid_counts() {
             pixels[3] = [f32::INFINITY, 0., 0., 1.];
             pixels[4] = [-0.01, 0., 0., 1.];
             pixels[5] = [1.01, 0., 0., 1.];
+            pixels[6] = [0., 0., 0., -1.];
+            pixels[7] = [0., 0., 0., 0.];
+            pixels[8] = [0., 0., 0., f32::NAN];
             let image = texture(&device, &queue, size, &pixels);
             for plot in [Plot::Rgb, Plot::Luma] {
                 let settings = Settings {
@@ -412,17 +416,48 @@ fn gpu_waveform_matches_scalar_bins_columns_endpoints_and_invalid_counts() {
                 queue.submit([encoder.finish()]);
                 let actual = read(&device, &queue, &gpu.bins);
                 let totals = read(&device, &queue, &gpu.totals);
-                assert_eq!(
-                    &totals[..3],
-                    &[counts.valid, counts.invalid, counts.outside]
-                );
-                assert_eq!(&totals[4..], columns);
-                assert_eq!(counts.invalid, 4);
+                assert_eq!(&totals[1..], columns);
+                assert_eq!(counts.valid, size[0] * size[1] - 7);
                 assert_eq!(actual, expected, "{target:?} {plot:?}");
                 for plane in actual.chunks(PLANE_LEN) {
                     assert_eq!(plane.iter().sum::<u32>(), counts.valid);
                 }
             }
+        }
+    });
+}
+
+#[test]
+fn unusable_samples_do_not_dim_or_add_to_the_trace() {
+    pollster::block_on(async {
+        let (device, queue) = device().await;
+        let gpu = GpuScopes::new(&device).await.unwrap();
+        for plot in [Plot::Rgb, Plot::Luma, Plot::Vector] {
+            let settings = Settings {
+                plot,
+                ..Default::default()
+            };
+            let trace = |excluded| {
+                let input = texture(
+                    &device,
+                    &queue,
+                    [3, 1],
+                    &[[0., 0., 0., 1.], excluded, [0.42, 0.26, 0.18, 1.]],
+                );
+                let mut encoder = device.create_command_encoder(&Default::default());
+                let group = gpu.encode(&device, &mut encoder, &input, settings).unwrap();
+                paint_pixels(&device, &queue, encoder, |pass| gpu.paint(pass, &group))
+            };
+            let baseline = trace([0.; 4]);
+            assert!(baseline.iter().any(|pixel| pixel[0] > 0.5), "{plot:?}");
+            assert!(
+                trace([0., 0., 0., -1.]) == baseline,
+                "{plot:?}: failed sample"
+            );
+            assert!(
+                trace([1.01, 0., 0., 1.]) == baseline,
+                "{plot:?}: out-of-range RGB"
+            );
         }
     });
 }
@@ -460,11 +495,8 @@ fn gpu_vector_projection_amplification_and_boundary_tolerance_match_scalar() {
                     queue.submit([encoder.finish()]);
                     let actual = read(&device, &queue, &gpu.bins);
                     let totals = read(&device, &queue, &gpu.totals);
-                    assert_eq!(
-                        &totals[..3],
-                        &[counts.valid, counts.invalid, counts.outside]
-                    );
-                    assert_eq!(actual.iter().sum::<u32>() + totals[2], 1);
+                    assert_eq!(totals[0], 1, "off-plot points still normalize density");
+                    assert_eq!(actual.iter().sum::<u32>(), 1 - counts.outside);
                     if counts.outside == 0 {
                         let a = actual.iter().position(|&count| count == 1).unwrap();
                         let b = expected.iter().position(|&count| count == 1).unwrap();
@@ -482,7 +514,7 @@ fn gpu_vector_projection_amplification_and_boundary_tolerance_match_scalar() {
 }
 
 #[test]
-fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics() {
+fn shared_preparation_and_scope_cache_reuse_rendering_without_reviving_retired_results() {
     pollster::block_on(async {
         let (device, queue) = device().await;
         let renderer = crate::render_fixture::RenderFixture::new(&device, &queue)
@@ -531,12 +563,10 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         assert_eq!(
-            gpu.status(&image, parameters, full_frame([7, 3]), settings)
-                .unwrap()
-                .unwrap()
-                .valid,
-            21
+            gpu.status(&image, parameters, full_frame([7, 3]), settings),
+            Some(Ok(()))
         );
+        assert_eq!(read(&device, &queue, &gpu.totals)[0], 21);
         let zoom = Settings {
             amplification: 8,
             ..settings
@@ -559,7 +589,7 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         assert!(
             gpu.status(&image, parameters, full_frame([7, 3]), zoom)
                 .is_none(),
-            "late diagnostics must not reinstall after suspension"
+            "late completion must not reinstall after suspension"
         );
         let previous_image = image.clone();
         let image = Arc::new(
@@ -660,30 +690,24 @@ fn vector_intensity_tracks_chroma_density_not_zoomed_bin_occupancy() {
                 let mut bins = vec![0_u32; PLANE_LEN * 4];
                 bins[index] = 256 / amplification.pow(2);
                 queue.write_buffer(&gpu.bins, 0, bytemuck::cast_slice(&bins));
-                for outside in [0, valid / 2] {
-                    queue.write_buffer(
-                        &gpu.totals,
-                        0,
-                        bytemuck::cast_slice(&[valid, 0, outside, 0]),
-                    );
-                    let pixels = paint_pixels(
-                        &device,
-                        &queue,
-                        device.create_command_encoder(&Default::default()),
-                        |pass| gpu.paint(pass, &group),
-                    );
-                    for (c, tint) in [0.93, 0.96, 1.].into_iter().enumerate() {
-                        assert!(
-                            (f64::from(pixels[index][c]) - expected * tint).abs() < 0.001,
-                            "{target:?} {amplification}× outside={outside}: {:?}",
-                            pixels[index]
-                        );
-                    }
+                queue.write_buffer(&gpu.totals, 0, bytemuck::bytes_of(&valid));
+                let pixels = paint_pixels(
+                    &device,
+                    &queue,
+                    device.create_command_encoder(&Default::default()),
+                    |pass| gpu.paint(pass, &group),
+                );
+                for (c, tint) in [0.93, 0.96, 1.].into_iter().enumerate() {
                     assert!(
-                        pixels[index][2] > 0.3,
-                        "default intensity must remain useful"
+                        (f64::from(pixels[index][c]) - expected * tint).abs() < 0.001,
+                        "{target:?} {amplification}×: {:?}",
+                        pixels[index]
                     );
                 }
+                assert!(
+                    pixels[index][2] > 0.3,
+                    "default intensity must remain useful"
+                );
             }
         }
     });
@@ -852,12 +876,10 @@ fn rapid_requests_and_hide_show_coalesce_until_completion_and_luma_reuses_bins()
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         assert_eq!(gpu.reduction_count(), 2);
         assert_eq!(
-            gpu.status(&image, parameters, full_frame([7, 3]), latest)
-                .unwrap()
-                .unwrap()
-                .valid,
-            21
+            gpu.status(&image, parameters, full_frame([7, 3]), latest),
+            Some(Ok(()))
         );
+        assert_eq!(read(&device, &queue, &gpu.totals)[0], 21);
         let mut encoder = device.create_command_encoder(&Default::default());
         paint(waveform).prepare_frame(&device, &mut encoder);
         queue.submit([encoder.finish()]);
@@ -875,5 +897,25 @@ fn rapid_requests_and_hide_show_coalesce_until_completion_and_luma_reuses_bins()
             gpu.status(&image, parameters, full_frame([7, 3]), waveform)
         );
         queue.submit([encoder.finish()]);
+
+        // Discard a frame after recording its scope but before submitting it.
+        let mut abandoned = device.create_command_encoder(&Default::default());
+        paint(latest).prepare_frame(&device, &mut abandoned);
+        assert_eq!(gpu.reduction_count(), before + 1);
+        drop(abandoned);
+        assert!(
+            gpu.status(&image, parameters, full_frame([7, 3]), latest)
+                .is_none()
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        paint(latest).prepare_frame(&device, &mut encoder);
+        assert_eq!(gpu.reduction_count(), before + 2);
+        queue.submit([encoder.finish()]);
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        assert_eq!(
+            gpu.status(&image, parameters, full_frame([7, 3]), latest),
+            Some(Ok(()))
+        );
+        assert_eq!(read(&device, &queue, &gpu.totals)[0], 21);
     });
 }

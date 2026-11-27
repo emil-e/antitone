@@ -35,16 +35,13 @@ fn fragment(@location(0) uv: vec2f) -> @location(0) vec4f {
         let scale = 10000. * p.luma_gain.w * p.luma_gain.w;
         trace = vec3f(.93, .96, 1.) * density(bins[index], totals[0], scale);
     } else if p.size.z == 1u {
-        trace = vec3f(density(bins[3u * 65536u + index], totals[4u + xy.x], 1000.));
+        trace = vec3f(density(bins[3u * 65536u + index], totals[1u + xy.x], 1000.));
     } else {
         trace = vec3f(
-                density(bins[index], totals[4u + xy.x], 1000.),
-                density(bins[65536u + index], totals[4u + xy.x], 1000.),
-                density(bins[131072u + index], totals[4u + xy.x], 1000.),
+                density(bins[index], totals[1u + xy.x], 1000.),
+                density(bins[65536u + index], totals[1u + xy.x], 1000.),
+                density(bins[131072u + index], totals[1u + xy.x], 1000.),
             );
-    }
-    if totals[1] != 0u {
-        trace *= .25;
     }
     return vec4f(max(vec3f(.025), trace), 1.);
 }
