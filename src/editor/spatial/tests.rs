@@ -264,12 +264,21 @@ fn retained_camera_rasters_prepare_geometry_without_reacquiring_sources() {
 }
 
 #[test]
-fn reopening_regenerates_regions_on_demand_and_preserves_the_accepted_project() {
+fn reopening_with_saved_analyze_support_regenerates_framing_on_demand() {
     let (scheduler, starts) = observed();
     let editor = fixture(scheduler.clone());
-    let accepted = editor.document.state.project.clone();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("runtime-regions.antitone");
+    let outcomes = |editor: &Editor| {
+        assert!(editor.document.auto_crop.reviewing(), "{}", editor.status);
+        editor
+            .document
+            .project
+            .order
+            .iter()
+            .map(|&id| (editor.auto_crop_preview(id), editor.auto_crop_problem(id)))
+            .collect::<Vec<_>>()
+    };
     with_application(editor, |app| {
         app.enter(|editor, cx| {
             auto_crop::start_review(
@@ -286,9 +295,21 @@ fn reopening_regenerates_regions_on_demand_and_preserves_the_accepted_project() 
             2
         );
         assert!(starts.load(Ordering::SeqCst) > 0);
-        app.enter(|editor, cx| {
+        let original = app.read(outcomes);
+        let accepted = app.enter(|editor, cx| {
             editor.finish_auto_crop(false);
+            editor.document.state.project.analysis_regions = ready
+                .groups
+                .iter()
+                .flat_map(|group| &group.sources)
+                .map(|row| crate::project::SourceAnalysis {
+                    source: row.input.source,
+                    areas: row.sampling_areas(),
+                })
+                .collect();
+            let accepted = editor.document.state.project.clone();
             editor.save_project(path.clone(), crate::project::Save::New, None, cx);
+            accepted
         });
         app.run_until(LIMIT, |editor| !editor.interaction_blocked());
         app.read(|editor| {
@@ -303,6 +324,7 @@ fn reopening_regenerates_regions_on_demand_and_preserves_the_accepted_project() 
         app.read(|editor| {
             assert!(!editor.dialogs.is_open(), "{}", editor.status);
             assert!(editor.document.spatial.ready().groups.is_empty());
+            assert_eq!(editor.document.project.analysis_regions.len(), 2);
             assert_eq!(editor.document.state.project, accepted);
         });
         app.enter(|editor, cx| {
@@ -312,10 +334,12 @@ fn reopening_regenerates_regions_on_demand_and_preserves_the_accepted_project() 
                 "Whole roll",
                 cx,
             );
+            assert!(editor.document.spatial_preparing.is_some());
+            assert!(!editor.document.auto_crop.reviewing());
         });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.read(|editor| {
-            assert!(editor.document.auto_crop.reviewing(), "{}", editor.status);
+            assert_eq!(outcomes(editor), original);
             let regenerated = editor.document.spatial.ready();
             assert_eq!(
                 regenerated

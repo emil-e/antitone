@@ -42,7 +42,7 @@ DocumentScope owns the store and preparation task; immutable Document captures h
 
 ## Runtime evidence and saved choices
 
-Automatic observations, fitted geometry and sampling suggestions live with the open document. Save writes accepted crops, analysis support and grading; Open starts without spatial evidence and prepares it when a consumer requests it. Preparation alone neither creates an undoable edit nor prompts for Save.
+Automatic observations, fitted geometry and sampling suggestions live with the open document. Save writes accepted crops, analysis support and grading; Open starts without spatial evidence and prepares it when a consumer requests it. Saved analysis support feeds Analyze review; Auto-crop skips photographs without usable prepared framing. Preparation alone neither creates an undoable edit nor prompts for Save.
 
 Shared preparation owns one cancellable modal and blocks ordinary UI file actions. The photo count tracks acquisition only; when detection is needed, the modal switches to indeterminate progress before processing the captured roll. An internal captured write can overlap preparation without cancelling it or replacing its live results. A consumer that becomes ready during the write resumes after completion; a failed write retains it until failure acknowledgement. [Project I/O](projects.md#prepare-before-replacing) owns accepted-state validation and failure-atomic writes.
 

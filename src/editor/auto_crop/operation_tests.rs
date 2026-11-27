@@ -1,9 +1,9 @@
 use super::*;
 
 mod history_tests;
+use super::tests::{hold_preparation, unprepared_fixture};
 use crate::application::test_support::{TestApplication, with_application};
 use crate::editor::crop_editor::tests::request_auto_crop;
-use futures_channel::oneshot;
 use std::time::Duration;
 
 const LIMIT: Duration = Duration::from_secs(5);
@@ -11,17 +11,16 @@ const LIMIT: Duration = Duration::from_secs(5);
 #[test]
 fn photo_proposal_state_is_not_redirected_to_supersession_and_releases_without_cycles() {
     for poll_before_retirement in [false, true] {
-        let (editor, _files) = super::tests::fixture();
+        let (editor, _files) = unprepared_fixture();
         let accepted = editor.document.state.project.clone();
         with_application(editor, |app| {
-            let (reply, old) = app.enter(|editor, cx| {
+            let (reply, metadata, old) = app.enter(|editor, cx| {
                 editor.begin_crop();
                 let state = editor.document.crop_state().unwrap();
-                let (reply, receive) = oneshot::channel();
-                editor.document.spatial_reply = Some(receive);
+                let (reply, metadata) = hold_preparation(editor);
                 request_auto_crop(editor.document.visit.current_source.unwrap(), editor, cx);
                 assert!(editor.document.crop_auto_crop_pending());
-                (reply, state)
+                (reply, metadata, state)
             });
             if poll_before_retirement {
                 app.pump();
@@ -38,7 +37,7 @@ fn photo_proposal_state_is_not_redirected_to_supersession_and_releases_without_c
             old.borrow_mut().draft.size = [23, 29];
             let old_draft = old.borrow().draft;
 
-            reply.send(Ok(Some(Default::default()))).unwrap();
+            reply.send(Ok(Some(metadata))).unwrap();
             app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
             app.pump();
             let new = app.update(|editor| {
@@ -65,14 +64,10 @@ fn photo_proposal_state_is_not_redirected_to_supersession_and_releases_without_c
             app.run_until(LIMIT, |_| old_weak.upgrade().is_none());
 
             // Positive control: the successor can request and accept its own proposal.
-            let reply = app.enter(|editor, cx| {
-                let (reply, receive) = oneshot::channel();
-                editor.document.spatial_reply = Some(receive);
+            app.enter(|editor, cx| {
                 request_auto_crop(editor.document.visit.current_source.unwrap(), editor, cx);
                 assert!(editor.document.crop_auto_crop_pending());
-                reply
             });
-            reply.send(Ok(Some(Default::default()))).unwrap();
             app.run_until(LIMIT, |editor| !editor.document.crop_auto_crop_pending());
             assert_ne!(new.borrow().draft, new_draft);
             app.read(|editor| assert_eq!(editor.document.state.project, accepted));
@@ -85,9 +80,8 @@ fn photo_proposal_state_is_not_redirected_to_supersession_and_releases_without_c
 }
 
 fn request(app: &mut TestApplication<'_, Editor>) {
-    let send = app.enter(|editor, cx| {
-        let (send, receive) = oneshot::channel();
-        editor.document.spatial_reply = Some(receive);
+    let (send, metadata) = app.enter(|editor, cx| {
+        let held = hold_preparation(editor);
         start_review(
             editor,
             editor.document.project.order.clone(),
@@ -95,16 +89,16 @@ fn request(app: &mut TestApplication<'_, Editor>) {
             cx,
         );
         assert!(!editor.document.auto_crop.reviewing());
-        send
+        held
     });
-    send.send(Ok(Some(Default::default()))).unwrap();
+    send.send(Ok(Some(metadata))).unwrap();
     app.run_until(LIMIT, |editor| editor.document.auto_crop.reviewing());
     app.read(|editor| assert!(editor.auto_crop_valid(), "{}", editor.status));
 }
 
 #[test]
 fn a_one_photo_batch_reviews_the_explicit_photo_instead_of_seeding_manual_crop() {
-    let (mut editor, _files) = super::tests::fixture();
+    let (mut editor, _files) = unprepared_fixture();
     let current = editor.document.visit.current_source.unwrap();
     let photo = editor.document.project.order[1];
     assert_ne!(photo, current);
@@ -116,13 +110,12 @@ fn a_one_photo_batch_reviews_the_explicit_photo_instead_of_seeding_manual_crop()
     assert!(editor.document.roll_selection.contains(current));
     assert!(!editor.document.roll_selection.contains(photo));
     with_application(editor, |app| {
-        let reply = app.enter(|editor, cx| {
-            let (reply, receive) = oneshot::channel();
-            editor.document.spatial_reply = Some(receive);
+        let (reply, metadata) = app.enter(|editor, cx| {
+            let held = hold_preparation(editor);
             start_review(editor, vec![photo], "Entry selection", cx);
-            reply
+            held
         });
-        reply.send(Ok(Some(Default::default()))).unwrap();
+        reply.send(Ok(Some(metadata))).unwrap();
         app.run_until(LIMIT, |editor| editor.document.auto_crop.reviewing());
         app.update(|editor| {
             assert!(editor.document.crop_edit().is_none());
@@ -165,24 +158,23 @@ fn a_one_photo_batch_reviews_the_explicit_photo_instead_of_seeding_manual_crop()
 
 #[test]
 fn a_photo_proposal_only_seeds_its_own_existing_crop_without_accepting_an_edit() {
-    let (mut editor, _files) = super::tests::fixture();
+    let (mut editor, _files) = unprepared_fixture();
     editor.begin_crop();
     let current = editor.document.visit.current_source.unwrap();
     let other = editor.document.project.order[1];
     let before = editor.document.crop_edit().unwrap().draft;
     let accepted = editor.document.state.project.clone();
     with_application(editor, |app| {
-        let reply = app.enter(|editor, cx| {
-            let (reply, receive) = oneshot::channel();
-            editor.document.spatial_reply = Some(receive);
+        let (reply, metadata) = app.enter(|editor, cx| {
+            let held = hold_preparation(editor);
             request_auto_crop(other, editor, cx);
             assert!(editor.document.spatial_preparing.is_none());
             assert!(!editor.document.crop_auto_crop_pending());
             assert_eq!(editor.document.crop_edit().unwrap().draft, before);
             request_auto_crop(current, editor, cx);
-            reply
+            held
         });
-        reply.send(Ok(Some(Default::default()))).unwrap();
+        reply.send(Ok(Some(metadata))).unwrap();
         app.run_until(LIMIT, |editor| !editor.document.crop_auto_crop_pending());
         app.read(|editor| {
             assert_ne!(editor.document.crop_edit().unwrap().draft, before);

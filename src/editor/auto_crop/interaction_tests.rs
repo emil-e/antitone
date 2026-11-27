@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    tests::{hold_preparation, unprepared_fixture},
+    *,
+};
 use crate::application::test_support::with_application;
 use futures_channel::oneshot;
 use std::time::Duration;
@@ -9,12 +12,11 @@ const LIMIT: Duration = Duration::from_secs(5);
 fn retiring_batch_preparation_releases_its_owner_without_retiring_shared_work_or_its_successor() {
     for polled in [false, true] {
         for failed in [false, true] {
-            let (editor, _files) = super::tests::fixture();
+            let (editor, _files) = unprepared_fixture();
             let accepted = editor.document.state.project.clone();
             with_application(editor, |app| {
-                let (reply, old) = app.enter(|editor, cx| {
-                    let (reply, receive) = oneshot::channel();
-                    editor.document.spatial_reply = Some(receive);
+                let (reply, metadata, old) = app.enter(|editor, cx| {
+                    let (reply, metadata) = hold_preparation(editor);
                     start_review(
                         editor,
                         editor.document.project.order.clone(),
@@ -23,7 +25,7 @@ fn retiring_batch_preparation_releases_its_owner_without_retiring_shared_work_or
                     );
                     assert!(editor.current_tool().unwrap().is::<AutoCropTool>());
                     let state = editor.document.auto_crop.current().unwrap();
-                    (reply, Rc::downgrade(&state))
+                    (reply, metadata, Rc::downgrade(&state))
                 });
                 if polled {
                     app.pump();
@@ -45,7 +47,7 @@ fn retiring_batch_preparation_releases_its_owner_without_retiring_shared_work_or
                     .send(if failed {
                         Err("held preparation failure".into())
                     } else {
-                        Ok(Some(Default::default()))
+                        Ok(Some(metadata))
                     })
                     .unwrap();
                 app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
@@ -66,18 +68,17 @@ fn retiring_batch_preparation_releases_its_owner_without_retiring_shared_work_or
                 });
                 assert_eq!(successor.borrow().draft.size, [17, 19]);
 
-                let reply = app.enter(|editor, cx| {
-                    let (reply, receive) = oneshot::channel();
-                    editor.document.spatial_reply = Some(receive);
+                let (reply, metadata) = app.enter(|editor, cx| {
+                    let held = hold_preparation(editor);
                     start_review(
                         editor,
                         editor.document.project.order.clone(),
                         "Whole roll",
                         cx,
                     );
-                    reply
+                    held
                 });
-                reply.send(Ok(Some(Default::default()))).unwrap();
+                reply.send(Ok(Some(metadata))).unwrap();
                 app.run_until(LIMIT, |editor| editor.document.auto_crop.reviewing());
                 app.update(|editor| editor.finish_auto_crop(true));
                 app.read(|editor| {

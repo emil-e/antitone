@@ -9,6 +9,8 @@ use review::{Draft, Entry, Inputs, LoadedPhoto, Rejection, SelectedPhoto, accept
 
 #[cfg(test)]
 mod testing;
+#[cfg(test)]
+pub(super) use testing::declared_picture_regions;
 
 fn review_inputs(editor: &Editor) -> Inputs<'_> {
     let scope = &editor.document;

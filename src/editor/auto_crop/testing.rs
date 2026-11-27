@@ -1,4 +1,41 @@
 use super::*;
+use crate::{
+    scan_regions::PictureGeometry,
+    spatial_metadata::{CommonSize, Group, Metadata, Region, SourceRegions, VERSION},
+};
+
+/// Supply framing for a same-development fixture without invoking picture detection.
+pub(in crate::editor) fn declared_picture_regions(
+    document: &Document,
+    geometry: &PictureGeometry,
+) -> Metadata {
+    let sources: Vec<_> = document
+        .spatial_inputs()
+        .into_iter()
+        .map(|input| {
+            let region =
+                Region::from_picture(geometry, input.development.active_area.into(), [true; 4])
+                    .unwrap();
+            SourceRegions {
+                input,
+                observation: Some(region.clone()),
+                picture: Some(region),
+                film: None,
+                holder_opening: None,
+                sampling: Default::default(),
+                material: None,
+            }
+        })
+        .collect();
+    Metadata {
+        version: VERSION,
+        groups: vec![Group {
+            development: sources[0].input.development.decode.clone(),
+            common_size: CommonSize::fit(&sources),
+            sources,
+        }],
+    }
+}
 
 impl Editor {
     pub(in crate::editor) fn begin_auto_crop_review(

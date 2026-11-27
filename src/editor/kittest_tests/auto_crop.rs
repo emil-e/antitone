@@ -3,10 +3,7 @@ mod interaction;
 mod margin;
 mod overlay;
 mod photo;
-use crate::{
-    project::SourceAnalysis,
-    scan_regions::{Areas, PictureGeometry},
-};
+use crate::scan_regions::PictureGeometry;
 
 fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R {
     let directory = tempfile::tempdir().unwrap();
@@ -29,81 +26,16 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
             e.document.source = false;
             e.document.project.orientation.turn_clockwise();
             e.photo_orientation_mut().flips.horizontal = true;
-            e.document.state.project.analysis_regions = e
-                .document
-                .project
-                .order
-                .iter()
-                .map(|&source| {
-                    let active = e
-                        .document
-                        .project
-                        .source(source)
-                        .unwrap()
-                        .development
-                        .active_area
-                        .into();
-                    let geometry = PictureGeometry {
-                        size: [768, 512],
-                        angle: 0.75,
-                        sides: [Some(100.), Some(660.), Some(80.), Some(430.)],
-                    };
-                    SourceAnalysis {
-                        source,
-                        areas: Areas {
-                            opening: Some(Coverage::rectangle(active).corners().map(|p| p.0)),
-                            picture: geometry.frame(active),
-                            picture_geometry: Some(geometry),
-                            picture_observed: [true; 4],
-                            ..Default::default()
-                        },
-                    }
-                })
-                .collect();
 
             // UI controls consume declared hypotheses; actual discovery/acquisition is
             // exercised by the authored spatial workflow cases, not this fixture.
-            let sources: Vec<_> = e
-                .document
-                .spatial_inputs()
-                .into_iter()
-                .map(|input| {
-                    let areas = &e
-                        .document
-                        .project
-                        .analysis_regions
-                        .iter()
-                        .find(|row| row.source == input.source)
-                        .unwrap()
-                        .areas;
-                    let region = crate::spatial_metadata::Region::from_picture(
-                        areas.picture_geometry.as_ref().unwrap(),
-                        input.development.active_area.into(),
-                        [true; 4],
-                    )
-                    .unwrap();
-                    crate::spatial_metadata::SourceRegions {
-                        input,
-                        observation: Some(region.clone()),
-                        picture: Some(region),
-                        film: None,
-                        holder_opening: None,
-                        sampling: Default::default(),
-                        material: None,
-                    }
-                })
-                .collect();
-            let metadata = crate::spatial_metadata::Metadata {
-                version: crate::spatial_metadata::VERSION,
-                groups: vec![crate::spatial_metadata::Group {
-                    development: e.document.state.project.sources[0]
-                        .development
-                        .decode
-                        .clone(),
-                    common_size: crate::spatial_metadata::CommonSize::fit(&sources),
-                    sources,
-                }],
+            let geometry = PictureGeometry {
+                size: [768, 512],
+                angle: 0.75,
+                sides: [Some(100.), Some(660.), Some(80.), Some(430.)],
             };
+            let metadata =
+                crate::editor::auto_crop::declared_picture_regions(&e.document, &geometry);
             publish_regions(e, metadata);
         });
         h.step();
@@ -278,14 +210,6 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
             set_layout(&mut h, size, width);
             let ids = h.read(|editor| editor.document.state.project.order.clone());
             h.update(|e| {
-                e.document
-                    .state
-                    .project
-                    .analysis_regions
-                    .retain(|r| r.source != ids[0]);
-                let areas = &mut e.document.state.project.analysis_regions[0].areas;
-                areas.picture_observed[0] = false;
-                areas.picture_weak[0] = true;
                 let mut metadata = (*e.document.spatial.ready()).clone();
                 metadata.groups[0].sources[0].picture = None;
                 metadata.groups[0].sources[1]
@@ -391,7 +315,6 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
                 );
             }
             h.update(|editor| {
-                editor.document.state.project.analysis_regions.clear();
                 let ids = editor.document.state.project.order.clone();
                 unavailable_regions(editor, &ids);
             });
@@ -637,9 +560,6 @@ fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
     setup(|mut h, _directory| {
         let ids = h.read(|editor| editor.document.state.project.order.clone());
         h.update(|e| {
-            let a = &mut e.document.state.project.analysis_regions[1].areas;
-            a.picture_observed[0] = false;
-            a.picture_weak[0] = true;
             unavailable_regions(e, &[ids[1]]);
         });
         h.step();
