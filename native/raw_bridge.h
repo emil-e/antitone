@@ -33,6 +33,11 @@ struct AntitoneRawMetadata {
     char capture_time[20];
 };
 
+struct AntitoneRawNefInfo {
+    uint32_t size;
+    uint8_t bytes[4096];
+};
+
 struct AntitoneRawView {
     const uint16_t *pixels;
     const float *rgb; // Optional continuous camera RGB, three floats per pixel.
@@ -58,8 +63,8 @@ struct AntitoneRawThumbnail {
 
 extern "C" {
 const char *antitone_raw_version();
-void *antitone_raw_open(const char *path, AntitoneRawMetadata *metadata, char *error,
-                        size_t error_size);
+void *antitone_raw_open(const char *path, AntitoneRawMetadata *metadata, AntitoneRawNefInfo *nef,
+                        char *error, size_t error_size);
 int antitone_raw_thumbnail(void *handle, AntitoneRawThumbnail *thumbnail, char *error,
                            size_t error_size);
 int antitone_raw_is_dng(const void *handle);

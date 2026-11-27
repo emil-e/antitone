@@ -28,7 +28,7 @@ impl LensCorrections {
 /// on the original image, before geometric reconstruction: interpolate attenuation, then
 /// reciprocate for gains (darktable 5.6.2's v2 interpretation, agreeing with RawTherapee
 /// 5.12 at the knots).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct EmbeddedLensProfile {
     distortion: Vec<f64>,
     ca: Vec<DVec2>,
@@ -86,6 +86,22 @@ impl EmbeddedLensProfile {
             .map(|i| scale((i as f64 + 0.5) / (samples - 1) as f64))
             .collect();
         Self::from_knots(&distortion, &[], &[])
+    }
+
+    #[cfg(feature = "raw")]
+    pub(crate) fn set_radial_gain(
+        &mut self,
+        samples: usize,
+        gain: impl Fn(f64) -> f64,
+    ) -> Result<(), Error> {
+        let attenuation: Vec<_> = (0..samples)
+            .map(|i| gain((i as f64 + 0.5) / (samples - 1) as f64).recip())
+            .collect();
+        if !attenuation.iter().all(|&v| v.is_finite() && v > 0.) {
+            return Err(invalid("embedded lens gain must be finite and positive"));
+        }
+        self.attenuation = attenuation;
+        Ok(())
     }
 
     pub fn has_distortion(&self) -> bool {
@@ -224,6 +240,7 @@ pub struct EmbeddedLensGeometry {
     profile: EmbeddedLensProfile,
     original: SourceRegion,
     output: SourceRegion,
+    radial_frame: Option<(DVec2, f64)>,
 }
 
 impl EmbeddedLensGeometry {
@@ -257,6 +274,46 @@ impl EmbeddedLensGeometry {
                 .fold(0., f64::max);
             half.map(|length| (length * fraction).ceil() as u32)
         };
+        Self::framed(profile, original, framing, trim, None)
+    }
+
+    /// The profile law uses the centred sensor half-diagonal, but its optical centre
+    /// moves with stabilization. The sampling grid must cover the farthest corner.
+    #[cfg(feature = "raw")]
+    pub(crate) fn with_shifted_profile(
+        original: SourceRegion,
+        shift: DVec2,
+        build: impl FnOnce(f64) -> EmbeddedLensProfile,
+    ) -> Result<Option<Self>, Error> {
+        original.validate()?;
+        let size = [original.width, original.height];
+        let center_to_edge = DVec2::from_array(size.map(|n| (f64::from(n) - 1.) / 2.));
+        if !shift.is_finite() || !shift.abs().cmplt(center_to_edge).all() {
+            return Err(invalid("optical centre is outside the source"));
+        }
+        let origin = DVec2::new(original.x as f64, original.y as f64);
+        let half = DVec2::from_array(size.map(|n| f64::from(n) / 2.));
+        let center = origin + center_to_edge + shift;
+        let last = origin + center_to_edge * 2.;
+        let farthest = (center - origin).max(last - center);
+        let radius = farthest.length();
+        let radius_ratio = radius / half.length();
+        let profile = build(radius_ratio);
+        if !profile.has_distortion() && !profile.has_ca() && !profile.has_vignetting() {
+            return Ok(None);
+        }
+        let expansion = 1. - profile.maximum_scale().recip();
+        let trim = (farthest * expansion).to_array().map(|d| d.ceil() as u32);
+        Self::framed(profile, original, original, trim, Some((center, radius))).map(Some)
+    }
+
+    fn framed(
+        profile: EmbeddedLensProfile,
+        original: SourceRegion,
+        framing: SourceRegion,
+        trim: [u32; 2],
+        radial_frame: Option<(DVec2, f64)>,
+    ) -> Result<Self, Error> {
         let width = framing.width.saturating_sub(trim[0].saturating_mul(2));
         let height = framing.height.saturating_sub(trim[1].saturating_mul(2));
         if width < 2 || height < 2 {
@@ -268,6 +325,7 @@ impl EmbeddedLensGeometry {
             profile,
             original,
             output: SourceRegion::from([framing.x + trim[0], framing.y + trim[1], width, height]),
+            radial_frame,
         })
     }
 
@@ -285,10 +343,12 @@ impl EmbeddedLensGeometry {
         }
         let origin = DVec2::new(self.original.x as f64, self.original.y as f64);
         let half = DVec2::new(self.original.width as f64, self.original.height as f64) * 0.5;
-        let center = origin + half - DVec2::splat(0.5);
+        let (center, radius_limit) = self
+            .radial_frame
+            .unwrap_or_else(|| (origin + half - DVec2::splat(0.5), half.length()));
         let base = DVec2::new((self.output.x + x) as f64, (self.output.y + y) as f64);
         let delta = base - center;
-        let radius = delta.length() / half.length();
+        let radius = delta.length() / radius_limit;
         let scales = self.profile.inverse_scales(radius, LensCorrections::ALL)?;
         let minimum = origin;
         let maximum = origin + half * 2. - DVec2::ONE;
@@ -320,9 +380,11 @@ impl EmbeddedLensGeometry {
             return 1.;
         }
         let half = DVec2::new(self.original.width as f64, self.original.height as f64) * 0.5;
-        let center =
-            DVec2::new(self.original.x as f64, self.original.y as f64) + half - DVec2::splat(0.5);
-        let radius = (DVec2::new(x as f64, y as f64) - center).length() / half.length();
+        let (center, radius_limit) = self.radial_frame.unwrap_or_else(|| {
+            let origin = DVec2::new(self.original.x as f64, self.original.y as f64);
+            (origin + half - DVec2::splat(0.5), half.length())
+        });
+        let radius = (DVec2::new(x as f64, y as f64) - center).length() / radius_limit;
         self.profile.gain(radius)
     }
 
@@ -330,6 +392,11 @@ impl EmbeddedLensGeometry {
     pub(crate) fn identity(&self, algorithm: &[u8]) -> String {
         let mut hash = blake3::Hasher::new();
         hash.update(algorithm);
+        if let Some((center, radius)) = self.radial_frame {
+            for value in [center.x, center.y, radius] {
+                hash.update(&value.to_bits().to_le_bytes());
+            }
+        }
         hash.update(&(self.profile.attenuation.len() as u32).to_le_bytes());
         for value in &self.profile.attenuation {
             hash.update(&value.to_bits().to_le_bytes());

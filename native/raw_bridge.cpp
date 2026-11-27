@@ -24,6 +24,7 @@
 static_assert(sizeof(AntitoneRawMetadata) == 728);
 static_assert(sizeof(AntitoneRawSonyLens) == 160);
 static_assert(sizeof(AntitoneRawPanasonicLens) == 44);
+static_assert(sizeof(AntitoneRawNefInfo) == 4100);
 static_assert(sizeof(AntitoneRawView) == 72);
 static_assert(sizeof(AntitoneRawThumbnail) == 32);
 
@@ -289,14 +290,16 @@ enum SonyLensField : uint32_t {
     VignettingParameters = 16,
 };
 
-struct SonyLensPage {
+struct TiffLensPage {
     AntitoneRawSonyLens lens{};
     INT64 data_offset = -1;
     uint32_t photometric = 0;
+    INT64 nef_offset = -1;
+    int nef_count = 0;
 };
 
-struct SonyLensCapture {
-    std::array<SonyLensPage, LIBRAW_IFD_MAXCOUNT> pages{};
+struct TiffLensCapture {
+    std::array<TiffLensPage, LIBRAW_IFD_MAXCOUNT> pages{};
 };
 
 bool read_words(LibRaw_abstract_datastream &stream, unsigned order, uint16_t *words, int count) {
@@ -331,15 +334,14 @@ bool read_unsigned(LibRaw_abstract_datastream &stream, int type, unsigned order,
     return true;
 }
 
-void sony_lens_tag(void *context, int encoded_tag, int type, int count, unsigned order, void *input,
-                   INT64 base) {
+void tiff_lens_tag(TiffLensCapture &capture, int encoded_tag, int type, int count, unsigned order,
+                   LibRaw_abstract_datastream &stream, INT64 base) {
     // Pinned LibRaw encodes TIFF IFD indexes above bit 20; EXIF/maker-note paths use other bits.
     const auto tag = uint32_t(encoded_tag);
     const auto ifd = tag >> 20;
     if (!ifd || ifd > LIBRAW_IFD_MAXCOUNT || (tag & 0xf0000))
         return;
-    auto &page = static_cast<SonyLensCapture *>(context)->pages[ifd - 1];
-    auto &stream = *static_cast<LibRaw_abstract_datastream *>(input);
+    auto &page = capture.pages[ifd - 1];
     const auto id = tag & 0xffff;
     uint32_t value = 0;
     if (id == 0x0106 && count == 1 && read_unsigned(stream, type, order, value))
@@ -356,6 +358,12 @@ void sony_lens_tag(void *context, int encoded_tag, int type, int count, unsigned
     }
     uint32_t bit;
     switch (id) {
+    case 0xc7d5:
+        // TIFF can also contain decoy/preview IFDs. Remember the span until LibRaw selects RAW.
+        page.nef_offset =
+            page.nef_count == 0 && type == 7 && count > 4 && base == 0 ? stream.tell() : -1;
+        page.nef_count = count > 4 ? count : -1;
+        return;
     case 0x7032:
         bit = VignettingParameters;
         break;
@@ -444,7 +452,7 @@ struct PanasonicLensCapture {
 
 struct HeaderCapture {
     PreviewRaw &raw;
-    SonyLensCapture lens;
+    TiffLensCapture lens;
     PanasonicLensCapture panasonic{};
     std::array<char, 20> capture_time{};
     bool conflicting_time = false;
@@ -454,8 +462,8 @@ void header_tag(void *context, int tag, int type, int count, unsigned order, voi
                 INT64 base) {
     auto &capture = *static_cast<HeaderCapture *>(context);
     capture.raw.capture_orientation(tag);
-    sony_lens_tag(&capture.lens, tag, type, count, order, input, base);
     auto &stream = *static_cast<LibRaw_abstract_datastream *>(input);
+    tiff_lens_tag(capture.lens, tag, type, count, order, stream, base);
     capture.panasonic.tag(tag, type, count, order, stream, base);
 
     // DateTimeOriginal in the Exif IFD, not DateTime or DateTimeDigitized.
@@ -469,7 +477,7 @@ void header_tag(void *context, int tag, int type, int count, unsigned order, voi
     }
 }
 
-AntitoneRawSonyLens selected_sony_lens(LibRaw &raw, const SonyLensCapture &capture) {
+AntitoneRawSonyLens selected_sony_lens(LibRaw &raw, const TiffLensCapture &capture) {
     if (raw.imgdata.idata.maker_index != LIBRAW_CAMERAMAKER_Sony || raw.imgdata.idata.dng_version)
         return {};
     const auto offset = raw.get_internal_data_pointer()->unpacker_data.data_offset;
@@ -486,6 +494,35 @@ AntitoneRawSonyLens selected_sony_lens(LibRaw &raw, const SonyLensCapture &captu
         selected = &page.lens;
     }
     return selected ? *selected : AntitoneRawSonyLens{};
+}
+
+void read_selected_nef_info(LibRaw &raw, const TiffLensCapture &capture, AntitoneRawNefInfo &out) {
+    out.size = 0;
+    if (raw.imgdata.idata.maker_index != LIBRAW_CAMERAMAKER_Nikon || raw.imgdata.idata.dng_version)
+        return;
+    const auto &internal = *raw.get_internal_data_pointer();
+    const TiffLensPage *selected = nullptr;
+    for (const auto &page : capture.pages) {
+        if (page.photometric != 32803 || page.data_offset != internal.unpacker_data.data_offset)
+            continue;
+        if (selected)
+            return;
+        selected = &page;
+    }
+    if (!selected || selected->nef_offset < 0 || selected->nef_count <= 0 ||
+        size_t(selected->nef_count) > sizeof(out.bytes))
+        return;
+    auto &stream = *internal.internal_data.input;
+    const auto position = stream.tell();
+    const auto size = stream.size();
+    const auto start = selected->nef_offset;
+    const auto count = selected->nef_count;
+    if (position < 0 || position > size || start > size || count > size - start)
+        return;
+    const auto read = stream.seek(start, SEEK_SET) == 0 ? stream.read(out.bytes, 1, count) : 0;
+    const auto restored = stream.seek(position, SEEK_SET);
+    if (read == count && restored == 0)
+        out.size = uint32_t(count);
 }
 
 void metadata(LibRaw &raw, AntitoneRawMetadata &out) {
@@ -599,8 +636,8 @@ static std::wstring wide_path(const char *path) {
 }
 #endif
 
-extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, char *error,
-                                   size_t size) try {
+extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out,
+                                   AntitoneRawNefInfo *nef, char *error, size_t size) try {
     antitone::NativeLog diagnostic("raw", "open");
     auto raw = std::make_unique<PreviewRaw>();
     raw->imgdata.params.use_camera_matrix = 1;
@@ -632,6 +669,8 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
     metadata(*raw, *out);
     out->vendor.sony_lens = selected_sony_lens(*raw, capture.lens);
     out->vendor.panasonic_lens = capture.panasonic.selected(raw->imgdata.idata);
+    if (nef)
+        read_selected_nef_info(*raw, capture.lens, *nef);
     if (capture.conflicting_time)
         capture.capture_time.fill(0);
     std::memcpy(out->capture_time, capture.capture_time.data(), capture.capture_time.size());

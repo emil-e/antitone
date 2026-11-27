@@ -10,6 +10,7 @@ use crate::color::{AP1_TO_XYZ, BRADFORD};
 use crate::lens::EmbeddedLensGeometry;
 use crate::sampling::mean;
 
+mod nikon;
 mod panasonic;
 mod sony;
 pub use sony::{SonyLensData, SonyLensDataStatus};
@@ -86,6 +87,7 @@ pub struct VendorMetadata {
 #[derive(Debug, Clone, Copy)]
 pub struct Metadata {
     native: NativeMetadata,
+    nikon_optics: Option<nikon::Optics>,
     #[cfg(feature = "dng-sdk")]
     sdk: Option<crate::dng::Header>,
 }
@@ -106,6 +108,7 @@ impl Metadata {
     fn from_native(native: NativeMetadata) -> Self {
         Self {
             native,
+            nikon_optics: None,
             #[cfg(feature = "dng-sdk")]
             sdk: None,
         }
@@ -225,6 +228,11 @@ impl Metadata {
     fn embedded_lens(&self) -> Result<Option<(EmbeddedLensGeometry, &'static [u8])>, Error> {
         if self.uses_sdk() || self.lens_disabled != 0 {
             return Ok(None);
+        }
+        if let Some(nikon) = self.nikon_optics
+            && let Some(geometry) = nikon.geometry(self)?
+        {
+            return Ok(Some((geometry, b"nikon-z-fx-optics-v1")));
         }
         if let Some(geometry) = self.vendor.panasonic_lens.geometry(self)? {
             return Ok(Some((geometry, b"panasonic-full-sensor-distortion-v1")));
@@ -413,6 +421,7 @@ unsafe extern "C" {
     fn antitone_raw_open(
         path: *const c_char,
         metadata: *mut NativeMetadata,
+        nef: *mut nikon::NefInfo,
         error: *mut c_char,
         size: usize,
     ) -> *mut c_void;
@@ -462,7 +471,7 @@ pub fn development_version() -> String {
         "bayer-dht-v2"
     };
     format!(
-        "{};rawspeed={unpacker};{demosaic};blend-highlights-v4;rw2-distortion-v1",
+        "{};rawspeed={unpacker};{demosaic};blend-highlights-v4;rw2-distortion-v1;nikon-z-optics-v1",
         version()
     )
 }
@@ -552,20 +561,33 @@ impl RawFile {
         let path = CString::new(source_path.as_os_str().as_encoded_bytes())
             .map_err(|_| Error::Raw("source path contains NUL".into()))?;
         let mut metadata = std::mem::MaybeUninit::<NativeMetadata>::zeroed();
+        let mut nef = std::mem::MaybeUninit::<nikon::NefInfo>::zeroed();
         let mut error = [0; 512];
         // Metadata contains only numeric fields and fixed char arrays. The bridge fills it on success.
         let handle = unsafe {
             antitone_raw_open(
                 path.as_ptr(),
                 metadata.as_mut_ptr(),
+                if lens_correction {
+                    nef.as_mut_ptr()
+                } else {
+                    std::ptr::null_mut()
+                },
                 error.as_mut_ptr(),
                 error.len(),
             )
         };
         let handle = NonNull::new(handle).ok_or_else(|| native_error("open", &error))?;
+        let mut metadata = Metadata::from_native(unsafe { metadata.assume_init() });
+        // The bounded NEFInfo buffer is only open-time scratch; retain the decoded values.
+        let nef = unsafe { nef.assume_init() };
+        metadata.nikon_optics = nef
+            .bytes
+            .get(..nef.size as usize)
+            .and_then(nikon::Optics::read);
         let mut raw = Self {
             handle,
-            metadata: Metadata::from_native(unsafe { metadata.assume_init() }),
+            metadata,
             unpacked: false,
             priority: DevelopmentPriority::default(),
             share: 1,
@@ -1530,6 +1552,7 @@ mod tests {
         assert_eq!(size_of::<NativeMetadata>(), 728);
         assert_eq!(size_of::<SonyLensData>(), 160);
         assert_eq!(size_of::<panasonic::LensData>(), 44);
+        assert_eq!(size_of::<nikon::NefInfo>(), 4100);
         assert_eq!(size_of::<NativeView>(), 72);
         #[cfg(feature = "editor")]
         assert_eq!(size_of::<NativeThumbnail>(), 32);
