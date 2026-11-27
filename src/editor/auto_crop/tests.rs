@@ -4,6 +4,7 @@ use crate::{
     editor::crop_editor::tests::request_auto_crop,
     project::SourceAnalysis,
     scan_regions::{Areas, PictureGeometry},
+    spatial_metadata::{Boundary, CommonSize, Metadata, Region, SourceRegions},
 };
 
 // Domain fixtures supply static proposals; composed tests exercise discovery and input.
@@ -12,20 +13,16 @@ fn apply(editor: &mut Editor) {
 }
 
 fn suggest_photo_crop(app: &mut TestApplication<'_, Editor>) {
-    let reply = app.enter(|editor, cx| {
-        let (reply, receive) = futures_channel::oneshot::channel();
-        editor.document.spatial_reply = Some(receive);
+    app.enter(|editor, cx| {
         request_auto_crop(editor.document.visit.current_source.unwrap(), editor, cx);
         assert!(editor.document.crop_auto_crop_pending());
-        reply
     });
-    reply.send(Ok(Some(Default::default()))).unwrap();
     app.run_until(Duration::from_secs(5), |editor| {
         !editor.document.crop_auto_crop_pending()
     });
 }
 
-pub(super) fn measured_areas() -> Areas {
+fn measured_areas() -> Areas {
     Areas {
         picture_geometry: Some(PictureGeometry {
             size: [768, 512],
@@ -57,16 +54,88 @@ pub(super) fn measured_areas() -> Areas {
     }
 }
 
-fn default_crop(active: Rect, areas: &Areas) -> Crop {
-    framing::inward_margin(
-        framing::propose(active, areas).unwrap(),
-        active,
-        framing::DEFAULT_MARGIN_PERCENT,
-    )
-    .unwrap()
+fn prepared_crop(editor: &Editor, source: SourceId) -> Crop {
+    editor
+        .document
+        .spatial
+        .ready()
+        .groups
+        .iter()
+        .flat_map(|group| &group.sources)
+        .find(|row| row.input.source == source)
+        .unwrap()
+        .picture_crop()
+        .unwrap()
+}
+
+fn default_crop(active: Rect, proposal: Crop) -> Crop {
+    framing::inward_margin(proposal, active, framing::DEFAULT_MARGIN_PERCENT).unwrap()
+}
+
+fn declared_regions(document: &Document) -> Metadata {
+    let geometry = PictureGeometry {
+        size: [768, 512],
+        angle: 0.75,
+        sides: [Some(100.), Some(660.), Some(80.), Some(430.)],
+    };
+    declared_picture_regions(document, &geometry)
+}
+
+pub(super) fn hold_preparation(
+    editor: &mut Editor,
+) -> (
+    futures_channel::oneshot::Sender<Result<Option<Metadata>, String>>,
+    Metadata,
+) {
+    let metadata = declared_regions(&editor.document);
+    editor.document.spatial = Default::default();
+    let (reply, receive) = futures_channel::oneshot::channel();
+    editor.document.spatial_reply = Some(receive);
+    (reply, metadata)
+}
+
+fn publish_regions(editor: &mut Editor, metadata: Metadata) {
+    let inputs = editor.document.spatial_inputs();
+    let request = editor.document.spatial.begin().unwrap();
+    assert!(
+        editor
+            .document
+            .spatial
+            .publish(request, metadata, &editor.document.state.project, &inputs)
+            .unwrap()
+    );
+}
+
+fn edit_regions(editor: &mut Editor, edit: impl FnOnce(&mut Vec<SourceRegions>)) {
+    let mut metadata = (*editor.document.spatial.ready()).clone();
+    let group = &mut metadata.groups[0];
+    edit(&mut group.sources);
+    group.common_size = CommonSize::fit(&group.sources);
+    publish_regions(editor, metadata);
+}
+
+fn retain_analyze_evidence(editor: &mut Editor) {
+    editor.document.state.project.analysis_regions = editor
+        .document
+        .project
+        .order
+        .iter()
+        .map(|&source| SourceAnalysis {
+            source,
+            areas: measured_areas(),
+        })
+        .collect();
 }
 
 pub(super) fn fixture() -> (Editor, tempfile::TempDir) {
+    let (mut editor, directory) = unprepared_fixture();
+    let metadata = declared_regions(&editor.document);
+    publish_regions(&mut editor, metadata);
+
+    (editor, directory)
+}
+
+pub(super) fn unprepared_fixture() -> (Editor, tempfile::TempDir) {
     let mut editor = crate::editor::tests::fixture();
     crate::editor::tests::add_ready_fixture(&mut editor);
     let directory = tempfile::tempdir().unwrap();
@@ -89,16 +158,6 @@ pub(super) fn fixture() -> (Editor, tempfile::TempDir) {
         std::fs::write(&s.path, b"metadata-only source fixture").unwrap();
         editor.document.register(s).unwrap();
     }
-    editor.document.state.project.analysis_regions = editor
-        .document
-        .project
-        .order
-        .iter()
-        .map(|&source| SourceAnalysis {
-            source,
-            areas: measured_areas(),
-        })
-        .collect();
     editor.document.capture_source_files().unwrap();
 
     (editor, directory)
@@ -210,7 +269,7 @@ fn batch_crop_closes_local_editing_and_preserves_masks_on_apply_and_cancel() {
             for source in &mut expected.sources {
                 source.crop = Some(default_crop(
                     source.development.active_area.into(),
-                    &measured_areas(),
+                    prepared_crop(&e, source.id),
                 ));
             }
         }
@@ -226,17 +285,10 @@ fn partial_proposals_keep_source_reasons_without_warning_about_uncaptured_photos
             let ids = e.document.state.project.order.clone();
             e.select_roll_photo(1, egui::Modifiers::COMMAND, cx);
             e.select_roll_photo(2, egui::Modifiers::COMMAND, cx);
-            e.document
-                .state
-                .project
-                .analysis_regions
-                .retain(|r| r.source != ids[1]);
-            e.document.state.project.analysis_regions[1]
-                .areas
-                .picture_observed[0] = false;
-            e.document.state.project.analysis_regions[1]
-                .areas
-                .picture_weak[0] = true;
+            edit_regions(e, |rows| {
+                rows[2].picture = None;
+                rows.retain(|row| row.input.source != ids[1]);
+            });
             let before = e.document.state.project.clone();
             e.begin_auto_crop_review(
                 e.document
@@ -253,12 +305,12 @@ fn partial_proposals_keep_source_reasons_without_warning_about_uncaptured_photos
             assert!(
                 e.auto_crop_problem(ids[1])
                     .unwrap()
-                    .contains("no retained frame evidence")
+                    .contains("no prepared picture regions")
             );
             assert!(
                 e.auto_crop_problem(ids[2])
                     .unwrap()
-                    .contains("four measured picture edges")
+                    .contains("picture region is unavailable")
             );
             assert!(
                 e.auto_crop_problem(ids[3]).is_none(),
@@ -281,7 +333,11 @@ fn partial_proposals_keep_source_reasons_without_warning_about_uncaptured_photos
 #[test]
 fn all_failed_attempts_stay_selected_with_reasons_but_cannot_apply_or_edit_crops() {
     let (mut e, _directory) = fixture();
-    e.document.state.project.analysis_regions.clear();
+    edit_regions(&mut e, |rows| {
+        for row in rows {
+            row.picture = None;
+        }
+    });
     let before = e.document.state.project.clone();
     let serialized = serde_json::to_string(&before).unwrap();
     e.begin_auto_crop_review(e.document.project.order.clone(), "Whole roll");
@@ -317,8 +373,9 @@ fn all_failed_attempts_stay_selected_with_reasons_but_cannot_apply_or_edit_crops
 }
 
 #[test]
-fn applying_measured_crops_does_not_consume_the_shared_analyze_picture_prior() {
+fn applying_prepared_crops_preserves_saved_analyze_support() {
     let (mut editor, directory) = fixture();
+    retain_analyze_evidence(&mut editor);
     let prior = [1000, 1000, 64, 64];
     editor.document.state.project.analysis_area = Some(prior);
     let mut expected = editor.document.state.project.clone();
@@ -362,7 +419,8 @@ fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
             )
         });
         let ids = expected.order.clone();
-        let proposed = default_crop(active, &measured_areas());
+        let nominal = app.read(|e| prepared_crop(e, ids[0]));
+        let proposed = default_crop(active, nominal);
         assert!(proposed.angle.abs() > 0.);
         suggest_photo_crop(app);
         app.enter(|e, cx| {
@@ -388,12 +446,7 @@ fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
             );
             e.select_roll_photo(3, egui::Modifiers::COMMAND, cx);
             e.adjust_auto_crop_margin(1.25);
-            let margin = framing::inward_margin(
-                framing::propose(active, &measured_areas()).unwrap(),
-                active,
-                1.25,
-            )
-            .unwrap();
+            let margin = framing::inward_margin(nominal, active, 1.25).unwrap();
             assert_eq!(e.document.state.project, expected);
             assert!(e.auto_crop_preview(ids[1]).is_none() && e.auto_crop_preview(ids[3]).is_none());
             apply(e);
@@ -422,27 +475,23 @@ fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
 }
 
 #[test]
-fn abstentions_preserve_previous_crops_without_preventing_other_proposals() {
+fn batch_skips_missing_and_unresolved_regions_even_with_saved_analyze_evidence() {
     let (mut e, _directory) = fixture();
+    retain_analyze_evidence(&mut e);
     let ids = e.document.state.project.order.clone();
+    let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
+    assert!(e.document.project.analysis_regions.iter().all(|evidence| {
+        framing::propose(active, &evidence.areas).is_ok_and(|proposal| proposal != small())
+    }));
     for &id in &ids {
         e.document.state.project.source_mut(id).unwrap().crop = Some(small());
     }
     *e.photo_crop_mut() = Some(small());
-    e.document.state.project.analysis_regions[1]
-        .areas
-        .picture_observed[0] = false;
-    e.document.state.project.analysis_regions[1]
-        .areas
-        .picture_weak[0] = true;
-    e.document.state.project.analysis_regions[2]
-        .areas
-        .picture_geometry = None;
-    e.document
-        .state
-        .project
-        .analysis_regions
-        .retain(|r| r.source != ids[3]);
+    edit_regions(&mut e, |rows| {
+        rows[1].picture = None;
+        rows[2].picture.as_mut().unwrap().boundaries[0] = Boundary::Unknown;
+        rows.retain(|row| row.input.source != ids[3]);
+    });
     let before = e.document.state.project.clone();
     e.begin_auto_crop_review(e.document.project.order.clone(), "Whole roll");
     assert!(e.status.contains("1 proposed, 3 skipped"), "{}", e.status);
@@ -571,29 +620,15 @@ fn cancel_restores_entry_view_and_never_installs_preview_crops() {
 
 #[test]
 fn stale_evidence_authored_crops_membership_and_document_cannot_be_promoted() {
-    for case in 0..8 {
+    for case in 0..7 {
         let (mut e, directory) = fixture();
         let ids = e.document.state.project.order.clone();
         e.begin_auto_crop_review(e.document.project.order.clone(), "Whole roll");
         match case {
-            0 => {
-                e.document.state.project.analysis_regions[1]
-                    .areas
-                    .picture_geometry
-                    .as_mut()
-                    .unwrap()
-                    .angle += 0.5
-            }
-            1 => e.document.state.project.analysis_regions[1]
-                .areas
-                .picture_constraints
-                .push([1., 0., -40.]),
+            0 => edit_regions(&mut e, |rows| rows[1].picture = None),
+            // A new publication also retires the draft when it has equal geometry.
+            1 => edit_regions(&mut e, |_| {}),
             2 => {
-                e.document.state.project.analysis_regions[1]
-                    .areas
-                    .picture_observed[0] = false
-            }
-            3 => {
                 e.document
                     .state
                     .project
@@ -602,19 +637,19 @@ fn stale_evidence_authored_crops_membership_and_document_cannot_be_promoted() {
                     .development
                     .active_area[2] -= 1
             }
-            4 => e.document.state.project.source_mut(ids[1]).unwrap().crop = Some(small()),
-            5 => e
+            3 => e.document.state.project.source_mut(ids[1]).unwrap().crop = Some(small()),
+            4 => e
                 .document
                 .state
                 .project
                 .remove_from_filmstrip(ids[1])
                 .unwrap(),
-            6 => {
+            5 => {
                 let replacement = directory.path().join("replacement.ARW");
                 std::fs::write(&replacement, b"metadata-only source fixture").unwrap();
                 e.document.state.project.source_mut(ids[1]).unwrap().path = replacement;
             }
-            7 => *e.document = document::Document::default(),
+            6 => *e.document = document::Document::default(),
             _ => unreachable!(),
         }
         let before = e.document.state.project.clone();
@@ -669,13 +704,14 @@ fn a_whole_source_proposal_is_an_explicit_draft_reset_not_an_absent_override() {
     let (mut e, _directory) = fixture();
     let id = e.document.visit.current_source.unwrap();
     let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
-    let areas = &mut e.document.state.project.analysis_regions[0].areas;
-    areas.picture_geometry = Some(PictureGeometry {
-        size: [768, 512],
-        angle: 0.,
-        sides: [Some(0.), Some(768.), Some(0.), Some(512.)],
+    edit_regions(&mut e, |rows| {
+        let geometry = PictureGeometry {
+            size: [768, 512],
+            angle: 0.,
+            sides: [Some(0.), Some(768.), Some(0.), Some(512.)],
+        };
+        rows[0].picture = Some(Region::from_picture(&geometry, active, [true; 4]).unwrap());
     });
-    areas.picture = Some(Coverage::rectangle(active).corners().map(|p| p.0));
     *e.photo_crop_mut() = Some(small());
     e.auto_crop_margin = 0.;
     let before = e.document.state.project.clone();
@@ -809,7 +845,7 @@ fn photo_initialization_stays_in_manual_crop_and_keeps_its_cancel_baseline() {
     let viewport = e.document.visit.canvas.viewport;
     let before = e.document.state.project.clone();
     let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
-    let expected = default_crop(active, &measured_areas());
+    let expected = default_crop(active, prepared_crop(&e, before.order[0]));
     e.begin_crop();
     e.document.crop_edit_mut().unwrap().draft = Crop::from_region(active);
     with_application(e, |app| {
@@ -895,6 +931,52 @@ fn unavailable_photo_proposal_does_not_replace_a_manual_draft() {
             assert!(e.source_tool_warning(photo).is_none());
         });
     });
+}
+
+#[test]
+fn photo_keeps_its_manual_draft_when_preparation_cannot_offer_a_crop() {
+    for missing in [true, false] {
+        let (mut e, _directory) = unprepared_fixture();
+        retain_analyze_evidence(&mut e);
+        let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
+        let saved = &e.document.project.analysis_regions[0].areas;
+        assert_ne!(framing::propose(active, saved).unwrap(), small());
+        let before = e.document.state.project.clone();
+        let mut metadata = declared_regions(&e.document);
+        let group = &mut metadata.groups[0];
+        if missing {
+            group.sources.remove(0);
+            group.common_size = CommonSize::fit(&group.sources);
+        } else {
+            group.sources[0].picture = None;
+        }
+        e.begin_crop();
+        e.document.crop_edit_mut().unwrap().draft = small();
+
+        with_application(e, |app| {
+            let reply = app.enter(|e, cx| {
+                let (reply, receive) = futures_channel::oneshot::channel();
+                e.document.spatial_reply = Some(receive);
+                request_auto_crop(before.order[0], e, cx);
+                assert!(e.document.crop_auto_crop_pending());
+                reply
+            });
+            reply.send(Ok(Some(metadata))).unwrap();
+            app.run_until(Duration::from_secs(5), |e| {
+                !e.document.crop_auto_crop_pending()
+            });
+            app.read(|e| {
+                let reason = if missing {
+                    "no prepared picture regions"
+                } else {
+                    "picture region is unavailable"
+                };
+                assert!(e.status.contains(reason), "{}", e.status);
+                assert_eq!(e.document.crop_edit().unwrap().draft, small());
+                assert_eq!(e.document.state.project, before);
+            });
+        });
+    }
 }
 
 #[test]

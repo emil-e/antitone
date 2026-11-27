@@ -3,8 +3,7 @@ use crate::{
     application::test_support::{TestApplication, with_application},
     frame_raster::FrameRaster,
     geometry::TextureMapping,
-    project::SourceAnalysis,
-    scan_regions::{Areas, PictureGeometry},
+    scan_regions::PictureGeometry,
 };
 
 fn mapping(app: &TestApplication<'_, Editor>) -> (TextureMapping, FrameRaster, bool) {
@@ -101,37 +100,12 @@ fn proxy_and_working_image_keep_the_same_crop_after_apply_and_source_revisit() {
         editor.document.source = inspection;
         editor.auto_crop_margin = 0.;
         // Declared frame measurements isolate the displayed geometry from detector discovery.
-        editor.document.state.project.analysis_regions = editor
-            .document
-            .project
-            .order
-            .iter()
-            .map(|&source| {
-                let active = editor
-                    .document
-                    .project
-                    .source(source)
-                    .unwrap()
-                    .development
-                    .active_area
-                    .into();
-                let geometry = PictureGeometry {
-                    size: [496, 496],
-                    angle,
-                    sides: [112., 368., 104., 296.].map(Some),
-                };
-                SourceAnalysis {
-                    source,
-                    areas: Areas {
-                        opening: Some(Coverage::rectangle(active).corners().map(|p| p.0)),
-                        picture: geometry.frame(active),
-                        picture_geometry: Some(geometry),
-                        picture_observed: [true; 4],
-                        ..Default::default()
-                    },
-                }
-            })
-            .collect();
+        let geometry = PictureGeometry {
+            size: [496, 496],
+            angle,
+            sides: [112., 368., 104., 296.].map(Some),
+        };
+        let metadata = auto_crop::declared_picture_regions(&editor.document, &geometry);
         let (reply, receive) = futures_channel::oneshot::channel();
         editor.document.spatial_reply = Some(receive);
         let first = editor
@@ -151,7 +125,7 @@ fn proxy_and_working_image_keep_the_same_crop_after_apply_and_source_revisit() {
                     cx,
                 )
             });
-            reply.send(Ok(Some(Default::default()))).unwrap();
+            reply.send(Ok(Some(metadata))).unwrap();
             app.run_until(Duration::from_secs(20), |editor| {
                 editor.document.auto_crop.reviewing()
             });

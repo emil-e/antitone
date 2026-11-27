@@ -4,7 +4,6 @@ use crate::{
     editor::document::Document,
     project::{Project, SourceDevelopment, SourceId},
     raw::Rect,
-    scan_regions::PictureGeometry,
     source::{FileKey, Initialization},
     spatial_metadata::{Input, Metadata},
 };
@@ -47,7 +46,6 @@ impl<'a> Inputs<'a> {
     }
 
     fn spatial_matches(&self, metadata: &Metadata) -> bool {
-        // Retained frame evidence does not require resolving the shared region dependencies.
         let inputs = self.spatial_inputs.get_or_init(|| {
             let mut document = self.document.clone();
             document.capture_initialization(self.initialization);
@@ -85,9 +83,6 @@ pub(super) struct Entry {
     pub(super) file: FileKey,
     pub(super) development: SourceDevelopment,
     before: Option<Crop>,
-    geometry: Option<PictureGeometry>,
-    constraints: Vec<[f64; 3]>,
-    spatial: Option<Arc<Metadata>>,
 }
 
 impl Entry {
@@ -100,46 +95,23 @@ impl Entry {
             ));
         }
 
-        let active = source.development.active_area.into();
         let regions = inputs
             .spatial
             .groups
             .iter()
             .flat_map(|group| &group.sources)
-            .find(|row| row.input.source == id);
-        let (proposal, geometry, constraints, spatial) = if let Some(regions) = regions {
-            if regions.input.development != source.development
-                || file.revision.as_ref() != Some(&regions.input.revision)
-            {
-                return Err(Error::UnusableSample(
-                    "shared picture regions are out of date",
-                ));
-            }
-            (
-                framing::propose_spatial(regions)?,
-                None,
-                vec![],
-                Some(inputs.spatial.clone()),
-            )
-        } else {
-            let areas = &inputs
-                .document
-                .project
-                .analysis_regions
-                .iter()
-                .find(|r| r.source == id)
-                .ok_or(Error::UnusableSample(
-                    "no retained frame evidence or prepared picture regions",
-                ))?
-                .areas;
-            (
-                framing::propose(active, areas)?,
-                areas.picture_geometry.clone(),
-                areas.picture_constraints.clone(),
-                None,
-            )
-        };
+            .find(|row| row.input.source == id)
+            .ok_or(Error::UnusableSample("no prepared picture regions"))?;
+        if regions.input.development != source.development
+            || file.revision.as_ref() != Some(&regions.input.revision)
+        {
+            return Err(Error::UnusableSample(
+                "shared picture regions are out of date",
+            ));
+        }
 
+        let active = source.development.active_area.into();
+        let proposal = framing::propose_spatial(regions)?;
         let crop = framing::inward_margin(proposal, active, margin)?;
         Ok(Self {
             source: id,
@@ -148,9 +120,6 @@ impl Entry {
             draft: accepted(crop, active),
             file,
             development: source.development.clone(),
-            geometry,
-            constraints,
-            spatial,
         })
     }
 
@@ -166,21 +135,6 @@ impl Entry {
                 .as_ref()
                 .is_none_or(|photo| photo.id != self.source || photo.effective_crop == self.before)
             && source.development == self.development
-            && if let Some(metadata) = &self.spatial {
-                Arc::ptr_eq(metadata, &inputs.spatial)
-            } else {
-                project
-                    .analysis_regions
-                    .iter()
-                    .find(|r| r.source == self.source)
-                    .is_some_and(|r| {
-                        !r.areas.picture_edited
-                            && r.areas.picture_observed == [true; 4]
-                            && r.areas.picture_weak == [false; 4]
-                            && r.areas.picture_geometry == self.geometry
-                            && r.areas.picture_constraints == self.constraints
-                    })
-            }
     }
 
     pub(super) fn crop(&self) -> Crop {
@@ -191,6 +145,7 @@ impl Entry {
 
 #[derive(Clone)]
 pub(in crate::editor) struct Draft {
+    spatial: Arc<Metadata>,
     roll_photos: HashSet<SourceId>,
     pub(super) scope: &'static str,
     pub(super) attempted: usize,
@@ -223,6 +178,7 @@ impl Draft {
             problems.len()
         );
         Self {
+            spatial: inputs.spatial.clone(),
             roll_photos: inputs.document.project.order.iter().copied().collect(),
             scope,
             attempted,
@@ -238,15 +194,11 @@ impl Draft {
         let order = &inputs.document.project.order;
         self.roll_photos.len() == order.len()
             && order.iter().all(|id| self.roll_photos.contains(id))
-            && self
-                .entries
-                .iter()
-                .find_map(|entry| entry.spatial.as_ref())
-                .is_none_or(|metadata| inputs.spatial_matches(metadata))
+            && Arc::ptr_eq(&self.spatial, &inputs.spatial)
+            && inputs.spatial_matches(&self.spatial)
     }
 
     pub(super) fn valid(&self, inputs: &Inputs<'_>) -> bool {
-        // Every spatial entry must refer to the same live publication whose peers we check.
         self.belongs_to(inputs)
             && !self.entries.is_empty()
             && self.entries.iter().all(|entry| {
