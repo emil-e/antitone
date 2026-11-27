@@ -196,14 +196,18 @@ impl Draft {
         }
     }
 
-    fn output(&self) -> Result<output::Options, Error> {
-        let target = match self.kind {
-            Kind::Tiff | Kind::Jpeg => RenderTarget::Display(self.target),
+    fn render_target(&self) -> RenderTarget {
+        match self.kind {
+            Kind::Tiff => RenderTarget::Display(self.target),
+            Kind::Jpeg => RenderTarget::Display(self.target.sdr_fallback()),
             Kind::Exr => RenderTarget::SceneLinearAp0,
-        };
+        }
+    }
+
+    fn output(&self) -> Result<output::Options, Error> {
         Ok(output::Options {
             folders: output::Folders::One(self.folder.clone()),
-            plan: Plan::new(target, self.file_format())?,
+            plan: Plan::new(self.render_target(), self.file_format())?,
             suffix: self.suffix.clone(),
             collision: self.collision,
         })
@@ -237,6 +241,14 @@ impl Editor {
 enum FormAction {
     Cancel,
     Export,
+}
+
+fn target_label(target: OutputTarget) -> String {
+    match target {
+        OutputTarget::Srgb => "sRGB".into(),
+        OutputTarget::DisplayP3 => "Display P3".into(),
+        _ => format!("Rec.2020 PQ · {} nit", target.peak_nits()),
+    }
 }
 
 fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> bool {
@@ -308,21 +320,28 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> bo
             .labelled_by(label);
     });
     ui::labelled_row(ui, "Target", None, |ui, label| {
-        ui.add_enabled_ui(draft.kind != Kind::Exr, |ui| {
+        let current = match draft.render_target() {
+            RenderTarget::Display(target) => Some(target),
+            RenderTarget::SceneLinearAp0 => None,
+        };
+        ui.add_enabled_ui(current.is_some(), |ui| {
             egui::ComboBox::from_id_salt("export-target")
                 .width(ui.available_width().min(240.))
                 .truncate()
-                .selected_text(if draft.kind == Kind::Exr {
-                    "Scene-linear AP0"
-                } else {
-                    match draft.target {
-                        OutputTarget::Srgb => "sRGB",
-                        OutputTarget::DisplayP3 => "Display P3",
-                    }
-                })
+                .selected_text(current.map_or_else(|| "Scene-linear AP0".into(), target_label))
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut draft.target, OutputTarget::Srgb, "sRGB");
-                    ui.selectable_value(&mut draft.target, OutputTarget::DisplayP3, "Display P3");
+                    let Some(current) = current else { return };
+                    let mut choice = current;
+                    let format = draft.file_format();
+                    for target in OutputTarget::ALL
+                        .into_iter()
+                        .filter(|&target| format.supports_target(RenderTarget::Display(target)))
+                    {
+                        ui.selectable_value(&mut choice, target, target_label(target));
+                    }
+                    if choice != current {
+                        draft.target = choice;
+                    }
                 })
                 .response
                 .labelled_by(label);

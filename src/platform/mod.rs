@@ -24,7 +24,7 @@ pub use native::configure_window;
 pub use native::install_icon;
 pub(crate) use native::{
     FullscreenPresentation, MENU_STRIP_IS_LIGHT, QuitGuard, WindowPlacement,
-    configure_presentation, presentation, quit_cancel_on_unwind,
+    configure_presentation, hdr_available, presentation, quit_cancel_on_unwind,
 };
 
 /// Prepare the editor process before argument parsing, which can itself write output.

@@ -1077,6 +1077,75 @@ fn select_target(harness: &mut Harness<'_, Editor>, target: OutputTarget) {
     harness.read(|editor| assert_eq!(editor.document.target(), target));
 }
 
+#[test]
+fn hdr_target_controls_remember_peak_while_preview_automatically_falls_back() {
+    editor_harness_with_thumbnails(true, |mut harness, _| {
+        harness.enter(|editor, cx| {
+            editor.document.project.input = crate::processing::InputSettings::Digital;
+            editor.add_raws(vec![fixture("patches.dng")], cx);
+        });
+        wait_opened_photo(&mut harness);
+        stage(&mut harness, "Rendering");
+        let role = egui::accesskit::Role::ComboBox;
+        let choose = |h: &mut Harness<'_, Editor>, control: &str, option: &str| {
+            scroll_to_control(h, role, control);
+            h.get_by_role_and_label(role, control).click();
+            h.run_steps(2);
+            h.get_by_label(option).click();
+            h.step();
+        };
+        assert!(
+            harness
+                .query_by_role_and_label(role, "Target peak")
+                .is_none()
+        );
+        choose(&mut harness, "Target", "Rec.2020 HDR");
+        harness.read(|editor| {
+            assert!(host::App::hdr_preview_requested(editor));
+            assert_eq!(editor.document.target(), OutputTarget::Rec2020_1000);
+        });
+        choose(&mut harness, "Target peak", "2000 nit");
+        let target = OutputTarget::Rec2020_2000;
+        let painted = |editor: &Editor, target| {
+            editor
+                .canvas_frame
+                .displayed
+                .as_ref()
+                .is_some_and(|image| image.view.target == target)
+                && editor
+                    .document
+                    .thumbnails
+                    .ready_count(&editor.document, target)
+                    == 1
+        };
+        wait_for(&mut harness, |editor| {
+            painted(editor, OutputTarget::DisplayP3)
+        });
+        let accepted = harness.read(|editor| {
+            assert_eq!(editor.document.target(), target);
+            editor.document.project.clone()
+        });
+
+        // Inject the host's display decision only; view and thumbnail jobs are ordinary production work.
+        harness.update(|editor| host::App::hdr_preview_changed(editor, true));
+        wait_for(&mut harness, |editor| painted(editor, target));
+        harness.update(|editor| host::App::hdr_preview_changed(editor, false));
+        wait_for(&mut harness, |editor| {
+            painted(editor, OutputTarget::DisplayP3)
+        });
+
+        harness.read(|editor| assert_eq!(editor.document.project, accepted));
+        scroll_to_control(&mut harness, role, "Target peak");
+        assert_eq!(
+            harness
+                .get_by_role_and_label(role, "Target peak")
+                .value()
+                .as_deref(),
+            Some("2000 nit")
+        );
+    });
+}
+
 fn drag(harness: &mut Harness<'_, Editor>, start: egui::Pos2, end: egui::Pos2) {
     harness.hover_at(start);
     harness.event(egui::Event::PointerButton {

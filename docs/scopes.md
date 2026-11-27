@@ -1,12 +1,12 @@
 # What the image scopes measure
 
-The waveform and vectorscope help judge the **displayed image**, including developed-source inspection and temporary tool views. Their input is the selected sRGB or Display P3 output, before monitor conversion. This makes the plots useful for the photograph being graded while keeping them independent of the monitor on which the editor happens to run.
+The waveform and vectorscope help judge the **displayed image**, including source inspection and temporary tool views. They measure the same ACES output as the canvas, before OS monitor conversion.
 
-## Read the selected target's codes
+## Read the preview target
 
-Scopes measure the same ACES target as the preview, then use its native RGB primaries and transfer. Scopes consume the canvas paint's target-linear image and texture mapping directly, without grading, applying ACES or composing it a second time. Neither first converts P3 to sRGB — identical RGB codes in two targets need not represent identical colours.
+The waveform plots R/G/B or their weighted sum against horizontal position. For sRGB and Display P3, it plots transfer-encoded values and luma as a percentage of nominal encoded white. For Rec.2020 HDR, it plots linear channels and luminance in nits, up to the rendering target's peak.
 
-The waveform plots encoded R/G/B or target-derived encoded luma against horizontal position in the final frame. Its vertical scale is percent of nominal encoded white — not nits, scene stops or broadcast IRE. The vectorscope derives two chroma coordinates from those same encoded channels and target luma weights; blue is shown to the right and yellow to the left. Primary/secondary directions come from the target equations, not from the photographic wheel's equally spaced artwork.
+The vectorscope derives two chroma coordinates from the same channels and target weights; blue is shown to the right and yellow to the left. Primary and secondary directions come from the target equations.
 
 ## Measure the visible image
 
@@ -20,7 +20,7 @@ Reduction remains independently bounded to a 1024-pixel edge, so sparse samples 
 
 The vectorscope's zoom buttons and vertical wheel input step from 1× to 8×. Zoom narrows the chroma range around neutral by re-binning cached rendered samples. Samples beyond the enlarged plot's range are omitted from the trace but still contribute to its density normalization.
 
-Small coloured reference boxes indicate nominal 100% RGB/CMY code colours; magnification can move them outside the plot. The unlabelled dashed ray is a conventional skin-tone hue heuristic, not a target every complexion should meet or an automatic correction. Complexion, light and grading can legitimately move skin away from it.
+Small coloured boxes mark full-scale RGB/CMY colours; magnification can move them outside the plot. The dashed ray on SDR plots is a conventional skin-tone hue heuristic. Complexion, light and grading can legitimately move skin away from it.
 
 ## Keep feedback coherent
 

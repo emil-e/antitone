@@ -46,7 +46,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         label: Some("probe fullscreen triangle"),
         source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(VERTEX)),
     });
-    for target in ["srgb", "display-p3"] {
+    for target in [
+        "srgb",
+        "display-p3",
+        "rec2020-500",
+        "rec2020-1000",
+        "rec2020-2000",
+        "rec2020-4000",
+    ] {
         let started = Instant::now();
         let mut generated = std::fs::read_to_string(format!(".cache/probes/{target}-ap1.glsl"))?;
         for (binding, name) in [(1, "aces_reach_m_table_0"), (2, "aces_gamut_cusp_table_0")] {

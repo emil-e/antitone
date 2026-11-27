@@ -9,6 +9,7 @@ pub enum FloatPrecision {
     Full,
 }
 
+#[cfg(any(test, all(feature = "gpu", feature = "raw")))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Layout {
     Rgb8,

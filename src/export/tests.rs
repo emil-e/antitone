@@ -3,8 +3,14 @@ use crate::{color::ap1_to_ap0, profiles};
 use glam::DVec3;
 
 #[test]
-fn unsupported_target_and_layout_pairs_are_rejected_at_planning() {
+fn unsupported_target_and_codec_pairs_are_rejected_at_planning() {
     let display = RenderTarget::Display(OutputTarget::Srgb);
+    for target in OutputTarget::HDR {
+        let hdr = RenderTarget::Display(target);
+        assert!(Plan::new(hdr, FileFormat::Tiff).is_ok());
+        assert!(Plan::new(hdr, FileFormat::Jpeg(JpegQuality::default())).is_err());
+        assert!(Plan::new(hdr, FileFormat::Exr(FloatPrecision::Half)).is_err());
+    }
     for file in [FileFormat::Tiff, FileFormat::Jpeg(JpegQuality::default())] {
         assert!(Plan::new(display, file).is_ok());
         assert!(matches!(

@@ -53,10 +53,10 @@ impl Basis {
     }
 
     /// Right/up display coordinates; the scope raster performs the screen-y inversion.
-    pub fn vector(self, encoded: DVec3) -> DVec2 {
-        let y = self.luma.dot(encoded);
-        let cb = (encoded.z - y) / (2. * (1. - self.luma.z));
-        let cr = (encoded.x - y) / (2. * (1. - self.luma.x));
+    pub fn vector(self, channels: DVec3) -> DVec2 {
+        let y = self.luma.dot(channels);
+        let cb = (channels.z - y) / (2. * (1. - self.luma.z));
+        let cr = (channels.x - y) / (2. * (1. - self.luma.x));
         DVec2::new(
             self.blue_direction.x * cb + self.blue_direction.y * cr,
             -self.blue_direction.y * cb + self.blue_direction.x * cr,
@@ -130,24 +130,32 @@ pub fn reference(
     let mut bins = vec![0; PLANE_LEN * 4];
     let mut columns = [0; BINS as usize];
     let mut counts = Counts::default();
-    let basis = Basis::new(settings.target);
+    let target = settings.target;
+    let peak = target.linear_peak();
+    let basis = Basis::new(target);
     let half_extent = basis.extent / settings.amplification as f64;
     for (i, pixel) in linear.iter().enumerate() {
         if pixel[3] <= 0. || pixel[3].is_nan() {
             continue;
         }
-        let [Ok(r), Ok(g), Ok(b)] =
-            [pixel[0], pixel[1], pixel[2]].map(|value| settings.target.encode(f64::from(value)))
-        else {
+        let [Ok(r), Ok(g), Ok(b)] = [pixel[0], pixel[1], pixel[2]].map(|value| {
+            let linear = f64::from(value);
+            if target.is_hdr() {
+                crate::photographic::stages::display_rendering::validate_channel(linear, peak)
+                    .map(|()| linear / peak)
+            } else {
+                target.encode(linear)
+            }
+        }) else {
             continue;
         };
-        let encoded = DVec3::new(r, g, b);
+        let channels = DVec3::new(r, g, b);
         counts.valid += 1;
         let x = i as u32 % size[0];
         let column = ((x as f64 + 0.5) / size[0] as f64 * BINS as f64).floor() as usize;
         columns[column] += 1;
         if settings.plot == Plot::Vector {
-            let point = basis.vector(encoded) / (2. * half_extent) + DVec2::splat(0.5);
+            let point = basis.vector(channels) / (2. * half_extent) + DVec2::splat(0.5);
             if point.min_element() < 0. || point.max_element() > 1. {
                 counts.outside += 1;
             } else {
@@ -156,7 +164,7 @@ pub fn reference(
                 bins[by * BINS as usize + bx] += 1;
             }
         } else {
-            let values = [encoded.x, encoded.y, encoded.z, basis.luma.dot(encoded)];
+            let values = [channels.x, channels.y, channels.z, basis.luma.dot(channels)];
             for (plane, value) in values.into_iter().enumerate() {
                 bins[plane * PLANE_LEN + bin(1. - value) * BINS as usize + column] += 1;
             }

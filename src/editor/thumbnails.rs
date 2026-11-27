@@ -492,7 +492,7 @@ impl Editor {
             source: SourceKey::new(source, self.document.file_key(path))
                 .with_development(self.document.development_for(source, self.input())),
             recipe,
-            target: self.document.target(),
+            target: self.preview_target(),
             field: self.correction().map().cloned().map(FieldKey),
         }
     }

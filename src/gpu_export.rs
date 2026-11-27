@@ -1,7 +1,11 @@
 //! Render an authored original-sample calculation and write the prepared pixels.
+#[cfg(test)]
+use crate::export::ExrPrecision;
 use crate::export_timing::timed;
 #[cfg(test)]
 use crate::frame_raster::FrameRaster;
+#[cfg(test)]
+use crate::rendering::OutputTarget;
 use crate::{
     Error,
     export::{
@@ -16,8 +20,6 @@ use crate::{
     render_fixture::RenderFixture,
     scan::DevelopedSource,
 };
-#[cfg(test)]
-use crate::{export::ExrPrecision, rendering::OutputTarget};
 #[cfg(test)]
 use authored::Format;
 use glam::{DVec3, Vec3};
@@ -147,10 +149,6 @@ fn encode_with_checked(
                     )
                     .map(Samples::Rgb8)
                 }
-                #[cfg(test)]
-                (RenderTarget::Display(target), Layout::Rgb16, OutputBlock::Linear(pixels)) => {
-                    encode_readback(target, pixels).map(Samples::Rgb16)
-                }
                 _ => Err(Error::Gpu("unexpected output representation".into())),
             }
         },
@@ -166,21 +164,6 @@ fn readback_rgb(pixel: &[f32; 4]) -> Result<Vec3, Error> {
         )));
     }
     Ok(Vec3::new(pixel[0], pixel[1], pixel[2]))
-}
-
-#[cfg(test)]
-fn encode_readback(target: OutputTarget, pixels: Vec<[f32; 4]>) -> Result<Vec<[u16; 3]>, Error> {
-    // Give invalid GPU contribution markers diagnostic priority over target-range failures.
-    timed!(WorkingPack, {
-        for pixel in &pixels {
-            readback_rgb(pixel)?;
-        }
-        Ok::<_, Error>(())
-    })?;
-    timed!(
-        TargetEncode,
-        target.encode_u16_pixels(pixels.into_iter().map(|p| Vec3::new(p[0], p[1], p[2])))
-    )
 }
 
 fn linear_readback(pixel: &[f32; 4]) -> Result<DVec3, Error> {

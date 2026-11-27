@@ -300,7 +300,12 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             )
         })
         .into();
-        for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+        for target in [
+            OutputTarget::Srgb,
+            OutputTarget::DisplayP3,
+            OutputTarget::Rec2020_1000,
+        ] {
+            let mut saw_highlight = false;
             let image = GpuImage::new(&device, &queue, [4, 2], &pixels, matrix, None, target)
                 .await
                 .unwrap();
@@ -351,6 +356,9 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                 queue.submit([encoder.finish()]);
                 let expected = CpuRenderer::new(target).unwrap().render(working).unwrap();
                 let actual = read(&device, &queue, &image.linear).await;
+                saw_highlight |= actual
+                    .iter()
+                    .any(|pixel| pixel[..3].iter().any(|&v| v > 1.));
                 for (actual, expected) in actual.iter().zip(&expected) {
                     for c in 0..3 {
                         assert!(
@@ -418,6 +426,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                     }
                 }
             }
+            assert_eq!(saw_highlight, target.is_hdr());
         }
     });
 }

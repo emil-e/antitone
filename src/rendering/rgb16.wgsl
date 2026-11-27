@@ -3,52 +3,38 @@
 var<storage, read> linear: array<vec4f>;
 @group(0) @binding(1)
 var<storage, read_write> encoded: array<vec2u>;
+struct Parameters {
+    count: u32,
+    peak_bits: u32,
+    use_pq: u32,
+    padding: u32,
+}
+
 @group(0) @binding(2)
-var<uniform> dimensions: vec4u;
-@group(0) @binding(3)
-var<storage, read> thresholds: array<u32>;
+var<uniform> parameters: Parameters;
 
 fn transfer(value: f32) -> f32 {
+    if parameters.use_pq != 0u {
+        // One display-linear unit is 100 nits; PQ's scale is always 10,000 nits.
+        let power = pow(value / 100., 2610. / 16384.);
+        // Express the ST 2084 ratio as 1 minus a small term to keep it accurate near white.
+        let deficit = (672. / 4096. - (21. / 128.) * power) / (1. + (2392. / 128.) * power);
+        return pow(1. - deficit, 2523. / 32.);
+    }
+
     if value <= 0.0031308 {
         return 12.92 * value;
     }
     return 1.055 * pow(value, 1.0 / 2.4) - 0.055;
 }
 
-fn bracketed(code: u32, bits: u32) -> bool {
-    return (code == 0u || bits >= thresholds[code - 1u])
-        && (code == 65535u || bits < thresholds[code]);
-}
-
-fn quantize(value: f32, bits: u32) -> u32 {
-    // Float transfer is only an index estimate. Exact input boundaries decide the result.
-    let guess = min(u32(floor(transfer(value) * 65535.0 + 0.5)), 65535u);
-    if bracketed(guess, bits) {
-        return guess;
-    }
-    if guess > 0u && bracketed(guess - 1u, bits) {
-        return guess - 1u;
-    }
-    if guess < 65535u && bracketed(guess + 1u, bits) {
-        return guess + 1u;
-    }
-    // Bounded fallback does not rely on native pow accuracy on another device.
-    var low = 0u;
-    var high = 65535u;
-    for(var step = 0u; step < 16u && low < high; step++) {
-        let mid = (low + high) / 2u;
-        if bits >= thresholds[mid] {
-            low = mid + 1u;
-        } else {
-            high = mid;
-        }
-    }
-    return low;
+fn quantize(value: f32) -> u32 {
+    return min(u32(floor(transfer(value) * 65535.0 + 0.5)), 65535u);
 }
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) id: vec3u) {
-    if id.x >= dimensions.x {
+    if id.x >= parameters.count {
         return;
     }
     let pixel = linear[id.x];
@@ -61,12 +47,12 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
     if any(((bits.xyz & vec3u(0x80000000u)) != vec3u(0u)) & (magnitude.xyz != vec3u(0u)))
-        || any(magnitude.xyz > vec3u(0x3f800000u)) {
+        || any(magnitude.xyz > vec3u(parameters.peak_bits)) {
         encoded[id.x] = vec2u(0u, 2u << 16u);
         return;
     }
-    let r = quantize(pixel.r, magnitude.r);
-    let g = quantize(pixel.g, magnitude.g);
-    let b = quantize(pixel.b, magnitude.b);
+    let r = quantize(pixel.r);
+    let g = quantize(pixel.g);
+    let b = quantize(pixel.b);
     encoded[id.x] = vec2u(r | (g << 16u), b);
 }

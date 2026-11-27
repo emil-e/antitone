@@ -22,8 +22,11 @@ pub(crate) fn presentation() -> Presentation {
     }
 }
 
-pub(crate) fn configure_presentation(surface: &wgpu::Surface<'_>) -> Result<(), Error> {
-    configure_sdr(surface)
+pub(crate) fn hdr_available(window: &Window) -> bool {
+    // Current headroom can be 1 until an EDR layer is enabled.
+    ns_window(window)
+        .and_then(|window| window.screen())
+        .is_some_and(|screen| screen.maximumPotentialExtendedDynamicRangeColorComponentValue() > 1.)
 }
 
 #[cfg(feature = "editor")]
@@ -102,8 +105,8 @@ fn set_application_icon() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Reapply after every configuration: wgpu's SDR configuration clears the layer color space.
-fn configure_sdr(surface: &wgpu::Surface<'_>) -> Result<(), Error> {
+/// Reapply after every configuration: wgpu's SDR configuration resets the layer.
+pub(crate) fn configure_presentation(surface: &wgpu::Surface<'_>, hdr: bool) -> Result<(), Error> {
     // The HAL guard and layer lock prevent concurrent surface access while setting native properties.
     let native = unsafe { surface.as_hal::<wgpu::hal::api::Metal>() }
         .ok_or_else(|| Error::Gpu("managed presentation requires the Metal backend".into()))?;
@@ -113,20 +116,20 @@ fn configure_sdr(surface: &wgpu::Surface<'_>) -> Result<(), Error> {
     let space = CGColorSpace::with_name(Some(name))
         .ok_or_else(|| Error::Gpu("extended sRGB color space unavailable".into()))?;
     layer.setColorspace(Some(&space));
-    layer.setWantsExtendedDynamicRangeContent(false);
+    layer.setWantsExtendedDynamicRangeContent(hdr);
     let actual = layer
         .colorspace()
         .and_then(|space| CGColorSpace::name(Some(&space)))
         .ok_or_else(|| Error::Gpu("Metal layer is untagged".into()))?;
-    if actual.to_string() != name.to_string() || layer.wantsExtendedDynamicRangeContent() {
+    if actual.to_string() != name.to_string() || layer.wantsExtendedDynamicRangeContent() != hdr {
         return Err(Error::Gpu(
-            "Metal layer SDR/color-space configuration did not persist".into(),
+            "Metal layer presentation configuration did not persist".into(),
         ));
     }
     log::debug!(
         color_space = actual.to_string().as_str(),
         pixel_format:? = layer.pixelFormat(),
-        edr = false,
+        edr = hdr,
         drawable_size:? = layer.drawableSize();
         "presentation_layer"
     );

@@ -463,6 +463,42 @@ fn unusable_samples_do_not_dim_or_add_to_the_trace() {
 }
 
 #[test]
+fn hdr_waveform_bins_absolute_luminance_and_keeps_highlights_valid() {
+    pollster::block_on(async {
+        let (device, queue) = device().await;
+        let gpu = GpuScopes::new(&device).await.unwrap();
+        let pixels = [
+            [2.52, 2.52, 2.52, 1.], // 252 nit neutral
+            [10., 0., 0., 1.],      // 1000 nit red; Y = 262.7 nit in BT.2020
+            [10.01, 0., 0., 1.],    // beyond the selected peak
+        ];
+        let size = [3, 1];
+        let target = OutputTarget::Rec2020_1000;
+        let settings = Settings {
+            target,
+            plot: Plot::Luma,
+            amplification: 1,
+        };
+        let image = texture(&device, &queue, size, &pixels);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        gpu.encode(&device, &mut encoder, &image, settings).unwrap();
+        queue.submit([encoder.finish()]);
+        let actual = read(&device, &queue, &gpu.bins);
+        let totals = read(&device, &queue, &gpu.totals);
+        let (expected, columns, counts) = scopes::reference(size, &pixels, settings).unwrap();
+
+        assert_eq!(counts.valid, 2);
+        assert_eq!(totals[0], 0, "waveform does not use the vectorscope total");
+        assert_eq!(&totals[1..], columns);
+        assert_eq!(totals[1 + 213], 0, "over-peak sample is excluded");
+        assert_eq!(actual[3 * PLANE_LEN + 191 * 256 + 42], 1);
+        assert_eq!(actual[3 * PLANE_LEN + 188 * 256 + 128], 1);
+        assert_eq!(actual[128], 1, "peak red is at the top of the red plane");
+        assert_eq!(actual, expected);
+    });
+}
+
+#[test]
 fn gpu_vector_projection_amplification_and_boundary_tolerance_match_scalar() {
     pollster::block_on(async {
         let (device, queue) = device().await;

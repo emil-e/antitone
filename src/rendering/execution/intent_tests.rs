@@ -273,11 +273,17 @@ fn display_reference_can_deliver_linear_float_or_encoded_rgb16_without_a_file_co
                     .collect::<Vec<_>>(),
             )
             .unwrap();
-        assert_eq!(
-            rgb16::decode(&words).unwrap(),
-            expected,
-            "sample transfer/quantization must follow the same display-linear result"
-        );
+        let actual = rgb16::decode(&words).unwrap();
+        assert_eq!(actual.len(), expected.len());
+        for (pixel, reference) in actual.into_iter().zip(expected) {
+            assert!(
+                pixel
+                    .into_iter()
+                    .zip(reference)
+                    .all(|(a, b)| a.abs_diff(b) <= 1),
+                "{target:?}: RGB16 transfer must follow the display-linear result: {pixel:?} vs {reference:?}"
+            );
+        }
         assert!(
             linear
                 .iter()

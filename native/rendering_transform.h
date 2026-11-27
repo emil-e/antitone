@@ -7,16 +7,18 @@ namespace antitone {
 namespace OCIO = OCIO_NAMESPACE;
 
 inline const std::array<double, 9> &output_parameters(unsigned target) {
-    static const std::array<double, 9> srgb{100., .64, .33, .30, .60, .15, .06, .3127, .3290};
-    static const std::array<double, 9> displayP3{100., .68, .32, .265, .69, .15, .06, .3127, .3290};
-    switch (target) {
-    case 0:
-        return srgb;
-    case 1:
-        return displayP3;
-    default:
-        throw std::invalid_argument("unsupported output target");
-    }
+    static constexpr auto rec2020 = [](double peak) {
+        return std::array<double, 9>{peak, .708, .292, .170, .797, .131, .046, .3127, .3290};
+    };
+    static constexpr std::array targets{
+        std::array{100., .64, .33, .30, .60, .15, .06, .3127, .3290},
+        std::array{100., .68, .32, .265, .69, .15, .06, .3127, .3290},
+        rec2020(500.),
+        rec2020(1000.),
+        rec2020(2000.),
+        rec2020(4000.),
+    };
+    return targets.at(target);
 }
 
 inline OCIO::ConstProcessorRcPtr rendering(unsigned target, bool ap0_reference = false) {
@@ -39,11 +41,13 @@ inline OCIO::ConstProcessorRcPtr rendering(unsigned target, bool ap0_reference =
     const auto &params = output_parameters(target);
     group->appendTransform(OCIO::FixedFunctionTransform::Create(
         OCIO::FIXED_FUNCTION_ACES_OUTPUT_TRANSFORM_20, params.data(), params.size()));
+    // ACES display-linear uses 100 cd/m² per unit, independently of the target peak.
+    const double peak = params[0] / 100.;
     auto outputRange = OCIO::RangeTransform::Create();
     outputRange->setMinInValue(0);
-    outputRange->setMaxInValue(1);
+    outputRange->setMaxInValue(peak);
     outputRange->setMinOutValue(0);
-    outputRange->setMaxOutValue(1);
+    outputRange->setMaxOutValue(peak);
     group->appendTransform(outputRange);
     return OCIO::Config::CreateRaw()->getProcessor(group);
 }

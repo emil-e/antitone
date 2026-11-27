@@ -146,6 +146,56 @@ fn dialog_preserves_project_state_and_exports_all_with_its_own_target() {
 }
 
 #[test]
+fn hdr_tiff_uses_the_project_peak_even_when_the_preview_is_sdr() {
+    fixture_editor(|mut harness, directory| {
+        let target = OutputTarget::Rec2020_2000;
+        harness.update(|editor| editor.document.set_target(target));
+        let accepted = harness.read(|editor| {
+            assert_eq!(editor.preview_target(), OutputTarget::DisplayP3);
+            editor.document.state.project.clone()
+        });
+        open(&mut harness);
+        let role = egui::accesskit::Role::ComboBox;
+        let target_value =
+            |h: &Harness<'_, Editor>| h.get_by_role_and_label(role, "Target").value();
+        assert_eq!(
+            target_value(&harness).as_deref(),
+            Some("Rec.2020 PQ · 2000 nit")
+        );
+        choose(&mut harness, "Format", "JPEG");
+        assert_eq!(target_value(&harness).as_deref(), Some("Display P3"));
+        choose(&mut harness, "Format", "TIFF");
+        assert_eq!(
+            target_value(&harness).as_deref(),
+            Some("Rec.2020 PQ · 2000 nit")
+        );
+
+        harness.get_by_label("Export 1 photo").click();
+        harness.step();
+        wait_for(&mut harness, |editor| {
+            editor.document.export.summary.is_some() && editor.document.export.operation.is_none()
+        });
+        harness.read(|editor| {
+            assert_eq!(
+                editor.document.export.summary.as_ref().unwrap().exported(),
+                1,
+                "{}",
+                editor.status
+            );
+            assert_eq!(editor.document.state.project, accepted);
+        });
+        let file = std::fs::File::open(directory.path().join("patches.tif")).unwrap();
+        let mut decoder = tiff::decoder::Decoder::new(file).unwrap();
+        assert_eq!(
+            decoder
+                .get_tag_u8_vec(tiff::tags::Tag::Unknown(34675))
+                .unwrap(),
+            crate::profiles::icc(target)
+        );
+    });
+}
+
+#[test]
 fn jpeg_dialog_exposes_quality_and_exports_the_chosen_display_target() {
     use image::{ImageDecoder, codecs::jpeg::JpegDecoder};
     use std::{fs::File, io::BufReader};

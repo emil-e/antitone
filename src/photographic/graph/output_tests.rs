@@ -492,6 +492,63 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
     );
 }
 
+#[cfg(feature = "ocio-reference")]
+#[test]
+fn rec2020_presets_preserve_the_declared_peak_and_match_pinned_ocio() {
+    use crate::rendering::{CpuRenderer, reference_parameters};
+    use glam::DVec3;
+
+    let (device, queue, renderer) = crate::photographic::test_support::render_context();
+    let levels = [-0.2, 0., 0.002, 0.18, 1., 8., 32., 1000.];
+    let size = [32, 16];
+    let mut samples: Vec<_> = (0..size[0] * size[1])
+        .map(|i| {
+            let i = i as usize;
+            [levels[i % 8], levels[(i / 8) % 8], levels[i / 64], 8.]
+        })
+        .collect();
+    samples[0] = [1000., 1000., 1000., 8.];
+    samples[1] = [8., 8., 8., 8.];
+    let working: Vec<_> = samples
+        .iter()
+        .map(|rgb| DVec3::new(rgb[0].into(), rgb[1].into(), rgb[2].into()))
+        .collect();
+    let input = buffer(&device, &samples);
+    let mut highlight = 0.;
+    for (target, peak) in OutputTarget::HDR.into_iter().zip([5., 10., 20., 40.]) {
+        assert_eq!(target.parameters(), reference_parameters(target));
+        let output = texture(&device, size, wgpu::TextureFormat::Rgba32Float);
+        let binding = render_reference(
+            &renderer,
+            &device,
+            supplied(&input, [size[0], size[1], 0, 0]),
+            target,
+            &Default::default(),
+            &output,
+        )
+        .unwrap();
+        let mut encoder = device.create_command_encoder(&Default::default());
+        binding.encode(&device, &mut encoder).unwrap();
+        queue.submit([encoder.finish()]);
+        let actual = read_texture(&device, &queue, &output);
+        let cpu = CpuRenderer::new(target).unwrap().render(&working).unwrap();
+        assert_eq!(actual.len(), cpu.len());
+        for (rgba, reference) in actual.iter().zip(cpu) {
+            for (&channel, expected) in rgba.iter().zip(reference.to_array()) {
+                assert!(
+                    (channel - expected).abs() <= 2e-5 + 2e-4 * expected.abs(),
+                    "{target:?}: {channel} vs {expected}",
+                );
+            }
+        }
+        assert_eq!(actual[0][..3], [peak; 3]);
+        // A fixed input well below the ceiling must change with the ACES tone scale.
+        let value = actual[1][0];
+        assert!(value > highlight && value < peak, "{target:?}: {value}");
+        highlight = value;
+    }
+}
+
 #[test]
 fn resident_recording_reads_updated_input_and_survives_owner_retirement() {
     let (device, queue, renderer) = crate::photographic::test_support::render_context();

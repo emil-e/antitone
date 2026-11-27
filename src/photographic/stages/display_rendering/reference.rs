@@ -29,7 +29,7 @@ unsafe extern "C" {
 
 pub fn reference_parameters(target: OutputTarget) -> [f64; 9] {
     let mut parameters = [0.; 9];
-    // Both enum values are supported; native code writes exactly nine doubles.
+    // The native reference writes exactly nine doubles for each target.
     assert_eq!(
         unsafe { antitone_output_parameters(target as u32, parameters.as_mut_ptr()) },
         0
@@ -57,6 +57,7 @@ fn diagnostic(buffer: &[c_char]) -> Error {
 /// Not a production export path. Does not encode or apply a monitor transform.
 pub struct CpuRenderer {
     handle: NonNull<c_void>,
+    peak: f64,
 }
 
 impl CpuRenderer {
@@ -66,6 +67,7 @@ impl CpuRenderer {
             unsafe { antitone_ocio_create(target as u32, error.as_mut_ptr(), error.len()) };
         Ok(Self {
             handle: NonNull::new(handle).ok_or_else(|| diagnostic(&error))?,
+            peak: target.linear_peak(),
         })
     }
 
@@ -93,13 +95,15 @@ impl CpuRenderer {
         };
         Ok(Self {
             handle: NonNull::new(handle).ok_or_else(|| diagnostic(&error))?,
+            peak: 1.,
         })
     }
+
     pub fn render(&self, working_ap1: &[DVec3]) -> Result<Vec<Vec3>, Error> {
         let values = self.apply_unbounded(working_ap1)?;
         for value in &values {
             for channel in value.to_array() {
-                validate_channel(f64::from(channel))?;
+                validate_channel(f64::from(channel), self.peak)?;
             }
         }
         Ok(values)

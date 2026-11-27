@@ -16,10 +16,10 @@ mod reference;
 pub use reference::{CpuRenderer, ocio_version, reference_parameters};
 
 #[cfg(feature = "render")]
-pub(crate) fn validate_channel(value: f64) -> Result<(), crate::Error> {
-    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+pub(crate) fn validate_channel(value: f64, max: f64) -> Result<(), crate::Error> {
+    if !(0.0..=max).contains(&value) {
         return Err(crate::Error::InvalidParameter(
-            "rendered/encoded output channel must be finite and within 0..1",
+            "rendered/encoded output channel is non-finite or outside the target range",
         ));
     }
     Ok(())

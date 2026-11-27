@@ -926,7 +926,7 @@ impl Editor {
         context: &egui::Context,
         cx: &UiContext<'_, Self>,
     ) -> Result<Option<Arc<RenderedView>>, Error> {
-        let target = self.document.target();
+        let target = self.preview_target();
         if !self.document.visit.working_view.enabled() {
             return Ok(None);
         }

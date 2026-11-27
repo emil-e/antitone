@@ -11,6 +11,47 @@ use crate::Error;
 pub enum OutputTarget {
     Srgb = 0,
     DisplayP3 = 1,
+    Rec2020_500 = 2,
+    Rec2020_1000 = 3,
+    Rec2020_2000 = 4,
+    Rec2020_4000 = 5,
+}
+
+impl OutputTarget {
+    pub const HDR: [Self; 4] = [
+        Self::Rec2020_500,
+        Self::Rec2020_1000,
+        Self::Rec2020_2000,
+        Self::Rec2020_4000,
+    ];
+
+    #[cfg(all(feature = "gpu", feature = "render"))]
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Srgb,
+        Self::DisplayP3,
+        Self::Rec2020_500,
+        Self::Rec2020_1000,
+        Self::Rec2020_2000,
+        Self::Rec2020_4000,
+    ];
+
+    pub const fn peak_nits(self) -> u32 {
+        match self {
+            Self::Srgb | Self::DisplayP3 => 100,
+            Self::Rec2020_500 => 500,
+            Self::Rec2020_1000 => 1000,
+            Self::Rec2020_2000 => 2000,
+            Self::Rec2020_4000 => 4000,
+        }
+    }
+
+    pub const fn is_hdr(self) -> bool {
+        self.peak_nits() > 100
+    }
+
+    pub const fn sdr_fallback(self) -> Self {
+        if self.is_hdr() { Self::DisplayP3 } else { self }
+    }
 }
 
 pub const AP0_TO_XYZ: DMat3 = DMat3::from_cols(

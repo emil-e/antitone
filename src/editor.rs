@@ -258,6 +258,7 @@ pub struct Editor {
     fullscreen: Option<Fullscreen>,
     canvas_frame: canvas::Frame,
     presentation: Result<Presentation, Error>,
+    hdr_preview: bool,
     look: look::Session,
     status: String,
     workspace_input: workspace_input::WorkspaceInput,
@@ -291,6 +292,15 @@ impl Editor {
             .working_view
             .queue()
             .expect("initialized editor GPU")
+    }
+
+    fn preview_target(&self) -> OutputTarget {
+        let target = self.document.target();
+        if self.hdr_preview {
+            target
+        } else {
+            target.sdr_fallback()
+        }
     }
 
     fn interaction_blocked(&self) -> bool {
@@ -410,6 +420,7 @@ impl Editor {
             fullscreen: None,
             canvas_frame: Default::default(),
             presentation: Err(Error::Gpu("viewer presentation not initialized".into())),
+            hdr_preview: false,
             started: false,
             menus: menu::Menus::default(),
             look: Default::default(),
@@ -1413,58 +1424,76 @@ impl Editor {
                     };
                     self.look_controls(ui, cx, lut_lead);
                     ui.add_enabled_ui(!self.interaction_blocked(), |ui| {
-                        let changed = grade.output.display_target != OutputTarget::DisplayP3;
+                        let target = grade.output.display_target;
+                        let changed = target != OutputTarget::DisplayP3;
+                        let target_name = |target: OutputTarget| match target {
+                            OutputTarget::Srgb => "sRGB",
+                            OutputTarget::DisplayP3 => "Display P3",
+                            _ => "Rec.2020 HDR",
+                        };
+                        let summary = format!("{} · {} nit", target_name(target), target.peak_nits());
                         let (_, action) = ui::section(
                             ui,
                             "rendering-target",
                             "Target",
                             SectionHeader {
-                                summary: if grade.output.display_target == OutputTarget::DisplayP3
-                                {
-                                    "Display P3 · 100 nit"
-                                } else {
-                                    "sRGB · 100 nit"
-                                },
+                                summary: &summary,
                                 changed,
                                 reset: Some(changed),
                                 tool: None,
                                 default_open: Some(true),
                             },
                             |ui| {
+                                let mut selected = target;
                                 ui::inspector_dropdown(
                                     ui,
                                     "rendering-target",
                                     "Target",
-                                    if grade.output.display_target == OutputTarget::DisplayP3 {
-                                        "Display P3"
-                                    } else {
-                                        "sRGB"
-                                    },
+                                    target_name(target),
                                     |ui| {
-                                        for (target, label) in [
-                                            (OutputTarget::DisplayP3, "Display P3"),
-                                            (OutputTarget::Srgb, "sRGB"),
+                                        for choice in [
+                                            OutputTarget::DisplayP3,
+                                            OutputTarget::Srgb,
+                                            OutputTarget::Rec2020_1000,
                                         ] {
-                                            if ui
-                                                .selectable_label(
-                                                    grade.output.display_target == target,
-                                                    label,
-                                                )
-                                                .clicked()
+                                            let active = if choice.is_hdr() {
+                                                target.is_hdr()
+                                            } else {
+                                                target == choice
+                                            };
+                                            if ui.selectable_label(active, target_name(choice)).clicked()
+                                                && !active
                                             {
-                                                self.output_control(
-                                                    ui::ControlResponse::action(
-                                                        ui.make_persistent_id("target"),
-                                                        true,
-                                                    ),
-                                                    |output| output.display_target = target,
-                                                );
+                                                selected = choice;
                                             }
                                         }
                                     },
                                 )
                                 .response
                                 .on_hover_text("Output colour space, not the monitor profile.");
+                                if target.is_hdr() {
+                                    ui::labelled_inspector_dropdown(
+                                        ui,
+                                        "rendering-peak",
+                                        "Target peak",
+                                        &format!("{} nit", target.peak_nits()),
+                                        |ui| {
+                                            for choice in OutputTarget::HDR {
+                                                ui.selectable_value(
+                                                    &mut selected,
+                                                    choice,
+                                                    format!("{} nit", choice.peak_nits()),
+                                                );
+                                            }
+                                        },
+                                    );
+                                }
+                                if selected != target {
+                                    self.output_control(
+                                        ui::ControlResponse::action(ui.make_persistent_id("target"), true),
+                                        |output| output.display_target = selected,
+                                    );
+                                }
                             },
                         );
                         if action.reset {
@@ -1547,6 +1576,14 @@ impl host::App for Editor {
 
     fn photo_fullscreen_changed(&mut self, active: bool) {
         self.fullscreen_changed(active);
+    }
+
+    fn hdr_preview_requested(&self) -> bool {
+        self.document.target().is_hdr()
+    }
+
+    fn hdr_preview_changed(&mut self, active: bool) {
+        self.hdr_preview = active;
     }
 
     fn processing_revision(&self) -> Option<(u64, u64)> {

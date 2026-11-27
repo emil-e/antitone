@@ -404,7 +404,7 @@ impl GpuScopes {
                     Plot::Luma => 1,
                     Plot::Vector => 2,
                 },
-                0,
+                settings.target.peak_nits(),
             ],
             luma_gain: [
                 basis.luma.x as f32,
